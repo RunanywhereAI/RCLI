@@ -1274,12 +1274,11 @@ private:
         bench_output_.clear();
         bench_running_ = false;
 
-        bench_entries_.push_back({"STT Benchmark", "stt"});
-        bench_entries_.push_back({"LLM Benchmark", "llm"});
-        bench_entries_.push_back({"TTS Benchmark", "tts"});
-        bench_entries_.push_back({"E2E Pipeline Benchmark", "e2e"});
-        if (rag_loaded_) bench_entries_.push_back({"RAG Benchmark", "rag"});
-        bench_entries_.push_back({"All Benchmarks", "all"});
+        bench_entries_.push_back({"Run Full Benchmark (STT + LLM + TTS + E2E)", "all"});
+        bench_entries_.push_back({"LLM only", "llm"});
+        bench_entries_.push_back({"STT only", "stt"});
+        bench_entries_.push_back({"TTS only", "tts"});
+        if (rag_loaded_) bench_entries_.push_back({"RAG only", "rag"});
         bench_mode_ = true;
     }
 
@@ -1294,32 +1293,44 @@ private:
         std::thread([this, suite]() {
             int rc = rcli_run_full_benchmark(engine_, suite.c_str(), 3, nullptr);
             std::ostringstream out;
+            out << std::fixed;
             if (rc == 0) {
+                bool show_llm = (suite == "llm" || suite == "all");
+                bool show_stt = (suite == "stt" || suite == "all");
+                bool show_tts = (suite == "tts" || suite == "all");
+                bool show_e2e = (suite == "all");
+
                 out << "Benchmark complete!\n";
+
                 int tok = 0; double tps = 0, ttft = 0, total = 0;
-                rcli_get_last_llm_perf(engine_, &tok, &tps, &ttft, &total);
-                if (tok > 0) {
-                    out << std::fixed;
-                    out.precision(1);
-                    out << "  LLM: " << tok << " tokens, "
-                        << tps << " tok/s, TTFT " << ttft << "ms\n";
-                }
-                int samples = 0; double synth_ms = 0, rtf = 0;
-                rcli_get_last_tts_perf(engine_, &samples, &synth_ms, &rtf);
-                if (samples > 0) {
-                    out.precision(1);
-                    out << "  TTS: " << synth_ms << "ms, " << rtf << "x real-time\n";
+                if (show_llm) {
+                    rcli_get_last_llm_perf(engine_, &tok, &tps, &ttft, &total);
+                    if (tok > 0) {
+                        out.precision(1);
+                        out << "  LLM: " << tok << " tokens, "
+                            << tps << " tok/s, TTFT " << ttft << "ms\n";
+                    }
                 }
                 double audio_ms = 0, trans_ms = 0;
-                rcli_get_last_stt_perf(engine_, &audio_ms, &trans_ms);
-                if (trans_ms > 0) {
-                    out.precision(0);
-                    out << "  STT: " << trans_ms << "ms transcription\n";
+                if (show_stt) {
+                    rcli_get_last_stt_perf(engine_, &audio_ms, &trans_ms);
+                    if (trans_ms > 0) {
+                        out.precision(0);
+                        out << "  STT: " << trans_ms << "ms transcription\n";
+                    }
                 }
-                double ttfa_est = trans_ms + ttft + synth_ms;
-                if (ttfa_est > 0) {
+                int samples = 0; double synth_ms = 0, rtf = 0;
+                if (show_tts) {
+                    rcli_get_last_tts_perf(engine_, &samples, &synth_ms, &rtf);
+                    if (samples > 0) {
+                        out.precision(1);
+                        out << "  TTS: " << synth_ms << "ms, " << rtf << "x real-time\n";
+                    }
+                }
+                if (show_e2e && trans_ms > 0 && ttft > 0 && synth_ms > 0) {
+                    double ttfa_est = trans_ms + ttft + synth_ms;
                     out.precision(0);
-                    out << "  TTFA (est): " << ttfa_est << "ms"
+                    out << "  E2E (est): " << ttfa_est << "ms"
                         << (ttfa_est < 500 ? " ok" : "") << "\n";
                 }
             } else {
@@ -1342,11 +1353,19 @@ private:
             const char* llm = rcli_get_llm_model(engine_);
             const char* stt = rcli_get_stt_model(engine_);
             const char* tts = rcli_get_tts_model(engine_);
+            lines.push_back(text("  Active models (benchmarked):") | ftxui::bold);
             lines.push_back(hbox({
-                text("  Active: ") | ftxui::bold,
-                text(std::string(llm ? llm : "?") + " | " +
-                     (stt ? stt : "?") + " | " + (tts ? tts : "?")),
-            }) | dim);
+                text("    LLM: ") | ftxui::bold | ftxui::color(theme_.accent),
+                text(llm ? llm : "none"),
+            }));
+            lines.push_back(hbox({
+                text("    STT: ") | ftxui::bold | ftxui::color(theme_.accent),
+                text(stt ? stt : "none"),
+            }));
+            lines.push_back(hbox({
+                text("    TTS: ") | ftxui::bold | ftxui::color(theme_.accent),
+                text(tts ? tts : "none"),
+            }));
             lines.push_back(text(""));
         }
 
