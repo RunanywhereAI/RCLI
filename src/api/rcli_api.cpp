@@ -76,6 +76,9 @@ struct RCLIEngine {
 
     std::atomic<float> audio_rms{0.0f};
 
+    // Conversation memory (session-scoped, for multi-turn chat)
+    std::vector<std::pair<std::string, std::string>> conversation_history;
+
     std::mutex mutex;
     bool initialized = false;
 };
@@ -384,6 +387,56 @@ static std::string clean_llm_output(RCLIEngine* engine, const std::string& s) {
     return engine->pipeline.llm().profile().clean_output(s);
 }
 
+// Truncate conversation history to fit within a token budget.
+// Walks backward from most recent, keeping complete user/assistant pairs.
+static std::vector<std::pair<std::string, std::string>> truncate_history(
+    RCLIEngine* engine,
+    const std::vector<std::pair<std::string, std::string>>& history,
+    int token_budget)
+{
+    if (history.empty() || token_budget <= 0) return {};
+
+    std::vector<std::pair<std::string, std::string>> result;
+    int total_tokens = 0;
+
+    // Walk backward, keeping pairs (assistant then user going back)
+    for (int i = static_cast<int>(history.size()) - 1; i >= 0; i--) {
+        int entry_tokens = engine->pipeline.llm().count_tokens(
+            history[i].first + ": " + history[i].second);
+        if (total_tokens + entry_tokens > token_budget) break;
+        total_tokens += entry_tokens;
+        result.insert(result.begin(), history[i]);
+    }
+    return result;
+}
+
+// Compute trimmed history for a given user input and system prompt.
+static std::vector<std::pair<std::string, std::string>> get_trimmed_history(
+    RCLIEngine* engine,
+    const std::string& system_prompt,
+    const std::string& input)
+{
+    if (engine->conversation_history.empty()) return {};
+
+    int ctx_size = engine->pipeline.llm().context_size();
+    int system_tokens = engine->pipeline.llm().count_tokens(system_prompt);
+    int user_tokens = engine->pipeline.llm().count_tokens(input);
+    int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
+
+    return truncate_history(engine, engine->conversation_history,
+                            std::max(0, history_budget));
+}
+
+// Cap conversation history to last N entries (must be even to keep pairs aligned)
+static void cap_history(std::vector<std::pair<std::string, std::string>>& history,
+                        size_t max_entries = 20)
+{
+    while (history.size() > max_entries) {
+        history.erase(history.begin());
+        if (!history.empty()) history.erase(history.begin());
+    }
+}
+
 // Helper: execute an action, fire callback, and summarize result via LLM
 static std::string execute_and_summarize(RCLIEngine* engine,
                                          const std::string& action_name,
@@ -560,6 +613,9 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
             std::string args_json = needs_params
                 ? extract_params_via_llm(engine, *def, input) : std::string("{}");
             engine->last_response = execute_and_summarize(engine, matched_action, args_json, input);
+            engine->conversation_history.emplace_back("user", input);
+            engine->conversation_history.emplace_back("assistant", engine->last_response);
+            cap_history(engine->conversation_history);
             return engine->last_response.c_str();
         }
     }
@@ -571,19 +627,24 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     // tokens and ~80 ms of latency.  Everything else goes to the LLM (Tier 2)
     // which decides whether to call a tool or respond conversationally.
     if (match_score == 0 && input.size() < 40) {
+        const std::string conv_system =
+            "You are RCLI, a friendly on-device macOS voice assistant. "
+            "Keep responses brief, natural, and helpful. "
+            "Do NOT use <think> tags or tool calls.";
+        auto history = get_trimmed_history(engine, conv_system, input);
         auto gen_conversational = [&](const std::string& msg) {
             std::string raw = engine->pipeline.llm().generate(
                 engine->pipeline.llm().build_chat_prompt(
-                    "You are RCLI, a friendly on-device macOS voice assistant. "
-                    "Keep responses brief, natural, and helpful. "
-                    "Do NOT use <think> tags or tool calls.",
-                    {}, msg),
+                    conv_system, history, msg),
                 nullptr);
             return clean_llm_output(engine, raw);
         };
         engine->last_response = gen_conversational(input);
         if (engine->last_response.empty())
             engine->last_response = gen_conversational(input + " Answer directly.");
+        engine->conversation_history.emplace_back("user", input);
+        engine->conversation_history.emplace_back("assistant", engine->last_response);
+        cap_history(engine->conversation_history);
         return engine->last_response.c_str();
     }
 
@@ -600,8 +661,9 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
             "chitchat), respond naturally WITHOUT calling any tool.\n"
             "4. Do NOT use <think> tags. Output ONLY the tool call or a brief response.\n";
 
+        auto history = get_trimmed_history(engine, system_prompt, input);
         std::string llm_output = engine->pipeline.llm().generate(
-            engine->pipeline.llm().build_chat_prompt(system_prompt, {}, input),
+            engine->pipeline.llm().build_chat_prompt(system_prompt, history, input),
             nullptr);
         llm_output = clean_llm_output(engine, llm_output);
 
@@ -629,6 +691,9 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
             }
             if (any_valid && !combined_response.empty()) {
                 engine->last_response = combined_response;
+                engine->conversation_history.emplace_back("user", input);
+                engine->conversation_history.emplace_back("assistant", engine->last_response);
+                cap_history(engine->conversation_history);
                 return engine->last_response.c_str();
             }
 
@@ -644,7 +709,7 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
                 engine->pipeline.llm().build_chat_prompt(
                     "You are RCLI, a friendly macOS voice assistant. "
                     "Keep responses brief and natural. Do NOT use <think> tags.",
-                    {}, input),
+                    history, input),
                 nullptr);
             engine->last_response = clean_llm_output(engine, engine->last_response);
         }
@@ -654,13 +719,23 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
 
     // Retry once if output cleaned to empty (some models produce only think tokens)
     if (engine->last_response.empty()) {
+        auto retry_history = get_trimmed_history(engine,
+            "You are RCLI. Answer the user directly in one sentence. "
+            "Do NOT use <think> tags.", input);
         std::string retry = engine->pipeline.llm().generate(
             engine->pipeline.llm().build_chat_prompt(
                 "You are RCLI. Answer the user directly in one sentence. "
                 "Do NOT use <think> tags.",
-                {}, input + " Answer directly."),
+                retry_history, input + " Answer directly."),
             nullptr);
         engine->last_response = clean_llm_output(engine, retry);
+    }
+
+    // Record this turn in conversation history
+    if (!engine->last_response.empty()) {
+        engine->conversation_history.emplace_back("user", input);
+        engine->conversation_history.emplace_back("assistant", engine->last_response);
+        cap_history(engine->conversation_history);
     }
 
     return engine->last_response.c_str();
@@ -731,6 +806,13 @@ void rcli_stop_processing(RCLIHandle handle) {
     }
     rcli_stop_speaking(handle);
     rcli_stop_listening(handle);
+}
+
+void rcli_clear_history(RCLIHandle handle) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    engine->conversation_history.clear();
 }
 
 const char* rcli_get_transcript(RCLIHandle handle) {

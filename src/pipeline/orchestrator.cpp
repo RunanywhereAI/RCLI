@@ -238,7 +238,7 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
             );
 
             // Clear KV cache for fresh second pass
-            llm_.clear_kv_cache();
+            //llm_.clear_kv_cache();
 
             // Second pass: generate WITH streaming to TTS
             SentenceDetector detector(queue_sentence, 3, 25, 7);
@@ -640,6 +640,7 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
 bool Orchestrator::start_live() {
     if (live_running_.load()) return false;
     live_running_.store(true, std::memory_order_release);
+    live_history_.clear();
 
     // Start audio
     audio_.start();
@@ -848,11 +849,32 @@ void Orchestrator::llm_thread_fn() {
         std::string response;
         bool use_tools = !tool_defs.empty() && tools_.needs_tools(user_text);
 
+        // Compute history budget for this turn
+        int ctx_size = llm_.context_size();
+        int system_tokens = llm_.count_tokens(config_.system_prompt);
+        int user_tokens = llm_.count_tokens(user_text);
+        int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
+
+        // Truncate history to fit budget
+        std::vector<std::pair<std::string, std::string>> trimmed;
+        if (!live_history_.empty() && history_budget > 0) {
+            int total = 0;
+            for (int i = static_cast<int>(live_history_.size()) - 1; i >= 0; i--) {
+                int entry_tokens = llm_.count_tokens(
+                    live_history_[i].first + ": " + live_history_[i].second);
+                if (total + entry_tokens > history_budget) break;
+                total += entry_tokens;
+                trimmed.insert(trimmed.begin(), live_history_[i]);
+            }
+        }
+
         if (use_tools) {
-            // First pass: no TTS callback
-            response = llm_.generate_with_tools(
-                user_text, tool_defs, config_.system_prompt, nullptr
-            );
+            // First pass: build prompt with history, no TTS callback
+            std::string augmented_system = llm_.profile().build_tool_system_prompt(
+                config_.system_prompt, tool_defs);
+            std::string prompt = llm_.build_chat_prompt(augmented_system, trimmed, user_text);
+            prompt += llm_.profile().tool_call_start + "\n";
+            response = llm_.profile().tool_call_start + "\n" + llm_.generate(prompt, nullptr);
 
             auto tool_calls = tools_.parse_tool_calls(response);
 
@@ -887,15 +909,17 @@ void Orchestrator::llm_thread_fn() {
             // No tools path (knowledge query) — stream directly
             SentenceDetector detector(queue_sentence, 3, 25, 7);
 
-            if (llm_.has_prompt_cache()) {
+            if (llm_.has_prompt_cache() && trimmed.empty()) {
+                // First turn: use cached system prompt for speed
                 std::string user_portion =
                     "<|im_start|>user\n" + user_text + " /no_think<|im_end|>\n"
                     "<|im_start|>assistant\n";
                 response = llm_.generate_with_cached_prompt(user_portion,
                     [&](const TokenOutput& tok) { detector.feed(tok.text); });
             } else {
+                // Subsequent turns: full prompt with history
                 std::string prompt = llm_.build_chat_prompt(
-                    config_.system_prompt, {}, user_text
+                    config_.system_prompt, trimmed, user_text
                 );
                 response = llm_.generate(prompt, [&](const TokenOutput& tok) {
                     detector.feed(tok.text);
@@ -913,6 +937,18 @@ void Orchestrator::llm_thread_fn() {
         tts_worker.join();
 
         LOG_DEBUG("LLM", "Response: \"%s\"", response.c_str());
+
+        // Record turn in live conversation history
+        std::string clean_response = llm_.profile().clean_output(response);
+        if (!clean_response.empty()) {
+            live_history_.emplace_back("user", user_text);
+            live_history_.emplace_back("assistant", clean_response);
+            // Cap at 20 entries (10 turns)
+            while (live_history_.size() > 20) {
+                live_history_.erase(live_history_.begin());
+                if (!live_history_.empty()) live_history_.erase(live_history_.begin());
+            }
+        }
 
         // Wait for playback to finish, then go back to listening
         while (playback_rb_->available_read() > 0 &&

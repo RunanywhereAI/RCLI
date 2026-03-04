@@ -119,6 +119,11 @@ std::string LlmEngine::detokenize(const std::vector<int32_t>& tokens) {
     return result;
 }
 
+int LlmEngine::count_tokens(const std::string& text) {
+    if (!initialized_) return 0;
+    return static_cast<int>(tokenize(text, false).size());
+}
+
 std::string LlmEngine::generate(const std::string& prompt, TokenCallback on_token) {
     if (!initialized_) return "";
 

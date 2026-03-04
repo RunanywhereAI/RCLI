@@ -101,6 +101,9 @@ public:
     using TranscriptCallback = std::function<void(const std::string& text, bool is_final)>;
     void set_transcript_callback(TranscriptCallback cb) { transcript_cb_ = std::move(cb); }
 
+    // Clear live conversation history
+    void clear_history() { live_history_.clear(); }
+
 private:
     void set_state(PipelineState new_state);
 
@@ -142,6 +145,9 @@ private:
     std::condition_variable text_cv_;
     std::string             pending_text_;
     bool                    text_ready_ = false;
+
+    // Conversation history for live mode (accessed only from llm_thread_fn)
+    std::vector<std::pair<std::string, std::string>> live_history_;
 };
 
 } // namespace rastack
