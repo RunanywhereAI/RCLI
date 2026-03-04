@@ -2,10 +2,7 @@
   <img src="assets/terminal.png" alt="RCLI" width="700" />
 </p>
 
-<p align="center">
-  <strong>On-device voice AI and RAG for macOS.</strong><br>
-  Talk to your Mac, query your docs, no cloud required.
-</p>
+<h3 align="center">Talk to your Mac, query your docs, no cloud required.</h3>
 
 <p align="center">
   <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/platform-macOS-blue" alt="macOS"></a>
