@@ -196,6 +196,7 @@ public:
 
     void run() {
         auto screen_obj = ftxui::ScreenInteractive::Fullscreen();
+        screen_obj.TrackMouse(false);
         screen_ = &screen_obj;
 
         std::string input_text;
@@ -211,8 +212,11 @@ public:
         });
 
         auto handler = CatchEvent(renderer, [&](Event event) -> bool {
-            // --- Universal stop: P always interrupts processing regardless of context ---
-            if ((event == Event::Character('p') || event == Event::Character('P')) &&
+            // --- Bracketed paste / multi-char events → always let Input handle ---
+            if (event.is_character() && event.input().size() > 1) return false;
+
+            // --- Universal stop: ESC always interrupts processing ---
+            if (event == Event::Escape &&
                 (voice_state_ != VoiceState::IDLE || rcli_is_speaking(engine_))) {
                 rcli_stop_processing(engine_);
                 voice_state_ = VoiceState::IDLE;
@@ -223,30 +227,21 @@ public:
 
             // --- Panel mode guards: each panel intercepts all input ---
             if (models_mode_) {
-                if (event == Event::Escape ||
-                    event == Event::Character('m') || event == Event::Character('M')) {
-                    models_mode_ = false; return true;
-                }
+                if (event == Event::Escape) { models_mode_ = false; return true; }
                 if (event == Event::ArrowUp) { models_cursor_up(); return true; }
                 if (event == Event::ArrowDown) { models_cursor_down(); return true; }
                 if (event == Event::Return) { models_select_or_download(); return true; }
                 return true;
             }
             if (actions_mode_) {
-                if (event == Event::Escape ||
-                    event == Event::Character('a') || event == Event::Character('A')) {
-                    actions_mode_ = false; return true;
-                }
+                if (event == Event::Escape) { actions_mode_ = false; return true; }
                 if (event == Event::ArrowUp) { actions_cursor_up(); return true; }
                 if (event == Event::ArrowDown) { actions_cursor_down(); return true; }
                 if (event == Event::Return) { actions_execute_selected(); return true; }
                 return true;
             }
             if (bench_mode_) {
-                if (event == Event::Escape ||
-                    event == Event::Character('b') || event == Event::Character('B')) {
-                    bench_mode_ = false; return true;
-                }
+                if (event == Event::Escape) { bench_mode_ = false; return true; }
                 if (event == Event::ArrowUp) {
                     if (bench_cursor_ > 0) bench_cursor_--;
                     return true;
@@ -283,10 +278,7 @@ public:
                     }
                     return true;
                 }
-                if (event == Event::Escape ||
-                    event == Event::Character('r') || event == Event::Character('R')) {
-                    rag_mode_ = false; return true;
-                }
+                if (event == Event::Escape) { rag_mode_ = false; return true; }
                 if (event == Event::ArrowUp) {
                     if (rag_panel_cursor_ > 0) rag_panel_cursor_--;
                     return true;
@@ -299,10 +291,7 @@ public:
                 return true;
             }
             if (cleanup_mode_) {
-                if (event == Event::Escape ||
-                    event == Event::Character('d') || event == Event::Character('D')) {
-                    cleanup_mode_ = false; return true;
-                }
+                if (event == Event::Escape) { cleanup_mode_ = false; return true; }
                 if (event == Event::ArrowUp) {
                     if (cleanup_cursor_ > 0) cleanup_cursor_--;
                     cleanup_message_.clear();
@@ -325,7 +314,10 @@ public:
                 return true;
             }
 
-            // --- Shortcut keys (no panel open) ---
+            // --- When user is typing (input not empty), let all chars go to Input ---
+            if (!input_text.empty() && event.is_character()) return false;
+
+            // --- Shortcut keys (no panel open, input empty) ---
 
             // ESC while idle + empty input → quit
             if (event == Event::Escape && input_text.empty() &&
@@ -336,67 +328,14 @@ public:
                 return true;
             }
 
-            // Q = quit
-            if (event == Event::Character('q')) {
-                if (input_text.empty() && voice_state_ == VoiceState::IDLE) {
-                    rcli_stop_processing(engine_);
-                    should_quit = true;
-                    screen_->Exit();
-                    return true;
-                }
-            }
-
-            // M = models panel
-            if (event == Event::Character('m') || event == Event::Character('M')) {
-                if (input_text.empty() && voice_state_ == VoiceState::IDLE) {
-                    enter_models_mode();
-                    return true;
-                }
-            }
-
-            // A = actions panel
-            if (event == Event::Character('a') || event == Event::Character('A')) {
-                if (input_text.empty() && voice_state_ == VoiceState::IDLE) {
-                    enter_actions_mode();
-                    return true;
-                }
-            }
-
-            // B = benchmark panel
-            if (event == Event::Character('b') || event == Event::Character('B')) {
-                if (input_text.empty() && voice_state_ == VoiceState::IDLE) {
-                    enter_bench_mode();
-                    return true;
-                }
-            }
-
-            // R = RAG panel
-            if (event == Event::Character('r') || event == Event::Character('R')) {
-                if (input_text.empty() && voice_state_ == VoiceState::IDLE) {
-                    enter_rag_mode();
-                    return true;
-                }
-            }
-
-            // D = cleanup panel
-            if (event == Event::Character('d') || event == Event::Character('D')) {
-                if (input_text.empty() && voice_state_ == VoiceState::IDLE) {
-                    close_all_panels();
-                    enter_cleanup_mode();
-                    return true;
-                }
-            }
-
             // SPACE with empty input → toggle push-to-talk
-            if (event == Event::Character(' ')) {
-                if (input_text.empty()) {
-                    if (voice_state_ == VoiceState::IDLE) {
-                        start_recording();
-                    } else if (voice_state_ == VoiceState::RECORDING) {
-                        stop_recording();
-                    }
-                    return true;
+            if (event == Event::Character(' ') && input_text.empty()) {
+                if (voice_state_ == VoiceState::IDLE) {
+                    start_recording();
+                } else if (voice_state_ == VoiceState::RECORDING) {
+                    stop_recording();
                 }
+                return true;
             }
 
             // ENTER
@@ -410,6 +349,22 @@ public:
                     input_text.clear();
                     return true;
                 }
+            }
+
+            // Single-letter shortcuts only when input is empty and idle
+            if (input_text.empty() && voice_state_ == VoiceState::IDLE && event.is_character()) {
+                auto c = event.character();
+                if (c == "q" || c == "Q") {
+                    rcli_stop_processing(engine_);
+                    should_quit = true;
+                    screen_->Exit();
+                    return true;
+                }
+                if (c == "m" || c == "M") { enter_models_mode(); return true; }
+                if (c == "a" || c == "A") { enter_actions_mode(); return true; }
+                if (c == "b" || c == "B") { enter_bench_mode(); return true; }
+                if (c == "r" || c == "R") { enter_rag_mode(); return true; }
+                if (c == "d" || c == "D") { close_all_panels(); enter_cleanup_mode(); return true; }
             }
 
             return false;
@@ -798,10 +753,9 @@ private:
             for (size_t i = 0; i < chat_history_.size(); i++) {
                 auto& msg = chat_history_[i];
                 auto prefix_color = msg.is_user ? theme_.user_msg : theme_.accent;
-                Elements row;
-                row.push_back(text("  " + msg.prefix + " ") | ftxui::bold | ftxui::color(prefix_color));
-                row.push_back(text(msg.text));
-                auto line = hbox(std::move(row));
+                auto prefix_elem = text("  " + msg.prefix + " ") | ftxui::bold | ftxui::color(prefix_color);
+                auto body_elem = paragraph(msg.text);
+                auto line = hbox({prefix_elem, body_elem | flex});
                 if (i == chat_history_.size() - 1 && msg.perf.empty())
                     line = line | focus;
                 lines.push_back(line);
@@ -842,35 +796,35 @@ private:
             return hbox({
                 text(" Model Cleanup ") | ftxui::bold | ftxui::color(theme_.accent),
                 filler(),
-                text("[Up/Down] navigate  [Enter] delete  [ESC/D] close ") | dim,
+                text("[Up/Down] navigate  [Enter] delete  [ESC] close ") | dim,
             });
         }
         if (models_mode_) {
             return hbox({
                 text(" Models ") | ftxui::bold | ftxui::color(theme_.accent),
                 filler(),
-                text("[Up/Down] navigate  [Enter] select/download  [ESC/M] close ") | dim,
+                text("[Up/Down] navigate  [Enter] select/download  [ESC] close ") | dim,
             });
         }
         if (actions_mode_) {
             return hbox({
                 text(" Actions ") | ftxui::bold | ftxui::color(theme_.accent),
                 filler(),
-                text("[Up/Down] navigate  [Enter] run  [ESC/A] close ") | dim,
+                text("[Up/Down] navigate  [Enter] run  [ESC] close ") | dim,
             });
         }
         if (bench_mode_) {
             return hbox({
                 text(" Benchmarks ") | ftxui::bold | ftxui::color(theme_.accent),
                 filler(),
-                text("[Up/Down] navigate  [Enter] run  [ESC/B] close ") | dim,
+                text("[Up/Down] navigate  [Enter] run  [ESC] close ") | dim,
             });
         }
         if (rag_mode_) {
             return hbox({
                 text(" RAG ") | ftxui::bold | ftxui::color(theme_.accent),
                 filler(),
-                text("[Up/Down] navigate  [Enter] select  [ESC/R] close ") | dim,
+                text("[Up/Down] navigate  [Enter] select  [ESC] close ") | dim,
             });
         }
 
@@ -878,7 +832,7 @@ private:
 
         Elements right_items;
         if (processing)
-            right_items.push_back(text("[P] stop ") | ftxui::bold | ftxui::color(theme_.error));
+            right_items.push_back(text("[ESC] stop ") | ftxui::bold | ftxui::color(theme_.error));
         right_items.push_back(text("[SPACE] talk ") | dim);
         right_items.push_back(text("[M] models ") | dim);
         right_items.push_back(text("[A] actions ") | dim);
@@ -966,7 +920,7 @@ private:
     Element build_cleanup_panel() {
         Elements lines;
         lines.push_back(text("  Model Cleanup") | ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Arrow keys to navigate, ENTER to delete, ESC/D to close") | dim);
+        lines.push_back(text("  Arrow keys to navigate, ENTER to delete, ESC to close") | dim);
         lines.push_back(text(""));
 
         if (cleanup_entries_.empty()) {
@@ -1154,7 +1108,7 @@ private:
     Element build_models_panel_interactive() {
         Elements lines;
         lines.push_back(text("  Models") | ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Up/Down navigate, ENTER select/download, ESC/M close") | dim);
+        lines.push_back(text("  Up/Down navigate, ENTER select/download, ESC close") | dim);
         lines.push_back(text(""));
 
         for (int i = 0; i < (int)models_entries_.size(); i++) {
@@ -1277,7 +1231,7 @@ private:
         Elements lines;
         lines.push_back(text("  Actions (" + std::to_string(action_count) + ")") |
             ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Up/Down navigate, ENTER run, ESC/A close") | dim);
+        lines.push_back(text("  Up/Down navigate, ENTER run, ESC close") | dim);
         lines.push_back(text(""));
 
         for (int i = 0; i < (int)actions_entries_.size(); i++) {
@@ -1381,7 +1335,7 @@ private:
         Elements lines;
         lines.push_back(text("  Benchmarks") |
             ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Up/Down navigate, ENTER run, ESC/B close") | dim);
+        lines.push_back(text("  Up/Down navigate, ENTER run, ESC close") | dim);
         lines.push_back(text(""));
 
         if (engine_) {
@@ -1529,7 +1483,7 @@ private:
         Elements lines;
         lines.push_back(text("  RAG") |
             ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Up/Down navigate, ENTER select, ESC/R close") | dim);
+        lines.push_back(text("  Up/Down navigate, ENTER select, ESC close") | dim);
         lines.push_back(text(""));
 
         std::string status_str = rag_loaded_.load()
@@ -1611,7 +1565,7 @@ private:
             add_system_message("  rag delete       Clear RAG + delete on-disk index");
             add_system_message("--- Shortcuts ---");
             add_system_message("  SPACE            Push-to-talk recording");
-            add_system_message("  P / ESC          Stop all processing (LLM/TTS/STT)");
+            add_system_message("  ESC              Stop all processing (LLM/TTS/STT)");
             add_system_message("  M                Models panel (browse/switch/download)");
             add_system_message("  A                Actions panel (browse/run)");
             add_system_message("  B                Benchmarks panel (run benchmarks)");

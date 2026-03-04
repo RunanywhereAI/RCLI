@@ -32,7 +32,8 @@ struct PipelineConfig {
     size_t tts_ring_capacity   = 22050 * 30;         // ~30 sec at 22050Hz
 
     std::string system_prompt =
-        "You are a helpful voice assistant. Your responses will be spoken aloud, "
+        "You are RCLI, the RunAnywhere Command Line Interface — an on-device voice AI assistant "
+        "for macOS, built by RunAnywhere, Inc. Your responses will be spoken aloud, "
         "so keep them natural and conversational. "
         "IMPORTANT: Never use asterisks, bullet points, numbered lists, markdown formatting, "
         "or any special symbols in your response. Write in plain conversational sentences only. "
