@@ -795,19 +795,26 @@ private:
             lines.push_back(text("") | dim);
             lines.push_back(text("  Try: \"open Safari\"   \"what's the weather?\"   \"set volume to 50\"") | dim);
         } else {
-            for (auto& msg : chat_history_) {
+            for (size_t i = 0; i < chat_history_.size(); i++) {
+                auto& msg = chat_history_[i];
                 auto prefix_color = msg.is_user ? theme_.user_msg : theme_.accent;
                 Elements row;
                 row.push_back(text("  " + msg.prefix + " ") | ftxui::bold | ftxui::color(prefix_color));
                 row.push_back(text(msg.text));
-                lines.push_back(hbox(std::move(row)));
+                auto line = hbox(std::move(row));
+                if (i == chat_history_.size() - 1 && msg.perf.empty())
+                    line = line | focus;
+                lines.push_back(line);
                 if (!msg.perf.empty()) {
-                    lines.push_back(text("    " + msg.perf) | dim);
+                    auto perf_elem = text("    " + msg.perf) | dim;
+                    if (i == chat_history_.size() - 1)
+                        perf_elem = perf_elem | focus;
+                    lines.push_back(perf_elem);
                 }
             }
         }
 
-        return vbox(std::move(lines));
+        return vbox(std::move(lines)) | yframe | vscroll_indicator;
     }
 
     Element build_input_bar(const std::string& input_text) {
@@ -977,7 +984,7 @@ private:
 
                 auto elem = text(line);
                 if (selected)
-                    elem = elem | ftxui::bold | ftxui::color(theme_.text_selected);
+                    elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
                 else if (e.is_active)
                     elem = elem | ftxui::color(theme_.success);
                 else
@@ -991,7 +998,7 @@ private:
             lines.push_back(text("  " + cleanup_message_) | ftxui::bold | ftxui::color(cleanup_msg_color_));
         }
 
-        return vbox(std::move(lines));
+        return vbox(std::move(lines)) | yframe | vscroll_indicator;
     }
 
     // ====================================================================
@@ -1056,6 +1063,7 @@ private:
             e.is_active = (tts_active && tts_active->id == v.id);
             e.is_default = v.is_default; e.is_recommended = v.is_recommended;
             e.url = v.download_url; e.filename = v.dir_name; e.is_archive = true;
+            e.archive_dir = v.archive_dir;
             models_entries_.push_back(e);
         }
 
@@ -1108,10 +1116,18 @@ private:
             std::string id = e.id, nm = e.name;
             bool archive = e.is_archive;
 
-            std::thread([this, idx, dir, url, fname, mod, id, nm, archive]() {
+            std::string archive_dir_name = e.archive_dir;
+            std::thread([this, idx, dir, url, fname, mod, id, nm, archive, archive_dir_name]() {
                 int rc;
                 if (archive) {
                     rc = system(("curl -sL '" + url + "' | tar xj -C '" + dir + "' 2>/dev/null").c_str());
+                    if (rc == 0 && !archive_dir_name.empty() && archive_dir_name != fname) {
+                        std::string src = dir + "/" + archive_dir_name;
+                        std::string dst = dir + "/" + fname;
+                        struct stat st;
+                        if (stat(src.c_str(), &st) == 0 && stat(dst.c_str(), &st) != 0)
+                            rename(src.c_str(), dst.c_str());
+                    }
                 } else {
                     rc = system(("curl -sL -o '" + dir + "/" + fname + "' '" + url + "' 2>/dev/null").c_str());
                 }
@@ -1162,7 +1178,7 @@ private:
             std::string line = prefix + e.name + star + "  " + size_str + status;
 
             auto elem = text(line);
-            if (selected) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected);
+            if (selected) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
             else if (e.is_active) elem = elem | ftxui::color(theme_.success);
             else if (e.installed) elem = elem | dim;
             else elem = elem | ftxui::color(theme_.text_muted);
@@ -1174,7 +1190,7 @@ private:
             lines.push_back(text("  " + models_message_) |
                 ftxui::bold | ftxui::color(models_msg_color_));
         }
-        return vbox(std::move(lines));
+        return vbox(std::move(lines)) | yframe | vscroll_indicator;
     }
 
     // ====================================================================
@@ -1264,13 +1280,7 @@ private:
         lines.push_back(text("  Up/Down navigate, ENTER run, ESC/A close") | dim);
         lines.push_back(text(""));
 
-        int total = (int)actions_entries_.size();
-        int visible = 20;
-        int start = std::max(0, actions_cursor_ - visible / 2);
-        int end = std::min(total, start + visible);
-        if (end - start < visible) start = std::max(0, end - visible);
-
-        for (int i = start; i < end; i++) {
+        for (int i = 0; i < (int)actions_entries_.size(); i++) {
             auto& e = actions_entries_[i];
             if (e.is_header) {
                 lines.push_back(text("  --- " + e.name + " ---") |
@@ -1286,7 +1296,7 @@ private:
                 line += "  " + desc;
             }
             auto elem = text(line);
-            if (sel) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected);
+            if (sel) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
             else elem = elem | dim;
             lines.push_back(elem);
         }
@@ -1296,7 +1306,7 @@ private:
             lines.push_back(text("  " + actions_message_) |
                 ftxui::bold | ftxui::color(actions_msg_color_));
         }
-        return vbox(std::move(lines));
+        return vbox(std::move(lines)) | yframe | vscroll_indicator;
     }
 
     // ====================================================================
@@ -1390,7 +1400,7 @@ private:
             bool sel = (i == bench_cursor_);
             std::string prefix = sel ? " > " : "   ";
             auto elem = text(prefix + bench_entries_[i].name);
-            if (sel) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected);
+            if (sel) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
             else elem = elem | dim;
             lines.push_back(elem);
         }
@@ -1399,12 +1409,16 @@ private:
             lines.push_back(text(""));
             std::istringstream iss(bench_output_);
             std::string line;
-            while (std::getline(iss, line)) {
+            std::vector<std::string> out_lines;
+            while (std::getline(iss, line)) out_lines.push_back(line);
+            for (size_t i = 0; i < out_lines.size(); i++) {
                 auto c = bench_running_ ? theme_.warning : theme_.success;
-                lines.push_back(text("  " + line) | ftxui::color(c));
+                auto elem = text("  " + out_lines[i]) | ftxui::color(c);
+                if (i == out_lines.size() - 1) elem = elem | focus;
+                lines.push_back(elem);
             }
         }
-        return vbox(std::move(lines));
+        return vbox(std::move(lines)) | yframe | vscroll_indicator;
     }
 
     // ====================================================================
@@ -1537,7 +1551,7 @@ private:
             if (disabled)
                 elem = elem | dim | ftxui::color(theme_.text_muted);
             else if (sel)
-                elem = elem | ftxui::bold | ftxui::color(theme_.text_selected);
+                elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
             else
                 elem = elem | dim;
             lines.push_back(elem);
@@ -1562,7 +1576,7 @@ private:
         lines.push_back(text(""));
         lines.push_back(
             text("  Tip: You can also drag a file into the main chat to auto-index.") | dim);
-        return vbox(std::move(lines));
+        return vbox(std::move(lines)) | yframe | vscroll_indicator;
     }
 
     // ====================================================================
@@ -1904,6 +1918,7 @@ private:
     // Models panel state
     struct ModelEntry {
         std::string name, id, modality, url, filename;
+        std::string archive_dir;
         int size_mb = 0;
         bool installed = false, is_active = false, is_default = false;
         bool is_recommended = false, is_header = false, is_archive = false;

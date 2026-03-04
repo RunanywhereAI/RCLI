@@ -50,7 +50,7 @@ fi
 
 # --- STT: Zipformer streaming (sherpa-onnx format) ---
 ZIPFORMER_DIR="$MODELS_DIR/zipformer"
-if [ -d "$ZIPFORMER_DIR" ] && [ -f "$ZIPFORMER_DIR/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx" ]; then
+if [ -d "$ZIPFORMER_DIR" ] && [ -f "$ZIPFORMER_DIR/encoder-epoch-99-avg-1.int8.onnx" ]; then
     echo "[ok] Zipformer model already exists"
 else
     echo "Downloading: Downloading Zipformer streaming (~15MB)..."

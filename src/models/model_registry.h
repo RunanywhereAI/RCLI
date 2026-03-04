@@ -275,32 +275,59 @@ inline std::string read_selected_model_id() {
     return result;
 }
 
-// Write the user-selected model id to config
+// Write the user-selected model id to config (preserves other keys like tts_model=, stt_model=)
 inline bool write_selected_model_id(const std::string& model_id) {
     std::string path = config_path();
     if (path.empty()) return false;
 
-    // Ensure directory exists
     std::string dir = path.substr(0, path.rfind('/'));
-    // mkdir -p equivalent
     std::string cmd = "mkdir -p '" + dir + "'";
     (void)system(cmd.c_str());
 
-    FILE* f = fopen(path.c_str(), "w");
+    std::vector<std::string> lines;
+    bool found = false;
+    FILE* f = fopen(path.c_str(), "r");
+    if (f) {
+        char buf[512];
+        while (fgets(buf, sizeof(buf), f)) {
+            std::string s(buf);
+            if (s.find("model=") == 0) {
+                lines.push_back("model=" + model_id + "\n");
+                found = true;
+            } else {
+                lines.push_back(s);
+            }
+        }
+        fclose(f);
+    }
+    if (!found) lines.push_back("model=" + model_id + "\n");
+
+    f = fopen(path.c_str(), "w");
     if (!f) return false;
-    fprintf(f, "model=%s\n", model_id.c_str());
+    for (auto& l : lines) fputs(l.c_str(), f);
     fclose(f);
     return true;
 }
 
-// Clear the user's model selection (revert to auto-detect)
+// Clear the user's model selection (preserves other keys)
 inline bool clear_selected_model() {
     std::string path = config_path();
     if (path.empty()) return false;
-    FILE* f = fopen(path.c_str(), "w");
+
+    std::vector<std::string> lines;
+    FILE* f = fopen(path.c_str(), "r");
+    if (f) {
+        char buf[512];
+        while (fgets(buf, sizeof(buf), f)) {
+            std::string s(buf);
+            if (s.find("model=") != 0) lines.push_back(s);
+        }
+        fclose(f);
+    }
+
+    f = fopen(path.c_str(), "w");
     if (!f) return false;
-    // Write empty config
-    fprintf(f, "# RCLI config\n# model=<id> to pin a specific model\n");
+    for (auto& l : lines) fputs(l.c_str(), f);
     fclose(f);
     return true;
 }

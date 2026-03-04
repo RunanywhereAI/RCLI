@@ -44,6 +44,7 @@ struct SttModelDef {
     std::string decoder_file;
     std::string joiner_file;   // Zipformer/Parakeet transducer only
     std::string tokens_file;
+    std::string archive_dir;   // Directory name inside tar.bz2 (empty = same as dir_name)
 };
 
 // ---------------------------------------------------------------------------
@@ -71,6 +72,7 @@ inline std::vector<SttModelDef> all_stt_models() {
             /* decoder_file  */ "decoder-epoch-99-avg-1.int8.onnx",
             /* joiner_file   */ "joiner-epoch-99-avg-1.int8.onnx",
             /* tokens_file   */ "tokens.txt",
+            /* archive_dir   */ "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
         },
 
         // =================================================================
@@ -93,6 +95,7 @@ inline std::vector<SttModelDef> all_stt_models() {
             /* decoder_file  */ "base.en-decoder.int8.onnx",
             /* joiner_file   */ "",
             /* tokens_file   */ "base.en-tokens.txt",
+            /* archive_dir   */ "sherpa-onnx-whisper-base.en",
         },
         {
             /* id            */ "parakeet-tdt",
@@ -111,6 +114,7 @@ inline std::vector<SttModelDef> all_stt_models() {
             /* decoder_file  */ "decoder.int8.onnx",
             /* joiner_file   */ "joiner.int8.onnx",
             /* tokens_file   */ "tokens.txt",
+            /* archive_dir   */ "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
         },
     };
 }

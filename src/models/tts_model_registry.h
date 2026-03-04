@@ -22,6 +22,7 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include <sys/stat.h>
 
 namespace rcli {
 
@@ -48,6 +49,7 @@ struct TtsModelDef {
     std::string lexicon_file;  // lexicon file (Kokoro multi-lang only)
     std::string lang;          // language code (Kokoro multi-lang only, e.g. "en-us")
     bool        needs_espeak;  // Whether espeak-ng-data/ is required as phonemizer
+    std::string archive_dir;   // Directory name inside tar.bz2 (empty = same as dir_name)
 };
 
 // ---------------------------------------------------------------------------
@@ -80,6 +82,7 @@ inline std::vector<TtsModelDef> all_tts_models() {
             /* lexicon_file  */ "",
             /* lang          */ "",
             /* needs_espeak  */ true,
+            /* archive_dir   */ "vits-piper-en_US-lessac-medium",
         },
 
         // =================================================================
@@ -90,7 +93,7 @@ inline std::vector<TtsModelDef> all_tts_models() {
             /* name          */ "Piper Amy (English)",
             /* architecture  */ "vits",
             /* dir_name      */ "piper-amy",
-            /* download_url  */ "",  // Individual files, not tar.bz2
+            /* download_url  */ "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-medium.tar.bz2",
             /* size_mb       */ 60,
             /* num_speakers  */ 1,
             /* priority      */ 5,
@@ -106,6 +109,7 @@ inline std::vector<TtsModelDef> all_tts_models() {
             /* lexicon_file  */ "",
             /* lang          */ "",
             /* needs_espeak  */ true,
+            /* archive_dir   */ "vits-piper-en_US-amy-medium",
         },
         {
             /* id            */ "kitten-nano",
@@ -128,6 +132,7 @@ inline std::vector<TtsModelDef> all_tts_models() {
             /* lexicon_file  */ "",
             /* lang          */ "",
             /* needs_espeak  */ true,
+            /* archive_dir   */ "",
         },
         {
             /* id            */ "matcha-ljspeech",
@@ -150,6 +155,7 @@ inline std::vector<TtsModelDef> all_tts_models() {
             /* lexicon_file  */ "",
             /* lang          */ "",
             /* needs_espeak  */ true,
+            /* archive_dir   */ "",
         },
         {
             /* id            */ "kokoro-en",
@@ -172,6 +178,7 @@ inline std::vector<TtsModelDef> all_tts_models() {
             /* lexicon_file  */ "",
             /* lang          */ "",
             /* needs_espeak  */ true,
+            /* archive_dir   */ "",
         },
         {
             /* id            */ "kokoro-multi",
@@ -194,6 +201,7 @@ inline std::vector<TtsModelDef> all_tts_models() {
             /* lexicon_file  */ "lexicon-us-en.txt",
             /* lang          */ "en-us",
             /* needs_espeak  */ true,
+            /* archive_dir   */ "",
         },
     };
 }
@@ -202,12 +210,27 @@ inline std::vector<TtsModelDef> all_tts_models() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Check if a TTS model is installed (its directory + model file exist)
+// Check if a TTS model is fully installed (all required files exist)
 inline bool is_tts_installed(const std::string& models_dir, const TtsModelDef& m) {
-    std::string path = models_dir + "/" + m.dir_name + "/" + m.model_file;
-    FILE* f = fopen(path.c_str(), "r");
-    if (f) { fclose(f); return true; }
-    return false;
+    auto check_file = [&](const std::string& rel) -> bool {
+        if (rel.empty()) return true;
+        std::string path = models_dir + "/" + m.dir_name + "/" + rel;
+        FILE* f = fopen(path.c_str(), "r");
+        if (f) { fclose(f); return true; }
+        return false;
+    };
+    if (!check_file(m.model_file))  return false;
+    if (!check_file(m.tokens_file)) return false;
+    if (!check_file(m.config_file)) return false;
+    if (!check_file(m.voices_file)) return false;
+    if (!check_file(m.vocoder_file)) return false;
+    if (m.needs_espeak) {
+        std::string espeak = models_dir + "/espeak-ng-data";
+        struct stat st;
+        if (stat(espeak.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+            return false;
+    }
+    return true;
 }
 
 // Find the highest-priority TTS model that exists in models_dir

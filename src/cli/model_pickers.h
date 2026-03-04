@@ -195,6 +195,7 @@ inline int pick_stt(const std::string& models_dir) {
         if (!confirm_download()) { picker_cancelled(); return 0; }
 
         std::string archive = "/tmp/" + sel.dir_name + ".tar.bz2";
+        std::string extract_dir = sel.archive_dir.empty() ? sel.dir_name : sel.archive_dir;
         std::string cmd = "bash -c '"
             "set -e; "
             "echo \"  Downloading " + sel.name + " (~" + rcli::format_size(sel.size_mb) + ")...\"; "
@@ -203,9 +204,9 @@ inline int pick_stt(const std::string& models_dir) {
             "echo \"\"; echo \"  Extracting...\"; "
             "cd /tmp && tar xjf \"" + archive + "\"; "
             "mkdir -p \"" + models_dir + "/" + sel.dir_name + "\"; "
-            "cp /tmp/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/*.onnx \"" + models_dir + "/" + sel.dir_name + "/\"; "
-            "cp /tmp/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/tokens.txt \"" + models_dir + "/" + sel.dir_name + "/\"; "
-            "rm -rf /tmp/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 \"" + archive + "\"; "
+            "cp /tmp/" + extract_dir + "/*.onnx \"" + models_dir + "/" + sel.dir_name + "/\"; "
+            "cp /tmp/" + extract_dir + "/tokens.txt \"" + models_dir + "/" + sel.dir_name + "/\"; "
+            "rm -rf /tmp/" + extract_dir + " \"" + archive + "\"; "
             "echo \"  Done!\"; '";
         fprintf(stderr, "\n");
         if (system(cmd.c_str()) != 0) {
@@ -289,11 +290,19 @@ inline int pick_tts(const std::string& models_dir) {
         fflush(stderr);
         if (!confirm_download()) { picker_cancelled(); return 0; }
         std::string archive = models_dir + "/" + sel.dir_name + ".tar.bz2";
+        std::string extract_name = sel.archive_dir.empty() ? sel.dir_name : sel.archive_dir;
+        std::string rename_step;
+        if (!sel.archive_dir.empty() && sel.archive_dir != sel.dir_name) {
+            rename_step = "if [ -d '" + models_dir + "/" + extract_name + "' ] && "
+                "[ ! -d '" + models_dir + "/" + sel.dir_name + "' ]; then "
+                "mv '" + models_dir + "/" + extract_name + "' '" + models_dir + "/" + sel.dir_name + "'; fi; ";
+        }
         std::string cmd = "bash -c '"
             "set -e; echo \"  Downloading " + sel.name + " (~" + rcli::format_size(sel.size_mb) +
             ")...\"; echo \"\"; curl -L -# -o \"" + archive + "\" \"" + sel.download_url +
             "\"; echo \"\"; echo \"  Extracting...\"; cd \"" + models_dir +
-            "\" && tar xjf \"" + archive + "\"; rm -f \"" + archive + "\"; echo \"  Done!\"; '";
+            "\" && tar xjf \"" + archive + "\"; " + rename_step +
+            "rm -f \"" + archive + "\"; echo \"  Done!\"; '";
         fprintf(stderr, "\n");
         if (system(cmd.c_str()) != 0) {
             fprintf(stderr, "\n  %s%sDownload failed.%s\n\n", color::bold, color::red, color::reset);
