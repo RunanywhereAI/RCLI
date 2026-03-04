@@ -103,6 +103,9 @@ public:
     std::string detokenize(const std::vector<int32_t>& tokens);
     std::string token_to_text(int32_t token);
 
+    // Count tokens in a string (for history budget management)
+    int count_tokens(const std::string& text);
+
     // Runtime config overrides for benchmarking
     void set_max_tokens(int n) { config_.max_tokens = n; }
     void set_ignore_eos(bool v) { config_.ignore_eos = v; }

@@ -77,6 +77,9 @@ int rcli_is_speaking(RCLIHandle handle);
 // Safe to call from any thread. Non-blocking.
 void rcli_stop_processing(RCLIHandle handle);
 
+// Clear conversation history (start a fresh conversation within the session)
+void rcli_clear_history(RCLIHandle handle);
+
 // Get the last transcript from STT
 const char* rcli_get_transcript(RCLIHandle handle);
 
