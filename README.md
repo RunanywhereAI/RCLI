@@ -43,7 +43,9 @@ brew install rcli
 rcli setup     # downloads default models (~1GB, one-time)
 ```
 
-Requires macOS on Apple Silicon (M1 or later).
+Requires macOS 13+ on Apple Silicon (M1 or later).
+
+> **macOS 26 beta:** Homebrew's CLT version check does not yet recognize macOS 26. If `brew install` fails with a Command Line Tools error, install manually from the [latest release](https://github.com/RunanywhereAI/RCLI/releases/latest) tarball or [build from source](#build-from-source).
 
 ## Quick Start
 
