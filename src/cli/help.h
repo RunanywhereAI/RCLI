@@ -200,10 +200,21 @@ inline void print_banner(const Args& /*args*/) {
         u8"╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝",
     };
 
+    static const int art_visual_width = 28;
+    static const char* tagline = "On-device voice AI and RAG for macOS";
+    static const int tagline_len = 36;
+    static const char* powered = "Powered by RunAnywhere";
+    static const int powered_len = 22;
+
+    int tw = get_terminal_width();
+    int art_pad = (tw > art_visual_width) ? (tw - art_visual_width) / 2 : 0;
+    int tag_pad = (tw > tagline_len) ? (tw - tagline_len) / 2 : 0;
+    int pow_pad = (tw > powered_len) ? (tw - powered_len) / 2 : 0;
+
     fprintf(stderr, "\n");
     for (int i = 0; i < 6; i++) {
-        fprintf(stderr, "  %s%s%s%s\n", color::bold, color::orange, art[i], color::reset);
+        fprintf(stderr, "%*s%s%s%s%s\n", art_pad, "", color::bold, color::orange, art[i], color::reset);
     }
-    fprintf(stderr, "  %sOn-Device Voice AI + RAG  •  Powered by RunAnywhere%s\n\n",
-            color::dim, color::reset);
+    fprintf(stderr, "%*s%s%s%s\n", tag_pad, "", color::dim, tagline, color::reset);
+    fprintf(stderr, "%*s%s%s%s\n\n", pow_pad, "", color::dim, powered, color::reset);
 }

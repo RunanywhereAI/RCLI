@@ -777,15 +777,21 @@ private:
 
         if (chat_history_.empty()) {
             lines.push_back(text("") | dim);
-            lines.push_back(
-                text("  Welcome to RCLI") | ftxui::bold | ftxui::color(theme_.accent));
+            lines.push_back(text(u8"██████╗  ██████╗██╗     ██╗") | ftxui::bold | ftxui::color(theme_.accent) | center);
+            lines.push_back(text(u8"██╔══██╗██╔════╝██║     ██║") | ftxui::bold | ftxui::color(theme_.accent) | center);
+            lines.push_back(text(u8"██████╔╝██║     ██║     ██║") | ftxui::bold | ftxui::color(theme_.accent) | center);
+            lines.push_back(text(u8"██╔══██╗██║     ██║     ██║") | ftxui::bold | ftxui::color(theme_.accent) | center);
+            lines.push_back(text(u8"██║  ██║╚██████╗███████╗██║") | ftxui::bold | ftxui::color(theme_.accent) | center);
+            lines.push_back(text(u8"╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝") | ftxui::bold | ftxui::color(theme_.accent) | center);
+            lines.push_back(text("On-device voice AI and RAG for macOS") | dim | center);
+            lines.push_back(text("Powered by RunAnywhere") | dim | center);
             lines.push_back(text("") | dim);
-            lines.push_back(text("  SPACE       Start/stop voice recording") | dim);
+            lines.push_back(text("  SPACE          Start/stop voice recording") | dim);
             lines.push_back(text("  Type + ENTER   Send a text command or question") | dim);
-            lines.push_back(text("  help        Show all commands") | dim);
+            lines.push_back(text("  help           Show all commands") | dim);
             lines.push_back(text("") | dim);
             lines.push_back(
-                text("  RAG:  Drag a file or folder here to index it, then ask questions about it.") | ftxui::bold);
+                text("  RAG: Drag a file or folder here to index it, then ask questions about it.") | ftxui::bold);
             lines.push_back(text("") | dim);
             lines.push_back(text("  Try: \"open Safari\"   \"what's the weather?\"   \"set volume to 50\"") | dim);
         } else {

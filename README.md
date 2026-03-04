@@ -1,10 +1,19 @@
-![RCLI](assets/terminal.png)
+<p align="center">
+  <img src="assets/terminal.png" alt="RCLI" width="700" />
+</p>
 
-# RCLI
+<p align="center">
+  <strong>On-device voice AI and RAG for macOS.</strong><br>
+  Talk to your Mac, query your docs, no cloud required.
+</p>
 
-**Voice-first AI for macOS. Talk to your Mac, query your docs, all on-device.**
-
-[![macOS](https://img.shields.io/badge/platform-macOS-blue)](https://github.com/RunanywhereAI/RCLI) [![Apple Silicon](https://img.shields.io/badge/chip-Apple_Silicon-black)](https://github.com/RunanywhereAI/RCLI) [![C++17](https://img.shields.io/badge/language-C++17-orange)](https://github.com/RunanywhereAI/RCLI) [![Local](https://img.shields.io/badge/inference-100%25_local-green)](https://github.com/RunanywhereAI/RCLI) [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+<p align="center">
+  <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/platform-macOS-blue" alt="macOS"></a>
+  <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/chip-Apple_Silicon-black" alt="Apple Silicon"></a>
+  <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/language-C++17-orange" alt="C++17"></a>
+  <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/inference-100%25_local-green" alt="Local"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
+</p>
 
 A complete STT + LLM + TTS pipeline running on Apple Silicon with Metal GPU. 40 macOS actions via voice or text. Local RAG over your documents. Sub-200ms end-to-end latency. No cloud, no API keys.
 
