@@ -51,10 +51,10 @@ static int tests_failed = 0;
     tests_run++; \
     if (expr) { \
         tests_passed++; \
-        fprintf(stderr, "  \033[32m✓\033[0m %s\n", name); \
+        fprintf(stderr, "  \033[32m[PASS]\033[0m %s\n", name); \
     } else { \
         tests_failed++; \
-        fprintf(stderr, "  \033[31m✗\033[0m %s\n", name); \
+        fprintf(stderr, "  \033[31m[FAIL]\033[0m %s\n", name); \
     } \
 } while(0)
 
@@ -194,7 +194,7 @@ static void test_llm(const std::string& models_dir) {
 
     std::string model_path = models_dir + "/lfm2-1.2b-tool-q4_k_m.gguf";
     if (!file_exists(model_path)) {
-        fprintf(stderr, "  \033[33m⚠ Skipped: model not found at %s\033[0m\n", model_path.c_str());
+        fprintf(stderr, "  \033[33m[SKIP] Skipped: model not found at %s\033[0m\n", model_path.c_str());
         return;
     }
 
@@ -295,7 +295,7 @@ static void test_stt(const std::string& models_dir) {
     std::string tokens  = models_dir + "/whisper-base.en/base.en-tokens.txt";
 
     if (!file_exists(encoder)) {
-        fprintf(stderr, "  \033[33m⚠ Skipped: Whisper model not found at %s\033[0m\n", encoder.c_str());
+        fprintf(stderr, "  \033[33m[SKIP] Skipped: Whisper model not found at %s\033[0m\n", encoder.c_str());
         return;
     }
 
@@ -342,7 +342,7 @@ static void test_stt(const std::string& models_dir) {
     std::string tok = models_dir + "/zipformer/tokens.txt";
 
     if (!file_exists(enc)) {
-        fprintf(stderr, "  \033[33m⚠ Skipped: Zipformer model not found at %s\033[0m\n", enc.c_str());
+        fprintf(stderr, "  \033[33m[SKIP] Skipped: Zipformer model not found at %s\033[0m\n", enc.c_str());
         return;
     }
 
@@ -388,7 +388,7 @@ static void test_tts(const std::string& models_dir) {
     std::string data_dir = models_dir + "/espeak-ng-data";
 
     if (!file_exists(model)) {
-        fprintf(stderr, "  \033[33m⚠ Skipped: Piper TTS model not found at %s\033[0m\n", model.c_str());
+        fprintf(stderr, "  \033[33m[SKIP] Skipped: Piper TTS model not found at %s\033[0m\n", model.c_str());
         return;
     }
 
@@ -445,7 +445,7 @@ static void test_vad(const std::string& models_dir) {
 
     std::string model = models_dir + "/silero_vad.onnx";
     if (!file_exists(model)) {
-        fprintf(stderr, "  \033[33m⚠ Skipped: VAD model not found at %s\033[0m\n", model.c_str());
+        fprintf(stderr, "  \033[33m[SKIP] Skipped: VAD model not found at %s\033[0m\n", model.c_str());
         return;
     }
 
@@ -506,7 +506,7 @@ static void test_api(const std::string& models_dir) {
     double init_ms = elapsed_ms(t0);
 
     if (rc != 0) {
-        fprintf(stderr, "  \033[33m⚠ rcli_init failed (models may not be present)\033[0m\n");
+        fprintf(stderr, "  \033[33m[SKIP] rcli_init failed (models may not be present)\033[0m\n");
         TEST("rcli_init (skipped - no models)", false);
         rcli_destroy(h);
         return;
@@ -561,7 +561,7 @@ static void test_use_cases(const std::string& models_dir) {
 
     RCLIHandle h = rcli_create(nullptr);
     if (rcli_init(h, models_dir.c_str(), 99) != 0) {
-        fprintf(stderr, "  \033[33m⚠ Skipped: engine init failed\033[0m\n");
+        fprintf(stderr, "  \033[33m[SKIP] Skipped: engine init failed\033[0m\n");
         rcli_destroy(h);
         return;
     }

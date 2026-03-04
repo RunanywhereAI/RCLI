@@ -1350,7 +1350,7 @@ private:
                 if (ttfa_est > 0) {
                     out.precision(0);
                     out << "  TTFA (est): " << ttfa_est << "ms"
-                        << (ttfa_est < 500 ? " ✓" : "") << "\n";
+                        << (ttfa_est < 500 ? " ok" : "") << "\n";
                 }
             } else {
                 out << "Benchmark failed (code " << rc << ")";

@@ -67,12 +67,12 @@ inline int pick_llm(const std::string& models_dir) {
         bool installed = (access(path.c_str(), R_OK) == 0);
         bool is_active = active && active->id == m.id;
         std::string status;
-        if (is_active)       status = "\033[32m\xe2\x97\x8f active\033[0m";
+        if (is_active)       status = "\033[32m* active\033[0m";
         else if (installed)  status = "installed";
         else                 status = "\033[2mnot installed\033[0m";
         std::string label = m.name;
         if (m.is_default) label += " (default)";
-        if (m.is_recommended) label += " \xe2\x98\x85";
+        if (m.is_recommended) label += " *";
         fprintf(stderr, "    %s%-2zu%s %-28s  %-7s  %-10s  %-12s  %s\n",
                 is_active ? "\033[32m" : "", i + 1, is_active ? "\033[0m" : "",
                 label.c_str(), rcli::format_size(m.size_mb).c_str(),
@@ -113,7 +113,7 @@ inline int pick_llm(const std::string& models_dir) {
         }
     }
     rcli::write_selected_model_id(sel.id);
-    fprintf(stderr, "\n  %s%s\xe2\x9c\x93 Selected: %s%s\n  Restart RCLI to apply.\n\n",
+    fprintf(stderr, "\n  %s%sSelected: %s%s\n  Restart RCLI to apply.\n\n",
             color::bold, color::green, sel.name.c_str(), color::reset);
     return 0;
 }
@@ -151,12 +151,12 @@ inline int pick_stt(const std::string& models_dir) {
         bool installed = rcli::is_stt_installed(models_dir, m);
         bool is_active = active && active->id == m.id;
         std::string status;
-        if (is_active)       status = "\033[32m\xe2\x97\x8f active\033[0m";
+        if (is_active)       status = "\033[32m* active\033[0m";
         else if (installed)  status = "installed";
         else                 status = "\033[2mnot installed\033[0m";
         std::string label = m.name;
         if (m.is_default) label += " (default)";
-        if (m.is_recommended) label += " \xe2\x98\x85";
+        if (m.is_recommended) label += " *";
         fprintf(stderr, "    %s%-2zu%s %-28s  %-7s  %-12s  %s\n",
                 is_active ? "\033[32m" : "", i + 1, is_active ? "\033[0m" : "",
                 label.c_str(), rcli::format_size(m.size_mb).c_str(),
@@ -214,7 +214,7 @@ inline int pick_stt(const std::string& models_dir) {
         }
     }
     rcli::write_selected_stt_id(sel.id);
-    fprintf(stderr, "\n  %s%s\xe2\x9c\x93 Selected: %s%s\n  Restart RCLI to apply.\n\n",
+    fprintf(stderr, "\n  %s%sSelected: %s%s\n  Restart RCLI to apply.\n\n",
             color::bold, color::green, sel.name.c_str(), color::reset);
     return 0;
 }
@@ -246,12 +246,12 @@ inline int pick_tts(const std::string& models_dir) {
         bool installed = rcli::is_tts_installed(models_dir, v);
         bool is_active = active && active->id == v.id;
         std::string status;
-        if (is_active)       status = "\033[32m\xe2\x97\x8f active\033[0m";
+        if (is_active)       status = "\033[32m* active\033[0m";
         else if (installed)  status = "installed";
         else                 status = "\033[2mnot installed\033[0m";
         std::string label = v.name;
         if (v.is_default) label += " (default)";
-        if (v.is_recommended) label += " \xe2\x98\x85";
+        if (v.is_recommended) label += " *";
         char spk[16]; snprintf(spk, sizeof(spk), "%d", v.num_speakers);
         fprintf(stderr, "    %s%-2zu%s %-30s  %-8s  %-8s  %-10s  %-10s  %s\n",
                 is_active ? "\033[32m" : "", i + 1, is_active ? "\033[0m" : "",
@@ -301,7 +301,7 @@ inline int pick_tts(const std::string& models_dir) {
         }
     }
     rcli::write_selected_tts_id(sel.id);
-    fprintf(stderr, "\n  %s%s\xe2\x9c\x93 Selected: %s%s (%s, %d speakers)\n  Restart RCLI to apply.\n\n",
+    fprintf(stderr, "\n  %s%sSelected: %s%s (%s, %d speakers)\n  Restart RCLI to apply.\n\n",
             color::bold, color::green, sel.name.c_str(), color::reset,
             sel.architecture.c_str(), sel.num_speakers);
     return 0;
@@ -386,14 +386,14 @@ inline int cmd_models(const Args& args) {
     fprintf(stderr, "\n");
     for (auto& m : llm_all) {
         if (m.is_recommended) {
-            fprintf(stderr, "  %s💡 Recommended LLM: %s — %s%s\n",
+            fprintf(stderr, "  %sTip: Recommended LLM: %s -- %s%s\n",
                     color::dim, m.name.c_str(), m.description.c_str(), color::reset);
             break;
         }
     }
     for (auto& m : tts_all) {
         if (m.is_recommended) {
-            fprintf(stderr, "  %s💡 Recommended TTS: %s — %s%s\n",
+            fprintf(stderr, "  %sTip: Recommended TTS: %s -- %s%s\n",
                     color::dim, m.name.c_str(), m.description.c_str(), color::reset);
             break;
         }

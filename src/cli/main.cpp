@@ -141,7 +141,7 @@ static bool dispatch_command(const std::string& cmd_input,
                     is_act ? "\033[32m" : "", i + 1, is_act ? "\033[0m" : "",
                     label.c_str(), rcli::format_size(v.size_mb).c_str(),
                     v.architecture.c_str(), spk,
-                    is_act ? "\033[32m\xe2\x97\x8f active" :
+                    is_act ? "\033[32m* active" :
                         (inst ? "installed" : "\033[2mnot installed"),
                     is_act || !inst ? "\033[0m" : "", "");
         }
@@ -180,7 +180,7 @@ static bool dispatch_command(const std::string& cmd_input,
                     is_act ? "\033[32m" : "", i + 1, is_act ? "\033[0m" : "",
                     label.c_str(), rcli::format_size(m.size_mb).c_str(),
                     m.accuracy.c_str(),
-                    is_act ? "\033[32m\xe2\x97\x8f active" :
+                    is_act ? "\033[32m* active" :
                         (inst ? "installed" : "\033[2mnot installed"),
                     is_act || !inst ? "\033[0m" : "", "");
         }
@@ -499,7 +499,7 @@ static int cmd_interactive(const Args& args) {
             color::dim, llm_name, tts_name_live,
             args.rag_index.empty() ? "RAG off" : "RAG on");
     if (warmup_tps > 0)
-        fprintf(stderr, " \xc2\xb7 \xe2\x9a\xa1 %.0f tok/s", warmup_tps);
+        fprintf(stderr, " \xc2\xb7 %.0f tok/s", warmup_tps);
     fprintf(stderr, "%s\n", color::reset);
 
     // Launch full-screen TUI dashboard

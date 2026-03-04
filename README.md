@@ -1,39 +1,24 @@
-<p align="center">
-  <pre align="center">
-  ██████╗  ██████╗██╗     ██╗
-  ██╔══██╗██╔════╝██║     ██║
-  ██████╔╝██║     ██║     ██║
-  ██╔══██╗██║     ██║     ██║
-  ██║  ██║╚██████╗███████╗██║
-  ╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝
-  </pre>
-  <strong>On-Device Voice AI + RAG for macOS</strong><br>
-  <em>Speak commands, control your Mac, query your docs — 100% local, zero cloud.</em>
-</p>
+![RCLI](assets/terminal.png)
 
-<p align="center">
-  <a href="#install">Install</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#features">Features</a> •
-  <a href="#model-management">Models</a> •
-  <a href="#rag">RAG</a> •
-  <a href="#benchmarks">Benchmarks</a> •
-  <a href="#build-from-source">Build</a>
-</p>
+# RCLI
 
-<p align="center">
-  <img src="https://img.shields.io/badge/platform-macOS-blue" alt="macOS">
-  <img src="https://img.shields.io/badge/chip-Apple_Silicon-black" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/language-C++17-orange" alt="C++17">
-  <img src="https://img.shields.io/badge/inference-100%25_local-green" alt="Local">
-  <img src="https://img.shields.io/github/license/RunanywhereAI/RCLI" alt="MIT License">
-</p>
+**Voice-first AI for macOS. Talk to your Mac, query your docs, all on-device.**
 
----
+[![macOS](https://img.shields.io/badge/platform-macOS-blue)](https://github.com/RunanywhereAI/RCLI) [![Apple Silicon](https://img.shields.io/badge/chip-Apple_Silicon-black)](https://github.com/RunanywhereAI/RCLI) [![C++17](https://img.shields.io/badge/language-C++17-orange)](https://github.com/RunanywhereAI/RCLI) [![Local](https://img.shields.io/badge/inference-100%25_local-green)](https://github.com/RunanywhereAI/RCLI) [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-RCLI is a high-performance voice AI system for Apple Silicon. It runs a complete **STT → LLM → TTS** pipeline entirely on-device with Metal GPU acceleration, executes **40 macOS actions** via natural language, and supports **RAG** over your local documents — all with sub-200ms end-to-end latency.
+A complete STT + LLM + TTS pipeline running on Apple Silicon with Metal GPU. 40 macOS actions via voice or text. Local RAG over your documents. Sub-200ms end-to-end latency. No cloud, no API keys.
 
-**No API keys. No internet required. No data leaves your machine.**
+## Table of Contents
+
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Models](#models)
+- [Benchmarks](#benchmarks)
+- [Architecture](#architecture)
+- [Build from Source](#build-from-source)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Install
 
@@ -45,62 +30,47 @@ rcli setup     # downloads default models (~1GB, one-time)
 
 Requires macOS 13+ on Apple Silicon (M1 or later).
 
-<details>
-<summary><strong>macOS 26 beta:</strong> If <code>brew install</code> fails with a Command Line Tools error, use this manual install instead.</summary>
-
-```bash
-brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
-cd /tmp && rm -rf rcli-install && mkdir rcli-install && cd rcli-install
-curl -fsSL -o rcli.tar.gz "https://github.com/RunanywhereAI/RCLI/releases/download/v0.1.2/rcli-0.1.2-Darwin-arm64.tar.gz"
-tar xzf rcli.tar.gz
-CELLAR="/opt/homebrew/Cellar/rcli/0.1.2"
-rm -rf "$CELLAR"
-mkdir -p "$CELLAR/bin" "$CELLAR/lib"
-cp rcli-0.1.2-Darwin-arm64/bin/rcli "$CELLAR/bin/"
-cp rcli-0.1.2-Darwin-arm64/lib/*.dylib "$CELLAR/lib/"
-brew link --overwrite rcli
-rcli setup     # downloads default models (~1GB, one-time)
-```
-
-</details>
+> [!NOTE]
+> **macOS 26 beta:** Homebrew does not yet recognize macOS 26 CLT versions. If `brew install` fails, download the [latest release](https://github.com/RunanywhereAI/RCLI/releases/latest) tarball and install manually:
+>
+> ```bash
+> brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
+> cd /tmp && curl -fsSL -o rcli.tar.gz "https://github.com/RunanywhereAI/RCLI/releases/latest/download/rcli-0.1.2-Darwin-arm64.tar.gz"
+> tar xzf rcli.tar.gz
+> CELLAR="/opt/homebrew/Cellar/rcli/0.1.2"
+> rm -rf "$CELLAR" && mkdir -p "$CELLAR/bin" "$CELLAR/lib"
+> cp rcli-*/bin/rcli "$CELLAR/bin/" && cp rcli-*/lib/*.dylib "$CELLAR/lib/"
+> brew link --overwrite rcli
+> rcli setup
+> ```
 
 ## Quick Start
 
 ```bash
-# Interactive TUI — push-to-talk voice + text input
-rcli
-
-# Continuous voice mode — hands-free, always listening
-rcli listen
-
-# One-shot text commands
-rcli ask "open Safari"
+rcli                             # interactive TUI (push-to-talk + text)
+rcli listen                      # continuous voice mode, always listening
+rcli ask "open Safari"           # one-shot text command
 rcli ask "create a note called Meeting Notes"
 rcli ask "play some jazz on Spotify"
-rcli ask "set volume to 40"
-rcli ask "toggle dark mode"
-rcli ask "take a screenshot"
-
-# Execute actions directly (bypass the LLM)
-rcli action create_note '{"title": "Ideas", "body": "My brilliant idea"}'
-rcli action open_app '{"app": "Safari"}'
 ```
+
+Run `rcli actions` to see all 40 available macOS actions, or `rcli --help` for the full CLI reference.
 
 ## Features
 
 ### Voice Pipeline
 
-Full STT → LLM → TTS pipeline running on Metal GPU with three concurrent threads:
+A complete STT, LLM, TTS pipeline running on Metal GPU with three concurrent threads:
 
 - **VAD** — Silero voice activity detection, filters silence in real-time
 - **STT** — Zipformer streaming (live mic) + Whisper/Parakeet offline (batch)
-- **LLM** — Liquid LFM2 1.2B Tool with system prompt KV caching, Flash Attention
+- **LLM** — Liquid LFM2 1.2B Tool with system prompt KV caching and Flash Attention
 - **TTS** — Double-buffered sentence-level synthesis (next sentence synthesizes while current plays)
-- **Tool Calling** — Hybrid: Tier 1 keyword match + Tier 2 LLM-based extraction
+- **Tool Calling** — Hybrid approach: Tier 1 keyword match + Tier 2 LLM-based extraction
 
-### 40 macOS Actions
+### macOS Actions
 
-Control your Mac entirely by voice or text. RCLI classifies your intent and executes actions locally via AppleScript and shell commands.
+Control your Mac by voice or text. RCLI classifies intent and executes 40 actions locally via AppleScript and shell commands.
 
 | Category | Actions |
 |----------|---------|
@@ -109,78 +79,39 @@ Control your Mac entirely by voice or text. RCLI classifies your intent and exec
 | **Media** | `play_on_spotify`, `play_apple_music`, `play_pause_music`, `next_track`, `previous_track`, `set_music_volume`, `get_now_playing` |
 | **System** | `open_app`, `quit_app`, `switch_app`, `set_volume`, `toggle_dark_mode`, `lock_screen`, `screenshot`, `search_files`, `open_settings`, `open_url` |
 | **Window** | `close_window`, `minimize_window`, `fullscreen_window`, `get_frontmost_app`, `list_apps` |
-| **Clipboard** | `clipboard_read`, `clipboard_write` |
 | **Info** | `get_battery`, `get_wifi`, `get_ip_address`, `get_uptime`, `get_disk_usage` |
-| **Web** | `search_web`, `search_youtube`, `get_browser_url`, `get_browser_tabs` |
-| **Navigation** | `open_maps` |
+| **Web / Nav** | `search_web`, `search_youtube`, `get_browser_url`, `get_browser_tabs`, `open_maps`, `clipboard_read`, `clipboard_write` |
+
+### RAG (Retrieval-Augmented Generation)
+
+Index local documents and query them by voice or text. Hybrid retrieval combining vector search (USearch HNSW) and BM25 full-text search, fused via Reciprocal Rank Fusion. Retrieval latency is ~4ms over 5K+ chunks.
 
 ```bash
-rcli actions                    # list all actions with descriptions
-rcli actions create_note        # show parameters and examples for one action
+rcli rag ingest ~/Documents/notes
+rcli rag query "What were the key decisions from last week?"
+rcli ask --rag ~/Library/RCLI/index "summarize the project plan"
 ```
 
 ### Interactive TUI
 
-A full terminal dashboard built with FTXUI:
+A terminal dashboard built with [FTXUI](https://github.com/ArthurSonzogni/FTXUI) featuring push-to-talk voice input, live hardware monitoring (CPU, GPU, memory), real-time performance metrics, model management, and an actions browser.
 
-| Key | Action |
-|-----|--------|
-| **SPACE → ENTER** | Push-to-talk voice recording |
-| **M** | Model management — switch, download, delete models |
-| **A** | Actions browser — browse and execute all 40 actions |
-| **B** | Benchmark runner — STT, LLM, TTS, E2E, RAG |
-| **R** | RAG management — ingest docs, clear index |
-| **D** | Cleanup — remove unused models, free disk space |
-| **P** | Stop all processing |
-| **Q** | Quit |
+## Models
 
-The TUI includes live hardware monitoring (CPU, GPU, memory, battery, network), real-time performance metrics (TTFT, tok/s, RTF), and a chat interface with voice + text input.
+RCLI downloads a default model set during `rcli setup` and provides CLI-based model management to download, switch, and remove models across all modalities.
 
-### RAG (Retrieval-Augmented Generation)
-
-Index your local documents and query them with voice or text. RCLI uses a hybrid retrieval system combining **vector search** (USearch HNSW) and **BM25 full-text search**, fused via Reciprocal Rank Fusion.
-
-```bash
-# Index a folder of documents
-rcli rag ingest ~/Documents/notes
-
-# Query your documents
-rcli rag query "What were the key decisions from last week's meeting?"
-
-# Check index status
-rcli rag status
-
-# Use RAG in interactive mode
-rcli --rag ~/Library/RCLI/index
-
-# Use RAG with one-shot commands
-rcli ask --rag ~/Library/RCLI/index "summarize the project plan"
-```
-
-| RAG Metric | Value |
-|------------|-------|
-| Hybrid retrieval latency | **3.82 ms** |
-| Embedding cache hit rate | 99.9% |
-| Index: USearch HNSW + BM25 | Over 5K+ chunks |
-| Embedding model | Snowflake Arctic Embed S (34 MB) |
-
-Documents are chunked, embedded locally, and stored on disk. The embedding model auto-downloads on first use.
-
-## Model Management
-
-RCLI ships with a default model set via `rcli setup`, and provides full CLI-based model management to download, switch, and delete models across all three modalities.
-
-### Default Models (installed by `rcli setup`)
+### Defaults (installed by `rcli setup`)
 
 | Component | Model | Size |
 |-----------|-------|------|
-| **LLM** | Liquid LFM2 1.2B Tool (Q4_K_M) | 731 MB |
-| **STT** | Zipformer streaming + Whisper base.en | ~190 MB |
-| **TTS** | Piper Lessac (English) | ~60 MB |
-| **VAD** | Silero VAD | 0.6 MB |
-| **Embeddings** | Snowflake Arctic Embed S (Q8_0) | 34 MB |
+| LLM | Liquid LFM2 1.2B Tool (Q4_K_M) | 731 MB |
+| STT | Zipformer streaming + Whisper base.en | ~190 MB |
+| TTS | Piper Lessac (English) | ~60 MB |
+| VAD | Silero VAD | 0.6 MB |
+| Embeddings | Snowflake Arctic Embed S (Q8_0) | 34 MB |
 
-### Available LLMs
+<details>
+<summary><strong>All available LLMs</strong></summary>
 
 | Model | Size | Speed | Tool Calling | Notes |
 |-------|------|-------|-------------|-------|
@@ -194,7 +125,10 @@ RCLI ships with a default model set via `rcli setup`, and provides full CLI-base
 | Qwen3 4B | 2.5 GB | ~80 t/s | Good | Smart reasoning |
 | Qwen3.5 4B | 2.7 GB | ~75 t/s | Excellent | Best small model, 262K context |
 
-### Available TTS Voices
+</details>
+
+<details>
+<summary><strong>All available TTS voices</strong></summary>
 
 | Voice | Architecture | Speakers | Quality | Size |
 |-------|-------------|----------|---------|------|
@@ -205,7 +139,10 @@ RCLI ships with a default model set via `rcli setup`, and provides full CLI-base
 | Kokoro English v0.19 | Kokoro | 11 | Excellent | 310 MB |
 | Kokoro Multi-lang v1.1 | Kokoro | 103 | Excellent | 500 MB |
 
-### Available STT Models
+</details>
+
+<details>
+<summary><strong>All available STT models</strong></summary>
 
 | Model | Category | Accuracy | Size |
 |-------|----------|----------|------|
@@ -213,147 +150,103 @@ RCLI ships with a default model set via `rcli setup`, and provides full CLI-base
 | Whisper base.en | Offline | ~5% WER | 140 MB |
 | Parakeet TDT 0.6B v3 | Offline | ~1.9% WER | 640 MB |
 
+</details>
+
 ### Model Commands
 
 ```bash
-# Interactive model management (all modalities)
-rcli models
-
-# Jump to a specific modality
-rcli models llm
-rcli models tts
-rcli models stt
-
-# Guided upgrade flows
-rcli upgrade-llm        # choose and download a larger LLM
-rcli upgrade-stt        # upgrade to Parakeet TDT (~1.9% WER)
-
-# Manage TTS voices
-rcli voices             # browse, download, switch voices
-
-# Remove unused models
-rcli cleanup            # lists all models with sizes, delete non-active ones
-rcli cleanup --all-unused   # remove everything except active models
-
-# Show what's installed
-rcli info
+rcli models                  # interactive model management (all modalities)
+rcli models llm              # jump to LLM management
+rcli upgrade-llm             # guided LLM upgrade
+rcli upgrade-stt             # upgrade to Parakeet TDT (~1.9% WER)
+rcli voices                  # browse, download, switch TTS voices
+rcli cleanup                 # remove unused models to free disk space
+rcli info                    # show engine info and installed models
 ```
 
-Models are stored in `~/Library/RCLI/models/`. Your active model selection persists in `~/Library/RCLI/config` and auto-loads on every launch.
+Models are stored in `~/Library/RCLI/models/`. Active model selection persists across launches in `~/Library/RCLI/config`.
 
 ## Benchmarks
 
-> All benchmarks on **Apple M3 Max** (14-core CPU, 30-core GPU, 36 GB unified memory)
+All measurements on Apple M3 Max (14-core CPU, 30-core GPU, 36 GB unified memory).
 
 | Component | Metric | Value |
 |-----------|--------|-------|
-| **STT** | Avg Latency | 43.7 ms |
-| **STT** | Real-Time Factor | 0.022x |
-| **LLM** | First Token (TTFT) | 22.5 ms |
-| **LLM** | Generation Throughput | 159.6 tok/s |
-| **LLM** | Prompt Eval | 25,699 tok/s |
-| **TTS** | Avg Latency | 150.6 ms |
-| **RAG** | Hybrid Retrieval | 3.82 ms |
-| **RAG** | Cache Hit Rate | 99.9% |
-| **E2E** | Total (short response) | **131 ms** |
-| **E2E** | First Audio Byte | 59.9 ms |
+| **STT** | Avg latency | 43.7 ms |
+| **STT** | Real-time factor | 0.022x |
+| **LLM** | Time to first token | 22.5 ms |
+| **LLM** | Generation throughput | 159.6 tok/s |
+| **TTS** | Avg latency | 150.6 ms |
+| **RAG** | Hybrid retrieval | 3.82 ms |
+| **E2E** | Voice-in to audio-out | **131 ms** |
 
 ```bash
 rcli bench                          # run all benchmarks
 rcli bench --suite llm              # LLM only
-rcli bench --suite stt,tts          # multiple suites
 rcli bench --all-llm --suite llm    # compare all installed LLMs
-rcli bench --output results.json    # export results
+rcli bench --output results.json    # export to JSON
 ```
 
-Benchmark suites: `stt`, `llm`, `tts`, `e2e`, `tools`, `rag`, `memory`, `all`.
+Suites: `stt`, `llm`, `tts`, `e2e`, `tools`, `rag`, `memory`, `all`.
 
 ## Architecture
 
 ```
-                          ┌──────────────────────────────────────────────────┐
-                          │              RCLI Pipeline                       │
-                          │                                                  │
-  ┌─────────┐   ┌────────┤  ┌─────┐   ┌─────┐   ┌─────┐   ┌─────┐        │   ┌──────────┐
-  │   Mic   │──▶│  VAD   │─▶│ STT │──▶│ RAG │──▶│ LLM │──▶│ TTS │────────│──▶│ Speaker  │
-  └─────────┘   └────────┤  └─────┘   └─────┘   └─────┘   └─────┘        │   └──────────┘
-                          │  Zipformer  Hybrid    LFM2      Piper          │
-                          │  (37ms)    Retrieval  1.2B     (150ms)         │
-                          │             (4ms)    (180t/s)                   │
-                          └──────────────────────────────────────────────────┘
-                                                      │
-                                              Tool Calling → 40 macOS Actions
+Mic → VAD → STT → [RAG] → LLM → TTS → Speaker
+                            |
+                     Tool Calling → 40 macOS Actions
 ```
-
-### Threading Model
 
 Three dedicated threads in live mode, synchronized via condition variables:
 
-| Thread | Responsibility |
-|--------|---------------|
-| **STT thread** | Feeds mic audio, detects speech endpoints via VAD |
-| **LLM thread** | Waits for STT output, generates tokens, dispatches tool calls |
-| **TTS thread** | Queues sentences from LLM, double-buffered playback |
+| Thread | Role |
+|--------|------|
+| STT | Captures mic audio, runs VAD, detects speech endpoints |
+| LLM | Receives transcribed text, generates tokens, dispatches tool calls |
+| TTS | Queues sentences from LLM, double-buffered playback |
 
-### Key Design Decisions
+**Design decisions:**
 
-- **64 MB pre-allocated memory pool** — no runtime malloc during inference
-- **Lock-free ring buffers** — zero-copy audio passing between threads
-- **System prompt KV caching** — reuses llama.cpp KV cache state across queries
-- **Sentence-level TTS scheduling** — TTS synthesizes the next sentence while the current one plays
-- **Hybrid tool calling** — fast keyword matching (Tier 1) with LLM fallback (Tier 2)
-- **Hardware profiling at startup** — detects P-cores, E-cores, Metal GPU, RAM for optimal config
+- 64 MB pre-allocated memory pool — no runtime malloc during inference
+- Lock-free ring buffers — zero-copy audio transfer between threads
+- System prompt KV caching — reuses llama.cpp KV cache across queries
+- Sentence-level TTS scheduling — next sentence synthesizes while current plays
+- Hardware profiling at startup — detects P/E cores, Metal GPU, RAM for optimal config
 
-## Project Structure
+### Project Structure
 
 ```
-RCLI/
-├── CMakeLists.txt
-├── src/
-│   ├── engines/          STT, LLM, TTS, VAD, embedding engine wrappers
-│   ├── pipeline/         Orchestrator, sentence detector, text sanitizer
-│   ├── rag/              Vector index, BM25, hybrid retriever, doc processor
-│   ├── core/             Types, ring buffer, memory pool, hardware profiler
-│   ├── audio/            CoreAudio mic/speaker I/O
-│   ├── tools/            Tool calling engine with JSON schema definitions
-│   ├── bench/            Benchmark harness (STT, LLM, TTS, E2E, RAG, memory)
-│   ├── actions/          40 macOS action implementations
-│   ├── api/              C API (rcli_api.h) — public engine interface
-│   ├── cli/              TUI dashboard (FTXUI), CLI commands
-│   └── models/           Model registries (LLM, TTS, STT)
-├── Formula/              Homebrew formula (self-hosted tap)
-├── scripts/
-│   ├── setup.sh          Clone dependencies
-│   ├── download_models.sh  Download AI models
-│   └── package.sh        Package binary + dylibs for distribution
-└── .github/workflows/    CI/CD release automation
+src/
+  engines/     STT, LLM, TTS, VAD, embedding engine wrappers
+  pipeline/    Orchestrator, sentence detector, text sanitizer
+  rag/         Vector index, BM25, hybrid retriever, document processor
+  core/        Types, ring buffer, memory pool, hardware profiler
+  audio/       CoreAudio mic/speaker I/O
+  tools/       Tool calling engine with JSON schema definitions
+  bench/       Benchmark harness
+  actions/     40 macOS action implementations
+  api/         C API (rcli_api.h) — public engine interface
+  cli/         TUI dashboard (FTXUI), CLI commands
+  models/      Model registries (LLM, TTS, STT)
+scripts/       setup.sh, download_models.sh, package.sh
+Formula/       Homebrew formula (self-hosted tap)
 ```
 
 ## Build from Source
 
 ```bash
-# 1. Clone
-git clone https://github.com/RunanywhereAI/RCLI.git
-cd RCLI
-
-# 2. Clone dependencies (one-time)
-bash scripts/setup.sh
-
-# 3. Download AI models (one-time, ~1GB)
-bash scripts/download_models.sh
-
-# 4. Build
+git clone https://github.com/RunanywhereAI/RCLI.git && cd RCLI
+bash scripts/setup.sh              # clone llama.cpp + sherpa-onnx
+bash scripts/download_models.sh    # download models (~1GB)
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . -j$(sysctl -n hw.ncpu)
-
-# 5. Run
 ./rcli
 ```
 
 ### Dependencies
 
-All vendored or CMake-fetched (no external package manager required):
+All vendored or CMake-fetched. No external package manager required.
 
 | Dependency | Purpose |
 |------------|---------|
@@ -365,7 +258,8 @@ All vendored or CMake-fetched (no external package manager required):
 
 Requires CMake 3.15+ and Apple Clang (C++17).
 
-## CLI Reference
+<details>
+<summary><strong>CLI Reference</strong></summary>
 
 ```
 rcli                          Interactive TUI (push-to-talk + text)
@@ -393,6 +287,12 @@ Options:
   --no-speak          Text output only (no TTS playback)
   --verbose, -v       Show debug logs
 ```
+
+</details>
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, architecture overview, and how to add new actions, models, or voices.
 
 ## License
 

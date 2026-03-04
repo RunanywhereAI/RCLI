@@ -340,7 +340,7 @@ inline void print_llm_perf(RCLIHandle engine) {
     rcli_get_last_llm_perf(engine, &tokens, &tps, &ttft, &total);
     if (tokens > 0 && tps > 0) {
         fflush(stdout);
-        fprintf(stderr, "  %s\xe2\x9a\xa1 %d tok \xc2\xb7 %.1f tok/s \xc2\xb7 TTFT %.0fms \xc2\xb7 %.0fms total%s\n",
+        fprintf(stderr, "  %s> %d tok \xc2\xb7 %.1f tok/s \xc2\xb7 TTFT %.0fms \xc2\xb7 %.0fms total%s\n",
                 color::dim, tokens, tps, ttft, total, color::reset);
     }
 }
@@ -350,7 +350,7 @@ inline void print_tts_perf(RCLIHandle engine) {
     double synth_ms = 0, rtf = 0;
     rcli_get_last_tts_perf(engine, nullptr, &synth_ms, &rtf);
     if (synth_ms > 0) {
-        fprintf(stderr, "  %s\xf0\x9f\x94\x8a TTS %.0fms \xc2\xb7 %.2fx realtime%s\n",
+        fprintf(stderr, "  %sTTS %.0fms \xc2\xb7 %.2fx realtime%s\n",
                 color::dim, synth_ms, rtf, color::reset);
     }
 }
@@ -363,10 +363,10 @@ inline void print_stt_perf(RCLIHandle engine) {
         fflush(stdout);
         if (audio_ms > 0) {
             double rtf = transcribe_ms / audio_ms;
-            fprintf(stderr, "  %s\xf0\x9f\x8e\x99 STT %.0fms \xc2\xb7 %.1fs audio \xc2\xb7 %.2fx RT%s\n",
+            fprintf(stderr, "  %sSTT %.0fms \xc2\xb7 %.1fs audio \xc2\xb7 %.2fx RT%s\n",
                     color::dim, transcribe_ms, audio_ms / 1000.0, rtf, color::reset);
         } else {
-            fprintf(stderr, "  %s\xf0\x9f\x8e\x99 STT %.0fms%s\n",
+            fprintf(stderr, "  %sSTT %.0fms%s\n",
                     color::dim, transcribe_ms, color::reset);
         }
     }
