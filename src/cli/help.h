@@ -18,7 +18,7 @@ inline void print_usage(const char* argv0) {
         "    %sactions%s [name]     List all actions, or show detail for one\n"
         "    %saction%s <n> [json]  Execute a named action directly\n"
         "    %srag%s <sub>          RAG: ingest docs, query, status\n"
-        "    %ssetup%s              Download AI models (~700MB)\n"
+        "    %ssetup%s              Download AI models (~1GB)\n"
         "    %smodels%s             Manage all AI models (LLM, STT, TTS)\n"
         "    %smodels llm|stt|tts%s Jump to a specific modality\n"
         "    %svoices%s             Manage TTS voices (alias: models tts)\n"

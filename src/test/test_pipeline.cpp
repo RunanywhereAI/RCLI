@@ -192,7 +192,7 @@ static void test_applescript_executor() {
 static void test_llm(const std::string& models_dir) {
     TEST_SECTION("LLM Engine");
 
-    std::string model_path = models_dir + "/qwen3-0.6b-q4_k_m.gguf";
+    std::string model_path = models_dir + "/lfm2-1.2b-tool-q4_k_m.gguf";
     if (!file_exists(model_path)) {
         fprintf(stderr, "  \033[33m⚠ Skipped: model not found at %s\033[0m\n", model_path.c_str());
         return;
@@ -646,7 +646,7 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <models_dir> [--actions-only|--llm-only|--stt-only|--tts-only|--api-only]\n", argv[0]);
         fprintf(stderr, "\nModels directory should contain:\n");
-        fprintf(stderr, "  qwen3-0.6b-q4_k_m.gguf\n");
+        fprintf(stderr, "  lfm2-1.2b-tool-q4_k_m.gguf\n");
         fprintf(stderr, "  whisper-base.en/\n");
         fprintf(stderr, "  zipformer/\n");
         fprintf(stderr, "  piper-voice/\n");

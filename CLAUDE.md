@@ -15,7 +15,7 @@ RCLI is a high-performance, low-latency on-device voice AI system built in C++17
 # First-time setup (clones llama.cpp + sherpa-onnx into deps/)
 bash scripts/setup.sh
 
-# Download AI models (~700 MB)
+# Download AI models (~1 GB)
 bash scripts/download_models.sh
 
 # Build

@@ -212,8 +212,8 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
                       active->name.c_str(), active->priority);
         } else {
             const auto* def = rcli::get_default_model(models);
-            config.llm.model_path = dir + "/" + (def ? def->filename : "qwen3-0.6b-q4_k_m.gguf");
-            engine->llm_model_name = def ? def->name : "Qwen3 0.6B";
+            config.llm.model_path = dir + "/" + (def ? def->filename : "lfm2-1.2b-tool-q4_k_m.gguf");
+            engine->llm_model_name = def ? def->name : "Liquid LFM2 1.2B Tool";
         }
     }
     config.llm.n_gpu_layers = (engine->config_gpu_layers >= 0) ? engine->config_gpu_layers : gpu_layers;

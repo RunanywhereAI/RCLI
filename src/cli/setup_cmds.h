@@ -59,9 +59,9 @@ inline int cmd_setup(const Args& args) {
         fprintf(stderr, "  Downloading models to %s ...\n\n", models_dir.c_str());
         auto all = rcli::all_models();
         const auto* default_llm = rcli::get_default_model(all);
-        std::string llm_filename = default_llm ? default_llm->filename : "qwen3-0.6b-q4_k_m.gguf";
-        std::string llm_url      = default_llm ? default_llm->url : "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/qwen3-0.6b-q4_k_m.gguf";
-        std::string llm_name     = default_llm ? default_llm->name : "Qwen3 0.6B";
+        std::string llm_filename = default_llm ? default_llm->filename : "lfm2-1.2b-tool-q4_k_m.gguf";
+        std::string llm_url      = default_llm ? default_llm->url : "https://huggingface.co/LiquidAI/LFM2-1.2B-Tool-GGUF/resolve/main/LFM2-1.2B-Tool-Q4_K_M.gguf";
+        std::string llm_name     = default_llm ? default_llm->name : "Liquid LFM2 1.2B Tool";
 
         std::string cmd = "bash -c '"
             "set -e; "

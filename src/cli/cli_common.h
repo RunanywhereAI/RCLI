@@ -165,16 +165,18 @@ inline void signal_handler(int) { g_running = false; }
 
 inline bool models_exist(const std::string& dir) {
     struct stat st;
-    std::string check = dir + "/qwen3-0.6b-q4_k_m.gguf";
-    return stat(check.c_str(), &st) == 0;
+    // Check for any known LLM model (default is LFM2, fallback to Qwen3)
+    std::string check_lfm2  = dir + "/lfm2-1.2b-tool-q4_k_m.gguf";
+    std::string check_qwen3 = dir + "/qwen3-0.6b-q4_k_m.gguf";
+    return stat(check_lfm2.c_str(), &st) == 0 || stat(check_qwen3.c_str(), &st) == 0;
 }
 
 inline void print_missing_models(const std::string& dir) {
     fprintf(stderr,
         "\n%s%s  Models not found%s in %s\n\n"
         "  Run: %srcli setup%s\n\n"
-        "  This downloads ~700MB of AI models (Qwen3 LLM, Zipformer STT,\n"
-        "  Piper TTS, Silero VAD) to ~/Library/RCLI/models/\n\n",
+        "  This downloads ~1GB of AI models (LFM2 1.2B LLM, Zipformer STT,\n"
+        "  Whisper STT, Piper TTS, Silero VAD) to ~/Library/RCLI/models/\n\n",
         color::bold, color::red, color::reset, dir.c_str(),
         color::bold, color::reset);
 }
