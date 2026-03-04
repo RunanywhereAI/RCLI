@@ -11,10 +11,10 @@ ok()    { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 warn()  { printf "\033[1;33mWarning:\033[0m %s\n" "$*"; }
 fail()  { printf "\033[1;31mError:\033[0m %s\n" "$*" >&2; exit 1; }
 
+[[ "$(uname -s)" == "Darwin" ]] || fail "RCLI requires macOS. Detected: $(uname -s)"
+
 arch=$(uname -m)
 [[ "$arch" == "arm64" ]] || fail "RCLI requires Apple Silicon (M1+). Detected: $arch"
-
-[[ "$(uname -s)" == "Darwin" ]] || fail "RCLI requires macOS. Detected: $(uname -s)"
 
 if ! command -v brew &>/dev/null; then
     info "Installing Homebrew..."
@@ -46,10 +46,10 @@ else
     tar xzf "$CACHED" -C "$WORKDIR"
 
     CELLAR="/opt/homebrew/Cellar/$FORMULA/$VERSION"
-    sudo rm -rf "$CELLAR"
-    sudo mkdir -p "$CELLAR/bin" "$CELLAR/lib"
-    sudo cp "$WORKDIR"/rcli-*/bin/rcli "$CELLAR/bin/"
-    sudo cp "$WORKDIR"/rcli-*/lib/*.dylib "$CELLAR/lib/"
+    rm -rf "$CELLAR" 2>/dev/null || sudo rm -rf "$CELLAR"
+    mkdir -p "$CELLAR/bin" "$CELLAR/lib" 2>/dev/null || sudo mkdir -p "$CELLAR/bin" "$CELLAR/lib"
+    cp "$WORKDIR"/rcli-*/bin/rcli "$CELLAR/bin/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/bin/rcli "$CELLAR/bin/"
+    cp "$WORKDIR"/rcli-*/lib/*.dylib "$CELLAR/lib/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/lib/*.dylib "$CELLAR/lib/"
 
     brew link --overwrite "$FORMULA" 2>/dev/null || sudo brew link --overwrite "$FORMULA"
 

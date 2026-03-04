@@ -44,16 +44,16 @@
 
 ## Install
 
+> **macOS only** — Apple Silicon (M1 or later), macOS 13+.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | bash
 ```
 
-That's it. The script installs Homebrew (if needed), downloads RCLI, and fetches the default AI models (~1GB).
-
-Requires macOS 13+ on Apple Silicon (M1 or later).
+One command. Installs RCLI and downloads the default AI models (~1GB).
 
 <details>
-<summary><strong>Manual install via Homebrew</strong></summary>
+<summary><strong>Or install via Homebrew manually</strong></summary>
 
 ```bash
 brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
