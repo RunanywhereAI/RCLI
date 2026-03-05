@@ -37,31 +37,46 @@
 
 ## Demo
 
-> All demos are real-time screen recordings running on Apple Silicon — no cloud, no edits, played at 1.5× speed.
+> Real-time screen recordings on Apple Silicon — no cloud, no edits, 1.5× speed.
 
-### Voice Conversation
-
-Talk naturally. RCLI listens, understands, and responds — entirely on-device.
-
-https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo1-voice-conversation.mp4
-
-### App Control
-
-Control Spotify, adjust system volume — 43 macOS actions by voice, hands-free.
-
-https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo2-spotify-volume.mp4
-
-### Models & Benchmarks
-
-Browse models, hot-swap LLMs, and run end-to-end benchmarks — all from the TUI.
-
-https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo3-benchmarks.mp4
-
-### Document Intelligence (RAG)
-
-Ingest documents and ask questions by voice. Hybrid retrieval in ~4 ms over thousands of chunks.
-
-https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo4-rag-documents.mp4
+<table>
+<tr>
+<td width="50%" align="center">
+<strong>Voice Conversation</strong><br>
+<em>Talk naturally — RCLI listens, understands, and responds on-device.</em><br><br>
+<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo1-voice-conversation.mp4">
+<img src="assets/demos/demo1-voice-conversation.gif" alt="Voice Conversation Demo" width="100%">
+</a>
+<br><sub>🔊 Click for full video with audio</sub>
+</td>
+<td width="50%" align="center">
+<strong>App Control</strong><br>
+<em>Control Spotify, adjust volume — 43 macOS actions by voice.</em><br><br>
+<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo2-spotify-volume.mp4">
+<img src="assets/demos/demo2-spotify-volume.gif" alt="App Control Demo" width="100%">
+</a>
+<br><sub>🔊 Click for full video with audio</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center">
+<strong>Models & Benchmarks</strong><br>
+<em>Browse models, hot-swap LLMs, run benchmarks — all from the TUI.</em><br><br>
+<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo3-benchmarks.mp4">
+<img src="assets/demos/demo3-benchmarks.gif" alt="Models & Benchmarks Demo" width="100%">
+</a>
+<br><sub>🔊 Click for full video with audio</sub>
+</td>
+<td width="50%" align="center">
+<strong>Document Intelligence (RAG)</strong><br>
+<em>Ingest docs, ask questions by voice — ~4ms hybrid retrieval.</em><br><br>
+<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo4-rag-documents.mp4">
+<img src="assets/demos/demo4-rag-documents.gif" alt="RAG Demo" width="100%">
+</a>
+<br><sub>🔊 Click for full video with audio</sub>
+</td>
+</tr>
+</table>
 
 ## Install
 
