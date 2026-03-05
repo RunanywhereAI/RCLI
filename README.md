@@ -37,10 +37,31 @@
 
 ## Demo
 
-<!-- TODO: Add a short (~60s) demo video showing interactive TUI, voice commands, and RAG in action. -->
-<!-- Recommended: Record with asciinema or screen capture, upload to YouTube/GitHub, embed here. -->
+> All demos are real-time screen recordings running on Apple Silicon — no cloud, no edits, played at 1.5× speed.
 
-> **Coming soon** — a walkthrough video showing voice commands, RAG queries, and the interactive TUI.
+### Voice Conversation
+
+Talk naturally. RCLI listens, understands, and responds — entirely on-device.
+
+https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo1-voice-conversation.mp4
+
+### App Control
+
+Control Spotify, adjust system volume — 43 macOS actions by voice, hands-free.
+
+https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo2-spotify-volume.mp4
+
+### Models & Benchmarks
+
+Browse models, hot-swap LLMs, and run end-to-end benchmarks — all from the TUI.
+
+https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo3-benchmarks.mp4
+
+### Document Intelligence (RAG)
+
+Ingest documents and ask questions by voice. Hybrid retrieval in ~4 ms over thousands of chunks.
+
+https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo4-rag-documents.mp4
 
 ## Install
 
