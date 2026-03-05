@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.3"
+VERSION="0.1.4"
 REPO="RunanywhereAI/RCLI"
 TAP="RunanywhereAI/rcli"
 FORMULA="rcli"
