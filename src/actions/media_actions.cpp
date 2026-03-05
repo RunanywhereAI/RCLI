@@ -60,11 +60,11 @@ static ActionResult action_get_now_playing(const std::string& args_json) {
         "    return \"Nothing playing\"\n"
         "  end if\n"
         "end tell");
-    if (r2.success) {
+    if (r2.success && r2.output.find("Nothing") == std::string::npos) {
         std::string info = trim_output(r2.output);
         return {true, "Now playing: " + info, "", "{\"action\": \"get_now_playing\", \"track\": \"" + escape_applescript(info) + "\"}"};
     }
-    return {true, "Nothing playing", "", "{\"action\": \"get_now_playing\", \"track\": \"none\"}"};
+    return {true, "Nothing playing right now", "", "{\"action\": \"get_now_playing\", \"track\": \"none\"}"};
 }
 
 static ActionResult action_play_on_spotify(const std::string& args_json) {
@@ -106,22 +106,6 @@ static ActionResult action_play_on_spotify(const std::string& args_json) {
     return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};
 }
 
-static ActionResult action_set_music_volume(const std::string& args_json) {
-    std::string level = json_get_string(args_json, "level");
-    if (level.empty())
-        return {false, "", "Volume level required (0-100)", "{\"error\": \"missing level\"}"};
-
-    auto r = run_applescript("tell application \"Spotify\" to set sound volume to " + level);
-    if (r.success)
-        return {true, "Spotify volume set to " + level, "",
-                "{\"action\": \"set_music_volume\", \"level\": " + level + ", \"app\": \"Spotify\"}"};
-
-    auto r2 = run_applescript("tell application \"Music\" to set sound volume to " + level);
-    if (r2.success)
-        return {true, "Music volume set to " + level, "",
-                "{\"action\": \"set_music_volume\", \"level\": " + level + ", \"app\": \"Music\"}"};
-    return {false, "", "No music app running", "{\"error\": \"no music app\"}"};
-}
 
 static ActionResult action_play_apple_music(const std::string& args_json) {
     std::string query = json_get_string(args_json, "query");
@@ -146,11 +130,12 @@ static ActionResult action_play_apple_music(const std::string& args_json) {
         return {true, "Playing " + trim_output(r.output) + " on Apple Music", "",
                 "{\"action\": \"play_apple_music\", \"query\": \"" + escape_applescript(query) + "\"}"};
 
-    // Fallback: open Apple Music web search
+    // Fallback: open Apple Music web search (not local playback)
     std::string url = "https://music.apple.com/search?term=" + url_encode(query);
-    run_shell("open '" + url + "'");
-    return {true, "Searching Apple Music for: " + query, "",
-            "{\"action\": \"play_apple_music\", \"query\": \"" + escape_applescript(query) + "\"}"};
+    run_shell("open '" + escape_shell(url) + "'");
+    return {true, "Could not find " + query + " in your library. Opened Apple Music search instead.", "",
+            "{\"action\": \"play_apple_music\", \"query\": \"" + escape_applescript(query) +
+            "\", \"fallback\": \"web_search\"}"};
 }
 
 void register_media_actions(ActionRegistry& registry) {
@@ -191,22 +176,13 @@ void register_media_actions(ActionRegistry& registry) {
         action_get_now_playing);
 
     registry.register_action(
-        {"play_on_spotify", "Play a song, artist, album, or playlist on Spotify",
-         "{\"query\": \"song/artist/album name\", \"type\": \"track|artist|album|playlist (optional)\"}",
+        {"play_on_spotify", "Search and play a specific song or artist on Spotify",
+         "{\"query\": \"song or artist name\"}",
          true,
          "media",
          "Play Bohemian Rhapsody on Spotify",
          "rcli action play_on_spotify '{\"query\": \"Bohemian Rhapsody\"}'"},
         action_play_on_spotify);
-
-    registry.register_action(
-        {"set_music_volume", "Set music app volume (separate from system volume)",
-         "{\"level\": \"0-100\"}",
-         false,
-         "media",
-         "Set Spotify volume to 50",
-         "rcli action set_music_volume '{\"level\": \"50\"}'"},
-        action_set_music_volume);
 
     registry.register_action(
         {"play_apple_music", "Play a song on Apple Music by name",

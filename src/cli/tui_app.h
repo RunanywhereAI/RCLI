@@ -199,6 +199,38 @@ public:
         screen_obj.TrackMouse(false);
         screen_ = &screen_obj;
 
+        // Tool trace callback: fires on the rcli_process_command() background thread,
+        // so we guard chat_history_ with chat_mu_ and use Post(Event::Custom) to
+        // kick the FTXUI render loop. The "~" prefix is a sentinel used in
+        // build_chat_panel() to apply distinct trace styling (cyan/dim).
+        // Truncate data to 200 chars to keep the chat readable; raw JSON from
+        // actions can be very long.
+        rcli_set_tool_trace_callback(engine_,
+            [](const char* event, const char* tool_name, const char* data,
+               int success, void* ud) {
+                auto* self = static_cast<TuiApp*>(ud);
+                if (!self->tool_trace_enabled_.load(std::memory_order_relaxed)) return;
+
+                std::string ev(event), name(tool_name), detail(data ? data : "");
+                if (detail.size() > 200) detail = detail.substr(0, 197) + "...";
+
+                std::string msg;
+                if (ev == "detected") {
+                    msg = "[TRACE] Tool call: " + name + "(" + detail + ")";
+                } else if (ev == "result") {
+                    msg = "[TRACE] " + name + " -> " +
+                          std::string(success ? "OK" : "FAIL") + ": " + detail;
+                }
+
+                if (!msg.empty()) {
+                    std::lock_guard<std::mutex> lock(self->chat_mu_);
+                    self->chat_history_.push_back({"~", msg, "", false});
+                    self->trim_history();
+                    if (self->screen_)
+                        self->screen_->Post(Event::Custom);
+                }
+            }, this);
+
         std::string input_text;
         auto input_box = Input(&input_text, "Type a command or question...");
 
@@ -366,6 +398,11 @@ public:
                 if (c == "b" || c == "B") { enter_bench_mode(); return true; }
                 if (c == "r" || c == "R") { enter_rag_mode(); return true; }
                 if (c == "d" || c == "D") { close_all_panels(); enter_cleanup_mode(); return true; }
+                if (c == "t" || c == "T") {
+                    tool_trace_enabled_ = !tool_trace_enabled_.load(std::memory_order_relaxed);
+                    add_system_message(tool_trace_enabled_ ? "Tool call trace: ON" : "Tool call trace: OFF");
+                    return true;
+                }
             }
 
             return false;
@@ -391,6 +428,8 @@ public:
 
         should_quit = true;
         if (refresh.joinable()) refresh.join();
+
+        rcli_set_tool_trace_callback(engine_, nullptr, nullptr);
     }
 
 private:
@@ -722,7 +761,7 @@ private:
             metrics.push_back(text("awaiting first interaction...") | dim);
         }
         metrics.push_back(filler());
-        metrics.push_back(text("[M] models [A] actions [B] bench") | dim);
+        metrics.push_back(text("[M] models [A] actions [B] bench [T] trace") | dim);
 
         return vbox({row1, hbox(std::move(metrics))});
     }
@@ -753,10 +792,14 @@ private:
         } else {
             for (size_t i = 0; i < chat_history_.size(); i++) {
                 auto& msg = chat_history_[i];
-                auto prefix_color = msg.is_user ? theme_.user_msg : theme_.accent;
+                bool is_trace = (msg.prefix == "~");
+                auto prefix_color = msg.is_user ? theme_.user_msg
+                    : (is_trace ? theme_.info : theme_.accent);
                 auto prefix_elem = text("  " + msg.prefix + " ") | ftxui::bold | ftxui::color(prefix_color);
                 auto body_elem = paragraph(msg.text);
-                auto line = hbox({prefix_elem, body_elem | flex});
+                auto line = is_trace
+                    ? hbox({prefix_elem, body_elem | flex | ftxui::color(theme_.info)}) | dim
+                    : hbox({prefix_elem, body_elem | flex});
                 if (i == chat_history_.size() - 1 && msg.perf.empty())
                     line = line | focus;
                 lines.push_back(line);
@@ -840,6 +883,10 @@ private:
         right_items.push_back(text("[B] bench ") | dim);
         right_items.push_back(text("[R] RAG ") | dim);
         right_items.push_back(text("[D] cleanup ") | dim);
+        if (tool_trace_enabled_.load(std::memory_order_relaxed))
+            right_items.push_back(text("[T] trace ") | ftxui::bold | ftxui::color(theme_.info));
+        else
+            right_items.push_back(text("[T] trace ") | dim);
         right_items.push_back(text("[Q] quit ") | dim);
 
         return hbox({
@@ -994,6 +1041,7 @@ private:
             e.installed = (access((dir + "/" + m.filename).c_str(), R_OK) == 0);
             e.is_active = (llm_active && llm_active->id == m.id);
             e.is_default = m.is_default; e.is_recommended = m.is_recommended;
+            e.description = m.description;
             e.url = m.url; e.filename = m.filename; e.is_archive = false;
             models_entries_.push_back(e);
         }
@@ -1005,7 +1053,8 @@ private:
             e.name = m->name; e.id = m->id; e.modality = "STT"; e.size_mb = m->size_mb;
             e.installed = rcli::is_stt_installed(dir, *m);
             e.is_active = (stt_active && stt_active->id == m->id);
-            e.is_default = m->is_default;
+            e.is_default = m->is_default; e.is_recommended = m->is_recommended;
+            e.description = m->description;
             e.url = m->download_url; e.filename = m->dir_name; e.is_archive = true;
             models_entries_.push_back(e);
         }
@@ -1017,6 +1066,7 @@ private:
             e.installed = rcli::is_tts_installed(dir, v);
             e.is_active = (tts_active && tts_active->id == v.id);
             e.is_default = v.is_default; e.is_recommended = v.is_recommended;
+            e.description = v.description;
             e.url = v.download_url; e.filename = v.dir_name; e.is_archive = true;
             e.archive_dir = v.archive_dir;
             models_entries_.push_back(e);
@@ -1137,15 +1187,16 @@ private:
     }
 
     Element build_models_panel_interactive() {
-        Elements lines;
-        lines.push_back(text("  Models") | ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Up/Down navigate, ENTER select/download, ESC close") | dim);
-        lines.push_back(text(""));
+        Elements header;
+        header.push_back(text("  Models") | ftxui::bold | ftxui::color(theme_.accent));
+        header.push_back(text("  Up/Down navigate, ENTER select/download, ESC close") | dim);
+        header.push_back(text(""));
 
+        Elements list_lines;
         for (int i = 0; i < (int)models_entries_.size(); i++) {
             auto& e = models_entries_[i];
             if (e.is_header) {
-                lines.push_back(text("  --- " + e.name + " ---") |
+                list_lines.push_back(text("  --- " + e.name + " ---") |
                     ftxui::bold | ftxui::color(theme_.accent));
                 continue;
             }
@@ -1159,23 +1210,36 @@ private:
             if (e.is_active) status = " (active)";
             else if (e.installed) status = " (installed)";
             else status = " (not installed)";
-            std::string star = e.is_recommended ? " *" : "";
-            std::string line = prefix + e.name + star + "  " + size_str + status;
+            std::string tag = e.is_recommended ? " [recommended]" : "";
+            std::string line = prefix + e.name + tag + "  " + size_str + status;
 
             auto elem = text(line);
             if (selected) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
             else if (e.is_active) elem = elem | ftxui::color(theme_.success);
             else if (e.installed) elem = elem | dim;
             else elem = elem | ftxui::color(theme_.text_muted);
-            lines.push_back(elem);
+            list_lines.push_back(elem);
         }
 
+        Elements footer;
+        if (models_cursor_ >= 0 && models_cursor_ < (int)models_entries_.size()) {
+            auto& sel = models_entries_[models_cursor_];
+            if (!sel.is_header && !sel.description.empty()) {
+                footer.push_back(text("  " + sel.description) |
+                    ftxui::color(theme_.info));
+            }
+        }
         if (!models_message_.empty()) {
-            lines.push_back(text(""));
-            lines.push_back(text("  " + models_message_) |
+            footer.push_back(text("  " + models_message_) |
                 ftxui::bold | ftxui::color(models_msg_color_));
         }
-        return vbox(std::move(lines)) | yframe | vscroll_indicator;
+
+        return vbox({
+            vbox(std::move(header)),
+            vbox(std::move(list_lines)) | yframe | vscroll_indicator | flex,
+            separator() | dim,
+            vbox(std::move(footer)),
+        });
     }
 
     // ====================================================================
@@ -1190,8 +1254,11 @@ private:
 
         auto defs = ::rcli_get_all_action_defs(engine_);
         std::sort(defs.begin(), defs.end(),
-            [](const rcli::ActionDef& a, const rcli::ActionDef& b) {
+            [this](const rcli::ActionDef& a, const rcli::ActionDef& b) {
                 if (a.category != b.category) return a.category < b.category;
+                bool a_en = rcli_is_action_enabled(engine_, a.name.c_str()) != 0;
+                bool b_en = rcli_is_action_enabled(engine_, b.name.c_str()) != 0;
+                if (a_en != b_en) return a_en > b_en;
                 return a.name < b.name;
             });
 
@@ -1207,6 +1274,7 @@ private:
             ActionEntry e;
             e.name = d.name; e.description = d.description;
             e.category = d.category; e.params_json = d.parameters_json;
+            e.example_voice = d.example_voice;
             e.enabled = rcli_is_action_enabled(engine_, d.name.c_str()) != 0;
             actions_entries_.push_back(e);
         }
@@ -1284,21 +1352,22 @@ private:
             if (e.enabled) enabled_count++;
         }
 
-        Elements lines;
-        lines.push_back(text("  Actions (" + std::to_string(enabled_count) + "/" +
+        Elements header;
+        header.push_back(text("  Actions (" + std::to_string(enabled_count) + "/" +
             std::to_string(action_count) + " enabled for LLM)") |
             ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Up/Down navigate, SPACE toggle, ENTER run, ESC close") | dim);
+        header.push_back(text("  Up/Down navigate, SPACE toggle, ENTER run, ESC close") | dim);
         if (enabled_count > 20) {
-            lines.push_back(text("  Warning: >20 actions enabled may reduce quality") |
+            header.push_back(text("  Warning: >20 actions enabled may reduce quality") |
                 ftxui::color(theme_.warning));
         }
-        lines.push_back(text(""));
+        header.push_back(text(""));
 
+        Elements list_lines;
         for (int i = 0; i < (int)actions_entries_.size(); i++) {
             auto& e = actions_entries_[i];
             if (e.is_header) {
-                lines.push_back(text("  --- " + e.name + " ---") |
+                list_lines.push_back(text("  --- " + e.name + " ---") |
                     ftxui::bold | ftxui::color(theme_.info));
                 continue;
             }
@@ -1315,15 +1384,28 @@ private:
             if (sel) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
             else if (e.enabled) elem = elem | ftxui::color(theme_.success);
             else elem = elem | dim;
-            lines.push_back(elem);
+            list_lines.push_back(elem);
         }
 
+        Elements footer;
+        if (actions_cursor_ >= 0 && actions_cursor_ < (int)actions_entries_.size()) {
+            auto& sel = actions_entries_[actions_cursor_];
+            if (!sel.is_header && !sel.example_voice.empty()) {
+                footer.push_back(text("  Try saying: \"" + sel.example_voice + "\"") |
+                    ftxui::color(theme_.info));
+            }
+        }
         if (!actions_message_.empty()) {
-            lines.push_back(text(""));
-            lines.push_back(text("  " + actions_message_) |
+            footer.push_back(text("  " + actions_message_) |
                 ftxui::bold | ftxui::color(actions_msg_color_));
         }
-        return vbox(std::move(lines)) | yframe | vscroll_indicator;
+
+        return vbox({
+            vbox(std::move(header)),
+            vbox(std::move(list_lines)) | yframe | vscroll_indicator | flex,
+            separator() | dim,
+            vbox(std::move(footer)),
+        });
     }
 
     // ====================================================================
@@ -1653,6 +1735,7 @@ private:
             add_system_message("  B                Benchmarks panel (run benchmarks)");
             add_system_message("  R                RAG panel (status/clear/ingest)");
             add_system_message("  D                Delete models (interactive cleanup)");
+            add_system_message("  T                Toggle tool call trace (show tool calls & results)");
             add_system_message("  Q                Quit");
             return;
         }
@@ -1930,6 +2013,10 @@ private:
     std::atomic<float> peak_rms_{0.0f};
     std::atomic<int> anim_tick_{0};
     std::atomic<bool> rag_loaded_{false};
+    // Checked with relaxed ordering inside the trace callback hot path — when
+    // disabled, the callback returns immediately with no allocation or locking,
+    // so leaving the callback always registered has effectively zero overhead.
+    std::atomic<bool> tool_trace_enabled_{false};
     std::atomic<double> last_ttfa_ms_{0.0};
 
     std::mutex chat_mu_;
@@ -1954,7 +2041,7 @@ private:
     // Models panel state
     struct ModelEntry {
         std::string name, id, modality, url, filename;
-        std::string archive_dir;
+        std::string archive_dir, description;
         int size_mb = 0;
         bool installed = false, is_active = false, is_default = false;
         bool is_recommended = false, is_header = false, is_archive = false;
@@ -1967,7 +2054,7 @@ private:
 
     // Actions panel state
     struct ActionEntry {
-        std::string name, description, category, params_json;
+        std::string name, description, category, params_json, example_voice;
         bool is_header = false;
         bool enabled = true;
     };

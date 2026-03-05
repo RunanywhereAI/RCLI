@@ -54,9 +54,9 @@ inline std::vector<LlmModelDef> all_models() {
             /* priority      */ 0,
             /* speed_est     */ "~180 t/s",
             /* tool_calling  */ "Excellent",
-            /* description   */ "Purpose-built for tool calling. Ships by default. Best bang-for-size on actions.",
+            /* description   */ "Best for tool calling + conversation. Ships by default.",
             /* is_default    */ true,
-            /* is_recommended*/ false,
+            /* is_recommended*/ true,
         },
 
         // =================================================================

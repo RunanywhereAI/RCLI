@@ -42,6 +42,10 @@ struct ModelProfile {
     std::string tool_call_end;           // "</tool_call>" or "<|tool_call_end|>"
     bool tool_call_json_format = true;   // true = {"name":..,"arguments":..}, false = func(k="v")
 
+    // Tool-response tags (for wrapping results fed back to the model)
+    std::string tool_response_start;     // "<tool_response>" or "<|tool_response_start|>"
+    std::string tool_response_end;       // "</tool_response>" or "<|tool_response_end|>"
+
     // GGUF-embedded chat template string (from model metadata)
     std::string gguf_template;
     bool has_gguf_template = false;

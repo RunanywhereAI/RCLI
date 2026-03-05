@@ -3,6 +3,7 @@
 #include "llama.h"
 #include <algorithm>
 #include <cctype>
+#include <string_view>
 
 namespace rastack {
 
@@ -23,6 +24,8 @@ static ModelProfile make_qwen3() {
     p.tool_call_start  = "<tool_call>";
     p.tool_call_end    = "</tool_call>";
     p.tool_call_json_format = true;
+    p.tool_response_start = "<tool_response>";
+    p.tool_response_end   = "</tool_response>";
     return p;
 }
 
@@ -39,6 +42,8 @@ static ModelProfile make_lfm2() {
     p.tool_call_start  = "<|tool_call_start|>";
     p.tool_call_end    = "<|tool_call_end|>";
     p.tool_call_json_format = false; // func(key="val") format
+    p.tool_response_start = "<|tool_response_start|>";
+    p.tool_response_end   = "<|tool_response_end|>";
     return p;
 }
 
@@ -55,6 +60,8 @@ static ModelProfile make_llama3() {
     p.tool_call_start  = "<|python_tag|>";
     p.tool_call_end    = "<|eom_id|>";
     p.tool_call_json_format = true;
+    p.tool_response_start = "<tool_response>";
+    p.tool_response_end   = "</tool_response>";
     return p;
 }
 
@@ -71,6 +78,8 @@ static ModelProfile make_gemma() {
     p.tool_call_start  = "```tool_call";
     p.tool_call_end    = "```";
     p.tool_call_json_format = true;
+    p.tool_response_start = "<tool_response>";
+    p.tool_response_end   = "</tool_response>";
     return p;
 }
 
@@ -87,6 +96,8 @@ static ModelProfile make_mistral() {
     p.tool_call_start  = "[TOOL_CALLS]";
     p.tool_call_end    = "";           // Mistral uses newline as end
     p.tool_call_json_format = true;
+    p.tool_response_start = "[TOOL_RESULTS]";
+    p.tool_response_end   = "[/TOOL_RESULTS]";
     return p;
 }
 
@@ -103,6 +114,8 @@ static ModelProfile make_phi() {
     p.tool_call_start  = "<tool_call>";
     p.tool_call_end    = "</tool_call>";
     p.tool_call_json_format = true;
+    p.tool_response_start = "<tool_response>";
+    p.tool_response_end   = "</tool_response>";
     return p;
 }
 
@@ -119,6 +132,8 @@ static ModelProfile make_chatml() {
     p.tool_call_start  = "<tool_call>";
     p.tool_call_end    = "</tool_call>";
     p.tool_call_json_format = true;
+    p.tool_response_start = "<tool_response>";
+    p.tool_response_end   = "</tool_response>";
     return p;
 }
 
@@ -347,16 +362,21 @@ std::string ModelProfile::build_tool_continuation(
     const std::string& assistant_tool_call_text,
     const std::string& tool_results_text) const
 {
+    // Wrap results in model-specific tool response tags
+    std::string wrapped_results = tool_results_text;
+    if (!tool_response_start.empty()) {
+        wrapped_results = tool_response_start + tool_results_text + tool_response_end;
+    }
+
     if (has_gguf_template) {
         std::vector<std::pair<std::string, std::string>> messages;
         if (!system_prompt.empty())
             messages.emplace_back("system", system_prompt);
         messages.emplace_back("user", user_message + no_think_suffix);
         messages.emplace_back("assistant", assistant_tool_call_text);
-        messages.emplace_back("tool", tool_results_text);
+        messages.emplace_back("tool", wrapped_results);
         std::string result = apply_gguf_template(gguf_template, messages, true);
         if (!result.empty()) {
-            // Append think-skip prefix if supported
             if (!think_start.empty())
                 result += think_start + "\n" + think_end + "\n";
             return result;
@@ -368,7 +388,7 @@ std::string ModelProfile::build_tool_continuation(
     prompt += msg_start + "system" + role_separator + system_prompt + msg_end + "\n";
     prompt += msg_start + "user" + role_separator + user_message + no_think_suffix + msg_end + "\n";
     prompt += msg_start + "assistant" + role_separator + assistant_tool_call_text + msg_end + "\n";
-    prompt += msg_start + "tool" + role_separator + tool_results_text + msg_end + "\n";
+    prompt += msg_start + "tool" + role_separator + wrapped_results + msg_end + "\n";
     prompt += msg_start + "assistant" + role_separator;
     if (!think_start.empty())
         prompt += think_start + "\n" + think_end + "\n";
@@ -382,29 +402,32 @@ std::string ModelProfile::build_tool_system_prompt(
     std::string prompt = base_system_prompt;
     if (tool_defs_json.empty()) return prompt;
 
-    if (family == ModelFamily::LFM2) {
-        prompt += "\n\nYou have access to the following tools:\n" + tool_defs_json + "\n\n"
-                  "When the user asks you to perform an action, call the appropriate tool.\n"
-                  "Respond with ONLY the tool call in this exact format:\n"
-                  "<|tool_call_start|>function_name(param=\"value\", param2=\"value2\")<|tool_call_end|>\n"
-                  "Do not add any other text before or after the tool call.\n"
-                  "If no tool is needed, respond conversationally.\n";
-    } else if (family == ModelFamily::QWEN3) {
+    if (family == ModelFamily::QWEN3) {
+        // Matches Qwen3's training format: tools wrapped in <tools></tools> XML
         prompt += "\n\n# Tools\n\n"
-                  "You may call one or more tools to assist. Use this format:\n\n"
+                  "You may call one or more functions to assist with the user query.\n\n"
+                  "You are provided with function signatures within <tools></tools> XML tags:\n"
+                  "<tools>\n" + tool_defs_json + "\n</tools>\n\n"
+                  "For each function call, return a json object with function name and arguments "
+                  "within <tool_call></tool_call> XML tags:\n"
                   "<tool_call>\n"
-                  "{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n"
-                  "</tool_call>\n\n"
-                  "Available tools:\n" + tool_defs_json + "\n\n"
-                  "If the user asks you to perform an action, you MUST call the appropriate tool.\n"
-                  "If no tool is needed, respond normally.\n";
+                  "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
+                  "</tool_call>";
+    } else if (family == ModelFamily::LFM2) {
+        // Matches LFM2's training format with <|tool_list_start|>/<|tool_list_end|>
+        prompt += "\n\nYou have access to the following tools: "
+                  "<|tool_list_start|>" + tool_defs_json + "<|tool_list_end|>\n\n"
+                  "When you need to call a tool, use this exact format:\n"
+                  "<|tool_call_start|>[function_name(arg1=\"value1\", arg2=\"value2\")]<|tool_call_end|>\n\n"
+                  "If no tool is needed, respond conversationally.";
     } else {
+        // Generic format using the profile's tool_call_start/end tokens
         prompt += "\n\n# Tools\n\nYou have these tools:\n" + tool_defs_json + "\n\n"
-                  "To use a tool, respond EXACTLY like this example:\n"
+                  "To use a tool, respond EXACTLY like this:\n"
                   + tool_call_start + "\n{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}\n"
                   + tool_call_end + "\n"
                   "Only call a tool when the user asks you to perform an action. "
-                  "Output ONLY the tool call, nothing else.\n";
+                  "Output ONLY the tool call, nothing else.";
     }
     return prompt;
 }
@@ -624,19 +647,24 @@ std::string ModelProfile::clean_output(const std::string& raw) const {
 bool ModelProfile::should_suppress_token(
     const std::string& accumulated, bool& in_think, bool& in_tool) const
 {
+    // Only search the tail of the accumulated string to avoid O(N^2) over the full output.
+    // Tags are short (<25 chars) and only appear at the point of new token emission.
+    constexpr size_t TAIL_WINDOW = 80;
+    size_t tail_start = (accumulated.size() > TAIL_WINDOW) ? accumulated.size() - TAIL_WINDOW : 0;
+    auto tail = std::string_view(accumulated).substr(tail_start);
+
     if (!think_start.empty()) {
-        if (!in_think && accumulated.find(think_start) != std::string::npos)
+        if (!in_think && tail.find(think_start) != std::string_view::npos)
             in_think = true;
-        if (in_think && accumulated.find(think_end) != std::string::npos)
+        if (in_think && tail.find(think_end) != std::string_view::npos)
             in_think = false;
     }
 
-    // Check both the model's native tool tags and common formats
     auto check_tool = [&](const std::string& start, const std::string& end) {
         if (start.empty()) return;
-        if (!in_tool && accumulated.find(start) != std::string::npos)
+        if (!in_tool && tail.find(start) != std::string_view::npos)
             in_tool = true;
-        if (in_tool && !end.empty() && accumulated.find(end) != std::string::npos)
+        if (in_tool && !end.empty() && tail.find(end) != std::string_view::npos)
             in_tool = false;
     };
 

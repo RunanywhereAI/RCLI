@@ -1,11 +1,11 @@
 #include "tools/tool_engine.h"
 #include "tools/tool_defs.h"
+#include "engines/model_profile.h"
 #include "core/log.h"
 #include <cstdio>
 #include <ctime>
 #include <cmath>
 #include <sstream>
-#include <regex>
 #include <future>
 
 namespace rastack {
@@ -17,7 +17,6 @@ void ToolEngine::register_tool(const std::string& name, ToolFunction fn) {
 }
 
 void ToolEngine::register_defaults() {
-    // get_current_time
     register_tool("get_current_time", [](const std::string&) -> std::string {
         auto now = std::time(nullptr);
         char buf[128];
@@ -25,27 +24,8 @@ void ToolEngine::register_defaults() {
         return std::string("{\"time\": \"") + buf + "\"}";
     });
 
-    // get_weather (mock)
-    register_tool("get_weather", [](const std::string& args) -> std::string {
-        // Extract location from JSON (simple parsing)
-        std::string location = "Unknown";
-        auto pos = args.find("\"location\"");
-        if (pos != std::string::npos) {
-            auto colon = args.find(':', pos);
-            auto quote1 = args.find('"', colon + 1);
-            auto quote2 = args.find('"', quote1 + 1);
-            if (quote1 != std::string::npos && quote2 != std::string::npos) {
-                location = args.substr(quote1 + 1, quote2 - quote1 - 1);
-            }
-        }
-        return "{\"location\": \"" + location + "\", \"temperature\": \"22°C\", "
-               "\"condition\": \"Partly cloudy\", \"humidity\": \"45%\"}";
-    });
-
-    // calculate
     register_tool("calculate", [](const std::string& args) -> std::string {
-        // Extract expression (simple parsing)
-        std::string expr = "";
+        std::string expr;
         auto pos = args.find("\"expression\"");
         if (pos != std::string::npos) {
             auto colon = args.find(':', pos);
@@ -56,11 +36,8 @@ void ToolEngine::register_defaults() {
             }
         }
 
-        // Very simple evaluator for basic expressions
-        // In production, use a proper expression parser
         double result = 0;
         try {
-            // Handle simple "a op b" patterns
             std::istringstream iss(expr);
             double a, b;
             char op;
@@ -94,155 +71,109 @@ std::string ToolEngine::get_tool_definitions_json() const {
 
 void ToolEngine::set_external_tool_definitions(const std::string& json) {
     external_tool_defs_ = json;
-    LOG_DEBUG("Tools", "Set external tool definitions (%d bytes)", (int)json.size());
+    rebuild_tool_info_cache();
+    LOG_DEBUG("Tools", "Set external tool definitions (%d bytes, %d tools parsed)",
+              (int)json.size(), (int)tool_info_cache_.size());
 }
 
-// Parse LFM2 native format: <|tool_call_start|>[func_name(key="val", key2="val2")]<|tool_call_end|>
-static bool parse_lfm2_call(const std::string& content, ToolCall& call) {
-    // content looks like: [func_name(key="val", key2="val2")]
-    // or: func_name(key="val")
-    std::string s = content;
+void ToolEngine::rebuild_tool_info_cache() {
+    tool_info_cache_.clear();
+    const std::string& json = external_tool_defs_.empty() ? std::string(DEFAULT_TOOL_DEFS_JSON) : external_tool_defs_;
 
-    // Strip surrounding brackets
-    while (!s.empty() && (s.front() == '[' || s.front() == ' ')) s.erase(s.begin());
-    while (!s.empty() && (s.back() == ']' || s.back() == ' ')) s.pop_back();
-
-    auto paren = s.find('(');
-    if (paren == std::string::npos) return false;
-
-    call.name = s.substr(0, paren);
-    // Trim whitespace from name
-    while (!call.name.empty() && call.name.back() == ' ') call.name.pop_back();
-
-    auto close_paren = s.rfind(')');
-    if (close_paren == std::string::npos || close_paren <= paren) return false;
-
-    std::string params_str = s.substr(paren + 1, close_paren - paren - 1);
-
-    // Parse key="value" pairs into JSON
-    // Handle: key="value", key2="value2"
-    std::string json = "{";
-    bool first = true;
+    // Lightweight JSON array parse: extract {"name": "...", "description": "..."} entries
     size_t pos = 0;
-    while (pos < params_str.size()) {
-        // Skip whitespace and commas
-        while (pos < params_str.size() && (params_str[pos] == ' ' || params_str[pos] == ','))
-            pos++;
-        if (pos >= params_str.size()) break;
+    while (pos < json.size()) {
+        auto name_key = json.find("\"name\"", pos);
+        if (name_key == std::string::npos) break;
 
-        // Find key
-        auto eq = params_str.find('=', pos);
-        if (eq == std::string::npos) break;
-        std::string key = params_str.substr(pos, eq - pos);
-        while (!key.empty() && key.back() == ' ') key.pop_back();
-        while (!key.empty() && key.front() == ' ') key.erase(key.begin());
+        auto colon = json.find(':', name_key + 6);
+        if (colon == std::string::npos) break;
+        auto q1 = json.find('"', colon + 1);
+        auto q2 = json.find('"', q1 + 1);
+        if (q1 == std::string::npos || q2 == std::string::npos) break;
+        std::string name = json.substr(q1 + 1, q2 - q1 - 1);
 
-        pos = eq + 1;
-        // Skip whitespace after =
-        while (pos < params_str.size() && params_str[pos] == ' ') pos++;
-
-        // Extract value (quoted string or bare value)
-        std::string value;
-        if (pos < params_str.size() && params_str[pos] == '"') {
-            pos++; // skip opening quote
-            while (pos < params_str.size() && params_str[pos] != '"') {
-                if (params_str[pos] == '\\' && pos + 1 < params_str.size()) {
-                    value += params_str[pos + 1];
-                    pos += 2;
-                } else {
-                    value += params_str[pos++];
-                }
-            }
-            if (pos < params_str.size()) pos++; // skip closing quote
-        } else {
-            // Bare value up to comma or end
-            auto comma = params_str.find(',', pos);
-            if (comma == std::string::npos) comma = params_str.size();
-            value = params_str.substr(pos, comma - pos);
-            while (!value.empty() && value.back() == ' ') value.pop_back();
-            pos = comma;
+        std::string desc;
+        auto desc_key = json.find("\"description\"", q2);
+        // Only look for description within the same object (before next "name")
+        auto next_name = json.find("\"name\"", q2 + 1);
+        if (desc_key != std::string::npos && (next_name == std::string::npos || desc_key < next_name)) {
+            auto dc = json.find(':', desc_key + 13);
+            auto dq1 = json.find('"', dc + 1);
+            auto dq2 = json.find('"', dq1 + 1);
+            if (dq1 != std::string::npos && dq2 != std::string::npos)
+                desc = json.substr(dq1 + 1, dq2 - dq1 - 1);
         }
 
-        // Strip any junk tokens like /no_think
-        if (value.size() > 9 && value.substr(value.size() - 9) == "/no_think")
-            value = value.substr(0, value.size() - 9);
-        while (!value.empty() && (value.back() == ' ' || value.back() == '/'))
-            value.pop_back();
-
-        if (!first) json += ", ";
-        json += "\"" + key + "\": \"" + value + "\"";
-        first = false;
+        tool_info_cache_.push_back({std::move(name), std::move(desc)});
+        pos = q2 + 1;
     }
-    json += "}";
-    call.arguments_json = json;
-    return !call.name.empty();
+}
+
+std::string ToolEngine::build_tool_hint(const std::string& query, int top_k) const {
+    if (tool_info_cache_.empty()) return "";
+
+    // Tokenize query into lowercase words (skip short words)
+    std::vector<std::string> words;
+    {
+        std::string word;
+        for (char c : query) {
+            if (std::isalnum(static_cast<unsigned char>(c))) {
+                word += std::tolower(static_cast<unsigned char>(c));
+            } else if (!word.empty()) {
+                if (word.size() > 1) words.push_back(word);
+                word.clear();
+            }
+        }
+        if (word.size() > 1) words.push_back(word);
+    }
+    if (words.empty()) return "";
+
+    // Score each tool by keyword overlap
+    struct Scored { const ToolInfo* info; int score; };
+    std::vector<Scored> scored;
+    scored.reserve(tool_info_cache_.size());
+
+    for (auto& ti : tool_info_cache_) {
+        std::string haystack;
+        for (char c : ti.name) haystack += std::tolower(static_cast<unsigned char>(c));
+        haystack += ' ';
+        for (char c : ti.description) haystack += std::tolower(static_cast<unsigned char>(c));
+
+        // Replace underscores with spaces so "play_on_spotify" matches "play" and "spotify"
+        for (auto& c : haystack) if (c == '_') c = ' ';
+
+        int score = 0;
+        for (auto& w : words) {
+            if (haystack.find(w) != std::string::npos) score++;
+        }
+        if (score > 0) scored.push_back({&ti, score});
+    }
+
+    if (scored.empty()) return "";
+
+    std::sort(scored.begin(), scored.end(),
+              [](const Scored& a, const Scored& b) { return a.score > b.score; });
+
+    std::string hint = "[Relevant tools: ";
+    int n = std::min(top_k, (int)scored.size());
+    for (int i = 0; i < n; i++) {
+        if (i > 0) hint += ", ";
+        hint += scored[i].info->name;
+    }
+    hint += "]";
+    return hint;
 }
 
 std::vector<ToolCall> ToolEngine::parse_tool_calls(const std::string& llm_output) const {
-    std::vector<ToolCall> calls;
-
-    // === Format 1: LFM2 native — <|tool_call_start|>[func(args)]<|tool_call_end|> ===
-    {
-        std::string start_tag = "<|tool_call_start|>";
-        std::string end_tag = "<|tool_call_end|>";
-        size_t pos = 0;
-        while ((pos = llm_output.find(start_tag, pos)) != std::string::npos) {
-            size_t content_start = pos + start_tag.length();
-            size_t content_end = llm_output.find(end_tag, content_start);
-            if (content_end == std::string::npos) break;
-            std::string content = llm_output.substr(content_start, content_end - content_start);
-            ToolCall call;
-            if (parse_lfm2_call(content, call))
-                calls.push_back(std::move(call));
-            pos = content_end + end_tag.length();
-        }
-        if (!calls.empty()) return calls;
+    // Delegate to ModelProfile for format-aware parsing (single source of truth)
+    if (model_profile_) {
+        return model_profile_->parse_tool_calls(llm_output);
     }
 
-    // === Format 2: Qwen3 / generic — <tool_call>{"name": "...", "arguments": {...}}</tool_call> ===
-    {
-        std::string start_tag = "<tool_call>";
-        std::string end_tag = "</tool_call>";
-        size_t pos = 0;
-        while ((pos = llm_output.find(start_tag, pos)) != std::string::npos) {
-            size_t content_start = pos + start_tag.length();
-            size_t content_end = llm_output.find(end_tag, content_start);
-            if (content_end == std::string::npos) break;
-
-            std::string content = llm_output.substr(content_start, content_end - content_start);
-            ToolCall call;
-
-            auto name_pos = content.find("\"name\"");
-            if (name_pos != std::string::npos) {
-                auto colon = content.find(':', name_pos);
-                auto q1 = content.find('"', colon + 1);
-                auto q2 = content.find('"', q1 + 1);
-                if (q1 != std::string::npos && q2 != std::string::npos)
-                    call.name = content.substr(q1 + 1, q2 - q1 - 1);
-            }
-
-            auto args_pos = content.find("\"arguments\"");
-            if (args_pos != std::string::npos) {
-                auto brace_start = content.find('{', args_pos);
-                if (brace_start != std::string::npos) {
-                    int depth = 0;
-                    size_t brace_end = brace_start;
-                    for (size_t i = brace_start; i < content.size(); i++) {
-                        if (content[i] == '{') depth++;
-                        if (content[i] == '}') depth--;
-                        if (depth == 0) { brace_end = i; break; }
-                    }
-                    call.arguments_json = content.substr(brace_start, brace_end - brace_start + 1);
-                }
-            }
-
-            if (!call.name.empty())
-                calls.push_back(std::move(call));
-            pos = content_end + end_tag.length();
-        }
-    }
-
-    return calls;
+    // Fallback: use a default ChatML profile if no model profile is set
+    ModelProfile fallback = ModelProfile::from_family(ModelFamily::CHATML);
+    return fallback.parse_tool_calls(llm_output);
 }
 
 ToolResult ToolEngine::execute(const ToolCall& call) {

@@ -4,7 +4,7 @@
 
 namespace rcli {
 
-static std::string resolve_contact(const std::string& input) {
+std::string resolve_contact(const std::string& input) {
     if (input.find('@') != std::string::npos) return input;
     bool has_digit = false;
     for (char c : input) if (std::isdigit(static_cast<unsigned char>(c))) has_digit = true;
@@ -39,7 +39,7 @@ static ActionResult action_facetime_call(const std::string& args_json) {
 
     std::string resolved = resolve_contact(contact);
     std::string url = "facetime://" + url_encode(resolved);
-    auto r = run_shell("open '" + url + "'");
+    auto r = run_shell("open '" + escape_shell(url) + "'");
     if (r.success) return {true, "Starting FaceTime video call with " + contact, "",
         "{\"action\": \"facetime_call\", \"contact\": \"" + escape_applescript(contact) +
         "\", \"resolved\": \"" + escape_applescript(resolved) + "\"}"};
@@ -52,7 +52,7 @@ static ActionResult action_facetime_audio(const std::string& args_json) {
 
     std::string resolved = resolve_contact(contact);
     std::string url = "facetime-audio://" + url_encode(resolved);
-    auto r = run_shell("open '" + url + "'");
+    auto r = run_shell("open '" + escape_shell(url) + "'");
     if (r.success) return {true, "Starting FaceTime audio call with " + contact, "",
         "{\"action\": \"facetime_audio\", \"contact\": \"" + escape_applescript(contact) +
         "\", \"resolved\": \"" + escape_applescript(resolved) + "\"}"};
@@ -65,7 +65,7 @@ static ActionResult action_run_shortcut(const std::string& args_json) {
     if (name.empty()) return {false, "", "Shortcut name required", "{\"error\": \"missing name\"}"};
     std::string url = "shortcuts://run-shortcut?name=" + url_encode(name);
     if (!input.empty()) url += "&input=text&text=" + url_encode(input);
-    auto r = run_shell("open '" + url + "'");
+    auto r = run_shell("open '" + escape_shell(url) + "'");
     if (r.success) return {true, "Running shortcut: " + name, "",
         "{\"action\": \"run_shortcut\", \"name\": \"" + escape_applescript(name) + "\"}"};
     return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};

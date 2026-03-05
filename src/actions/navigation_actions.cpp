@@ -9,7 +9,7 @@ static ActionResult action_open_maps(const std::string& args_json) {
     if (query.empty()) return {false, "", "Search query required", "{\"error\": \"missing query\"}"};
 
     std::string url = "maps://?q=" + url_encode(query);
-    auto r = run_shell("open '" + url + "'");
+    auto r = run_shell("open '" + escape_shell(url) + "'");
     if (r.success) return {true, "Opened Maps for: " + query, "",
         "{\"action\": \"open_maps\", \"query\": \"" + escape_applescript(query) + "\"}"};
     return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};

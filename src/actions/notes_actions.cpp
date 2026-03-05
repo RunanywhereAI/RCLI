@@ -14,12 +14,12 @@ static ActionResult action_create_note(const std::string& args_json) {
 
     auto check = run_shell("which memo 2>/dev/null");
     if (check.success) {
-        std::string cmd = "echo '" + escape_applescript(body.empty() ? title : body)
-                         + "' | memo notes -a '" + escape_applescript(title) + "'";
+        std::string cmd = "printf '%s' '" + escape_shell(body.empty() ? title : body)
+                         + "' | memo notes -a '" + escape_shell(title) + "'";
         auto r = run_shell(cmd);
         if (r.success)
             return {true, "Created note: " + title, "",
-                    "{\"action\": \"create_note\", \"title\": \"" + title + "\", \"status\": \"created\"}"};
+                    "{\"action\": \"create_note\", \"title\": \"" + escape_applescript(title) + "\", \"status\": \"created\"}"};
     }
 
     std::string script =
@@ -40,11 +40,11 @@ static ActionResult action_create_note(const std::string& args_json) {
 void register_notes_actions(ActionRegistry& registry) {
     registry.register_action(
         {"create_note", "Create a new note in Apple Notes",
-         "{\"title\": \"note title\", \"body\": \"note content\", \"folder\": \"optional folder\"}",
+         "{\"title\": \"note title\"}",
          true,
          "productivity",
-         "Create a note called Meeting Notes with today's discussion points",
-         "rcli action create_note '{\"title\": \"Meeting\", \"body\": \"Discuss Q1 goals\"}'"},
+         "Create a note called Meeting Notes",
+         "rcli action create_note '{\"title\": \"Meeting Notes\"}'"},
         action_create_note);
 }
 

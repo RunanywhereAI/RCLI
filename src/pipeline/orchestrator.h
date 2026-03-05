@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.h"
+#include "core/constants.h"
 #include "core/memory_pool.h"
 #include "core/ring_buffer.h"
 #include "engines/stt_engine.h"
@@ -31,16 +32,7 @@ struct PipelineConfig {
     size_t audio_ring_capacity = 16384 * 10;         // ~10 sec at 16kHz
     size_t tts_ring_capacity   = 22050 * 30;         // ~30 sec at 22050Hz
 
-    std::string system_prompt =
-        "You are RCLI, the RunAnywhere Command Line Interface — an on-device voice AI assistant "
-        "for macOS, built by RunAnywhere, Inc. Your responses will be spoken aloud, "
-        "so keep them natural and conversational. "
-        "IMPORTANT: Never use asterisks, bullet points, numbered lists, markdown formatting, "
-        "or any special symbols in your response. Write in plain conversational sentences only. "
-        "Never read out JSON, code, structured data, or technical markup. "
-        "When you use a tool, output ONLY the tool_call block with no other text. "
-        "After receiving tool results, respond naturally by incorporating the "
-        "information into a conversational sentence.";
+    std::string system_prompt = RCLI_SYSTEM_PROMPT;
 };
 
 struct PipelineTimings {

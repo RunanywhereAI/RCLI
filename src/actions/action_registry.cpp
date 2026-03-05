@@ -26,6 +26,12 @@ std::string ActionRegistry::get_definitions_json() const {
     std::ostringstream oss;
     oss << "[\n";
     bool first = true;
+
+    // Built-in tools (time, calculate)
+    oss << "  {\"name\": \"get_current_time\", \"description\": \"Get the current date and time\", \"parameters\": {}}";
+    first = false;
+    oss << ",\n  {\"name\": \"calculate\", \"description\": \"Evaluate a math expression\", \"parameters\": {\"expression\": \"math expression like 2 + 2\"}}";
+
     for (auto& [name, entry] : actions_) {
         if (enabled_.count(name) == 0) continue;
         if (!first) oss << ",\n";
@@ -33,6 +39,84 @@ std::string ActionRegistry::get_definitions_json() const {
         oss << "  {\"name\": \"" << entry.def.name
             << "\", \"description\": \"" << entry.def.description
             << "\", \"parameters\": " << entry.def.parameters_json << "}";
+    }
+    oss << "\n]";
+    return oss.str();
+}
+
+std::string ActionRegistry::get_filtered_definitions_json(
+    const std::string& query, int max_tools) const
+{
+    // Tokenize query into lowercase words
+    std::vector<std::string> query_words;
+    {
+        std::string word;
+        for (char c : query) {
+            if (std::isalnum(static_cast<unsigned char>(c))) {
+                word += std::tolower(static_cast<unsigned char>(c));
+            } else if (!word.empty()) {
+                if (word.size() > 1) query_words.push_back(word);
+                word.clear();
+            }
+        }
+        if (word.size() > 1) query_words.push_back(word);
+    }
+
+    // Score each enabled action by keyword overlap with name + description
+    struct ScoredAction {
+        std::string name;
+        std::string description;
+        std::string parameters_json;
+        int score;
+    };
+    std::vector<ScoredAction> scored;
+
+    for (auto& [name, entry] : actions_) {
+        if (enabled_.count(name) == 0) continue;
+
+        std::string haystack;
+        for (char c : entry.def.name)
+            haystack += std::tolower(static_cast<unsigned char>(c));
+        haystack += ' ';
+        for (char c : entry.def.description)
+            haystack += std::tolower(static_cast<unsigned char>(c));
+        haystack += ' ';
+        for (char c : entry.def.category)
+            haystack += std::tolower(static_cast<unsigned char>(c));
+
+        int score = 0;
+        for (auto& w : query_words) {
+            if (haystack.find(w) != std::string::npos) score++;
+        }
+
+        scored.push_back({entry.def.name, entry.def.description,
+                          entry.def.parameters_json, score});
+    }
+
+    // Sort by score descending
+    std::sort(scored.begin(), scored.end(),
+              [](const ScoredAction& a, const ScoredAction& b) { return a.score > b.score; });
+
+    // If fewer than max_tools actions are enabled, just return all of them
+    if ((int)scored.size() <= max_tools) {
+        return get_definitions_json();
+    }
+
+    // Take top-k scoring actions (always include those with score > 0)
+    std::ostringstream oss;
+    oss << "[\n";
+
+    // Always include built-in tools
+    oss << "  {\"name\": \"get_current_time\", \"description\": \"Get the current date and time\", \"parameters\": {}}";
+    oss << ",\n  {\"name\": \"calculate\", \"description\": \"Evaluate a math expression\", \"parameters\": {\"expression\": \"math expression like 2 + 2\"}}";
+
+    int included = 0;
+    for (auto& sa : scored) {
+        if (included >= max_tools) break;
+        oss << ",\n  {\"name\": \"" << sa.name
+            << "\", \"description\": \"" << sa.description
+            << "\", \"parameters\": " << sa.parameters_json << "}";
+        included++;
     }
     oss << "\n]";
     return oss.str();

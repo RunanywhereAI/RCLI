@@ -9,7 +9,7 @@ namespace rcli {
 static ActionResult action_screenshot(const std::string& args_json) {
     std::string path = json_get_string(args_json, "path");
     if (path.empty()) path = "/tmp/rcli_screenshot.png";
-    auto r = run_shell("screencapture -x '" + escape_applescript(path) + "'");
+    auto r = run_shell("screencapture -x '" + escape_shell(path) + "'");
     if (r.success)
         return {true, "Screenshot saved to " + path, "",
                 "{\"action\": \"screenshot\", \"path\": \"" + path + "\"}"};
@@ -46,7 +46,7 @@ static ActionResult action_lock_screen(const std::string& args_json) {
 
 static ActionResult action_get_battery(const std::string& args_json) {
     (void)args_json;
-    auto r = run_shell("pmset -g batt | grep -Eo '\\d+%' | head -1");
+    auto r = run_shell("pmset -g batt | grep -Eo '[0-9]+%' | head -1");
     if (r.success && !r.output.empty()) {
         std::string pct = trim_output(r.output);
         auto r2 = run_shell("pmset -g batt | grep -o 'charging\\|discharging\\|charged\\|AC Power'");

@@ -21,6 +21,15 @@ typedef void (*RCLIStateCallback)(int old_state, int new_state, void* user_data)
 // Action execution results
 typedef void (*RCLIActionCallback)(const char* action_name, const char* result_json, int success, void* user_data);
 
+// Tool call trace — opt-in observability for the LLM tool-calling pipeline.
+// Approach: a push callback rather than polling/log scraping, so the TUI (or any
+// consumer) can display trace events in real-time without parsing stderr.
+// Events: "detected" (tool call parsed from LLM output), "result" (execution complete)
+// The callback fires synchronously on the rcli_process_command() thread; consumers
+// that touch UI must post back to the render thread (e.g. screen_->Post()).
+typedef void (*RCLIToolTraceCallback)(const char* event, const char* tool_name,
+                                      const char* data, int success, void* user_data);
+
 // Generic event callback (for file processing, benchmarks, timings)
 // Events: "state_change", "timings", "benchmark_progress", "benchmark_run", "benchmark_result"
 typedef void (*RCLIEventCallback)(const char* event, const char* data, void* user_data);
@@ -177,6 +186,9 @@ void rcli_set_state_callback(RCLIHandle handle, RCLIStateCallback cb, void* user
 
 // Set callback for action results
 void rcli_set_action_callback(RCLIHandle handle, RCLIActionCallback cb, void* user_data);
+
+// Set callback for tool call trace events (detected / result)
+void rcli_set_tool_trace_callback(RCLIHandle handle, RCLIToolTraceCallback cb, void* user_data);
 
 // --- State ---
 

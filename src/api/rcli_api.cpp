@@ -4,6 +4,7 @@
 #include "models/stt_model_registry.h"
 #include "pipeline/orchestrator.h"
 #include "audio/audio_io.h"
+#include "core/constants.h"
 #include "core/log.h"
 #include "bench/benchmark.h"
 #include "engines/embedding_engine.h"
@@ -74,6 +75,11 @@ struct RCLIEngine {
     void* state_ud = nullptr;
     RCLIActionCallback action_cb = nullptr;
     void* action_ud = nullptr;
+    // Tool trace callback — separate from action_cb because action_cb only fires
+    // for ActionRegistry actions, while trace covers both actions and built-in tools
+    // (get_current_time, calculate), giving a complete picture of tool dispatch.
+    RCLIToolTraceCallback tool_trace_cb = nullptr;
+    void* tool_trace_ud = nullptr;
 
     std::atomic<float> audio_rms{0.0f};
 
@@ -287,18 +293,8 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
     config.audio.mode = AudioMode::LIVE_MODE;
 #endif
 
-    // --- System prompt (macOS with actions) ---
-    config.system_prompt =
-        "You are RCLI, a helpful on-device voice assistant for macOS. "
-        "You can take actions on the user's Mac: create notes, send messages, "
-        "set reminders, open apps, search files, manage calendar, and more. "
-        "Your responses will be spoken aloud via text-to-speech, so keep them natural and conversational. "
-        "CRITICAL: NEVER use asterisks, double asterisks, hash symbols, backticks, "
-        "bullet points, numbered lists, markdown formatting, or any special symbols. "
-        "Write ONLY in plain conversational English sentences. "
-        "IMPORTANT: Never use markdown, bullets, or special formatting. "
-        "When you use a tool, output ONLY the tool_call block. "
-        "After receiving tool results, respond naturally.";
+    // --- System prompt (shared constant from core/constants.h) ---
+    config.system_prompt = rastack::RCLI_SYSTEM_PROMPT;
 
     // Load user action preferences (enable/disable state)
     {
@@ -447,34 +443,6 @@ static void cap_history(std::vector<std::pair<std::string, std::string>>& histor
     }
 }
 
-// Helper: execute an action, fire callback, and summarize result via LLM
-static std::string execute_and_summarize(RCLIEngine* engine,
-                                         const std::string& action_name,
-                                         const std::string& args_json,
-                                         const std::string& input) {
-    auto result = engine->actions.execute(action_name, args_json);
-
-    if (engine->action_cb) {
-        engine->action_cb(action_name.c_str(), result.raw_json.c_str(),
-                          result.success ? 1 : 0, engine->action_ud);
-    }
-
-    // Success: use the action's output directly (no LLM call needed, saves latency)
-    if (result.success)
-        return result.output;
-
-    // Error: ask LLM to explain the failure helpfully
-    std::string summary = engine->pipeline.llm().generate(
-        engine->pipeline.llm().build_chat_prompt(
-            "You are RCLI, a macOS voice assistant. The user asked: \"" + input + "\". "
-            "You tried the action \"" + action_name + "\" but it failed with: " + result.error + "\n"
-            "Explain what went wrong in one short sentence and suggest what the user can do. "
-            "Do NOT say you can't do things. Do NOT output JSON. Do NOT use <think> tags.",
-            {}, ""),
-        nullptr);
-    return clean_llm_output(engine, summary);
-}
-
 // Fallback: detect bare function calls like "func_name(arg=val)" without tool-call tags.
 // Matches against known action names so we don't false-positive on normal text.
 static std::vector<rastack::ToolCall> try_parse_bare_tool_calls(
@@ -557,18 +525,11 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     std::lock_guard<std::mutex> lock(engine->mutex);
     std::string input(text);
 
-    // === Single LLM-driven path: tool definitions always in system prompt ===
-    std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
-    std::string base_system =
-        "You are RCLI, an on-device macOS voice assistant that EXECUTES actions.\n"
-        "RULES:\n"
-        "1. If the user asks you to DO something (open, create, play, send, search, etc.), "
-        "you MUST call the appropriate tool. NEVER just describe how to do it.\n"
-        "2. Pick the MOST SPECIFIC tool that matches the user's intent.\n"
-        "3. If the query is purely conversational (greeting, question, chitchat), "
-        "respond naturally WITHOUT calling any tool.\n";
+    // === Single LLM-driven path: tool definitions in system prompt ===
+    // Pre-filter tools by query relevance to avoid overwhelming small models
+    std::string tool_defs = engine->actions.get_filtered_definitions_json(input, 10);
     std::string system_prompt = engine->pipeline.llm().profile().build_tool_system_prompt(
-        base_system, tool_defs);
+        rastack::RCLI_SYSTEM_PROMPT, tool_defs);
 
     auto history = get_trimmed_history(engine, system_prompt, input);
     std::string raw_llm_output = engine->pipeline.llm().generate(
@@ -578,24 +539,72 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     // Parse tool calls from RAW output first (before cleaning strips the tags)
     auto tool_calls = engine->pipeline.llm().profile().parse_tool_calls(raw_llm_output);
 
-    // Fallback: if no tagged tool calls found, try to detect bare function calls
-    if (tool_calls.empty()) {
+    // Fallback: bare function-call detection only for LFM2 family (which uses func(k="v") format).
+    // Qwen3 should always emit proper <tool_call> tags; bare matching causes false positives.
+    if (tool_calls.empty() &&
+        engine->pipeline.llm().profile().family == rastack::ModelFamily::LFM2) {
         tool_calls = try_parse_bare_tool_calls(engine, raw_llm_output);
     }
 
     std::string llm_output = clean_llm_output(engine, raw_llm_output);
 
     if (!tool_calls.empty()) {
+        // Fire "detected" events before execution so the trace consumer sees what
+        // the LLM decided to call, even if execution fails or the tool isn't found.
+        // This two-phase approach (detected → result) lets the UI show a "calling..."
+        // state before the potentially slow AppleScript execution completes.
+        if (engine->tool_trace_cb) {
+            for (auto& call : tool_calls) {
+                engine->tool_trace_cb("detected", call.name.c_str(),
+                    call.arguments_json.c_str(), 0, engine->tool_trace_ud);
+            }
+        }
+
         bool any_valid = false;
         std::string combined_response;
         for (auto& call : tool_calls) {
             const auto* def = engine->actions.get_def(call.name);
-            if (def) {
+            if (def && engine->actions.is_enabled(call.name)) {
                 any_valid = true;
-                combined_response += execute_and_summarize(engine, call.name, call.arguments_json, input);
+                // Inlined execute_and_summarize() here so trace events can fire
+                // between execution and the error-recovery LLM call.
+                auto action_result = engine->actions.execute(call.name, call.arguments_json);
+
+                if (engine->action_cb) {
+                    engine->action_cb(call.name.c_str(), action_result.raw_json.c_str(),
+                                      action_result.success ? 1 : 0, engine->action_ud);
+                }
+
+                if (engine->tool_trace_cb) {
+                    engine->tool_trace_cb("result", call.name.c_str(),
+                        action_result.raw_json.c_str(),
+                        action_result.success ? 1 : 0, engine->tool_trace_ud);
+                }
+
+                if (action_result.success) {
+                    combined_response += action_result.output;
+                } else {
+                    std::string summary = engine->pipeline.llm().generate(
+                        engine->pipeline.llm().build_chat_prompt(
+                            "You are RCLI, a macOS voice assistant. The user asked: \"" + input + "\". "
+                            "You tried the action \"" + call.name + "\" but it failed with: " + action_result.error + "\n"
+                            "Explain what went wrong in one short sentence and suggest what the user can do. "
+                            "Do NOT say you can't do things. Do NOT output JSON. Do NOT use <think> tags.",
+                            {}, ""),
+                        nullptr);
+                    combined_response += clean_llm_output(engine, summary);
+                }
             } else if (engine->pipeline.tools().has_tool(call.name)) {
                 any_valid = true;
                 auto result = engine->pipeline.tools().execute(call);
+
+                // Trace: notify built-in tool result
+                if (engine->tool_trace_cb) {
+                    engine->tool_trace_cb("result", call.name.c_str(),
+                        result.result_json.c_str(),
+                        result.success ? 1 : 0, engine->tool_trace_ud);
+                }
+
                 combined_response += result.success ? result.result_json : ("Error: " + result.result_json);
             }
             if (!combined_response.empty() && &call != &tool_calls.back()) combined_response += " ";
@@ -1475,6 +1484,13 @@ void rcli_set_action_callback(RCLIHandle handle, RCLIActionCallback cb, void* us
     auto* engine = static_cast<RCLIEngine*>(handle);
     engine->action_cb = cb;
     engine->action_ud = user_data;
+}
+
+void rcli_set_tool_trace_callback(RCLIHandle handle, RCLIToolTraceCallback cb, void* user_data) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    engine->tool_trace_cb = cb;
+    engine->tool_trace_ud = user_data;
 }
 
 // =============================================================================

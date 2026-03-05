@@ -70,6 +70,7 @@ bool Orchestrator::init(const PipelineConfig& config) {
     }
 
     tools_.register_defaults();
+    tools_.set_model_profile(&llm_.profile());
 
     // Cache tool-aware system prompt (includes tool definitions) in KV cache.
     // When external tool defs are set, they'll be included automatically.
@@ -208,26 +209,33 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
         tts_queue_cv.notify_one();
     };
 
-    // Build tool-aware system prompt (always includes tool definitions)
-    std::string tool_defs = tools_.get_tool_definitions_json();
-    std::string tool_system = llm_.profile().build_tool_system_prompt(
-        config_.system_prompt, tool_defs);
-
     std::string llm_response;
     fprintf(stderr, "[Pipeline] LLM-driven routing (query: \"%s\")\n", stt_text.c_str());
 
-    // Speculative first-token detection: buffer initial tokens to detect tool calls
+    // Speculative first-token detection: buffer initial tokens to detect tool calls.
+    // Adaptive: extends the window if the buffer ends with a partial tool call tag prefix.
     std::string token_buffer;
     bool detected_tool_call = false;
     constexpr int SPECULATIVE_TOKENS = 15;
     int tokens_buffered = 0;
     SentenceDetector detector(queue_sentence, 3, 25, 7);
 
+    // Partial prefixes of known tool_call_start tags that could still become a full match
+    const std::string& tc_start = llm_.profile().tool_call_start;
+
+    // Inject tool focus hint into user turn to steer model without invalidating KV cache
+    std::string tool_hint = tools_.build_tool_hint(stt_text);
+    std::string hinted_text = tool_hint.empty() ? stt_text : (tool_hint + "\n" + stt_text);
+
     std::string prompt;
     if (llm_.has_prompt_cache()) {
-        prompt = llm_.profile().build_user_turn(stt_text);
+        prompt = llm_.profile().build_user_turn(hinted_text);
     } else {
-        prompt = llm_.build_chat_prompt(tool_system, {}, stt_text);
+        // Build tool-aware system prompt only when KV cache isn't active
+        std::string tool_defs = tools_.get_tool_definitions_json();
+        std::string tool_system = llm_.profile().build_tool_system_prompt(
+            config_.system_prompt, tool_defs);
+        prompt = llm_.build_chat_prompt(tool_system, {}, hinted_text);
     }
 
     auto speculative_callback = [&](const TokenOutput& tok) {
@@ -235,16 +243,29 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
         token_buffer += tok.text;
         tokens_buffered++;
         if (tokens_buffered <= SPECULATIVE_TOKENS) {
-            if (token_buffer.find(llm_.profile().tool_call_start) != std::string::npos) {
+            if (token_buffer.find(tc_start) != std::string::npos) {
                 detected_tool_call = true;
             }
         } else if (!detected_tool_call) {
-            // Past the speculative window — flush buffer and stream to TTS
+            // Adaptive extension: if the buffer tail looks like the start of a tool tag,
+            // keep buffering instead of flushing (e.g. buffer ends with "<tool" or "<|tool")
+            bool partial_match = false;
+            if (!tc_start.empty()) {
+                for (size_t len = 1; len < tc_start.size() && len <= token_buffer.size(); len++) {
+                    if (token_buffer.compare(token_buffer.size() - len, len, tc_start, 0, len) == 0) {
+                        partial_match = true;
+                        break;
+                    }
+                }
+            }
+            if (partial_match) {
+                return;
+            }
+            // No partial match -- flush buffer and stream to TTS
             detector.feed(token_buffer);
             token_buffer.clear();
-            detected_tool_call = false;
         }
-        if (tokens_buffered > SPECULATIVE_TOKENS && !detected_tool_call) {
+        if (tokens_buffered > SPECULATIVE_TOKENS && !detected_tool_call && token_buffer.empty()) {
             detector.feed(tok.text);
         }
     };
@@ -502,11 +523,6 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
         tts_queue_cv.notify_one();
     };
 
-    // Build tool-aware system prompt (always includes tool definitions)
-    std::string tool_defs = tools_.get_tool_definitions_json();
-    std::string tool_system = llm_.profile().build_tool_system_prompt(
-        config_.system_prompt, tool_defs);
-
     std::string llm_response;
     fprintf(stderr, "[Pipeline] LLM-driven routing\n");
 
@@ -517,11 +533,18 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
     int tokens_buffered = 0;
     SentenceDetector detector(queue_sentence, 3, 25, 7);
 
+    // Inject tool focus hint into user turn to steer model without invalidating KV cache
+    std::string stream_hint = tools_.build_tool_hint(stt_text);
+    std::string hinted_stream = stream_hint.empty() ? stt_text : (stream_hint + "\n" + stt_text);
+
     std::string prompt;
     if (llm_.has_prompt_cache()) {
-        prompt = llm_.profile().build_user_turn(stt_text);
+        prompt = llm_.profile().build_user_turn(hinted_stream);
     } else {
-        prompt = llm_.build_chat_prompt(tool_system, {}, stt_text);
+        std::string tool_defs = tools_.get_tool_definitions_json();
+        std::string tool_system = llm_.profile().build_tool_system_prompt(
+            config_.system_prompt, tool_defs);
+        prompt = llm_.build_chat_prompt(tool_system, {}, hinted_stream);
     }
 
     auto speculative_callback = [&](const TokenOutput& tok) {
@@ -921,11 +944,15 @@ void Orchestrator::llm_thread_fn() {
             }
         };
 
+        // Inject tool focus hint to steer model without invalidating KV cache
+        std::string live_hint = tools_.build_tool_hint(user_text);
+        std::string hinted_user = live_hint.empty() ? user_text : (live_hint + "\n" + user_text);
+
         if (llm_.has_prompt_cache() && trimmed.empty()) {
-            std::string user_portion = llm_.profile().build_user_turn(user_text);
+            std::string user_portion = llm_.profile().build_user_turn(hinted_user);
             response = llm_.generate_with_cached_prompt(user_portion, speculative_callback);
         } else {
-            std::string prompt = llm_.build_chat_prompt(tool_system, trimmed, user_text);
+            std::string prompt = llm_.build_chat_prompt(tool_system, trimmed, hinted_user);
             response = llm_.generate(prompt, speculative_callback);
         }
 
@@ -1017,6 +1044,7 @@ bool Orchestrator::reload_llm(const LlmConfig& new_config) {
     }
 
     config_.llm = new_config;
+    tools_.set_model_profile(&llm_.profile());
     recache_system_prompt();
     LOG_INFO("Pipeline", "LLM hot-swap complete (%s profile)", llm_.profile().family_name.c_str());
     return true;

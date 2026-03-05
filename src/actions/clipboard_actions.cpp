@@ -14,7 +14,7 @@ static ActionResult action_clipboard_read(const std::string& args_json) {
 static ActionResult action_clipboard_write(const std::string& args_json) {
     std::string text = json_get_string(args_json, "text");
     if (text.empty()) return {false, "", "Text required", "{\"error\": \"missing text\"}"};
-    auto r = run_shell("echo '" + escape_applescript(text) + "' | pbcopy");
+    auto r = run_shell("printf '%s' '" + escape_shell(text) + "' | pbcopy");
     if (r.success) return {true, "Copied to clipboard", "", "{\"action\": \"clipboard_write\"}"};
     return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};
 }

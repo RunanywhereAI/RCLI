@@ -50,3 +50,4 @@ benchmark_docs/
 
 # CMake FetchContent
 _deps/
+EXTERNAL/

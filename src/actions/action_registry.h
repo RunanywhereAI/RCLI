@@ -38,6 +38,12 @@ public:
     // Returns definitions JSON for enabled actions only (what the LLM sees)
     std::string get_definitions_json() const;
 
+    // Returns definitions JSON for the top-k most relevant enabled actions for a query.
+    // Uses keyword overlap scoring. Falls back to all enabled actions if fewer than
+    // min_tools match. Built-in tools (time, calculate) are always included.
+    std::string get_filtered_definitions_json(const std::string& query,
+                                               int max_tools = 10) const;
+
     // Returns definitions JSON for ALL actions (for display/manual execution)
     std::string get_all_definitions_json() const;
 

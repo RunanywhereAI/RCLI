@@ -20,7 +20,7 @@
   <a href="https://huggingface.co/hexgrad/Kokoro-82M"><img src="https://img.shields.io/badge/Kokoro-TTS-orange" alt="Kokoro"></a>
 </p>
 
-**RCLI** (RunAnywhere Command Line Interface) is a complete STT + LLM + TTS pipeline running on Apple Silicon with Metal GPU. 40 macOS actions via voice or text. Local RAG over your documents. Sub-200ms end-to-end latency. No cloud, no API keys.
+**RCLI** (RunAnywhere Command Line Interface) is a complete STT + LLM + TTS pipeline running on Apple Silicon with Metal GPU. 43 macOS actions via voice or text. Local RAG over your documents. Sub-200ms end-to-end latency. No cloud, no API keys.
 
 ## Table of Contents
 
@@ -72,7 +72,7 @@ rcli ask "create a note called Meeting Notes"
 rcli ask "play some jazz on Spotify"
 ```
 
-Run `rcli actions` to see all 40 available macOS actions, or `rcli --help` for the full CLI reference.
+Run `rcli actions` to see all 43 available macOS actions, or `rcli --help` for the full CLI reference.
 
 ## Features
 
@@ -82,37 +82,66 @@ A complete STT, LLM, TTS pipeline running on Metal GPU with three concurrent thr
 
 - **VAD** — Silero voice activity detection, filters silence in real-time
 - **STT** — Zipformer streaming (live mic) + Whisper/Parakeet offline (batch)
-- **LLM** — Liquid LFM2 1.2B Tool with system prompt KV caching and Flash Attention
+- **LLM** — Qwen3 / LFM2 / Qwen3.5 with system prompt KV caching and Flash Attention
 - **TTS** — Double-buffered sentence-level synthesis (next sentence synthesizes while current plays)
-- **Tool Calling** — Hybrid approach: Tier 1 keyword match + Tier 2 LLM-based extraction
+- **Tool Calling** — Fully LLM-driven with model-native tool call formats (Qwen3 `<tool_call>`, LFM2 `<|tool_call_start|>`, etc.)
+- **Multi-turn Memory** — Sliding window conversation history with token-budget trimming to fit context
 
 ### macOS Actions
 
-Control your Mac by voice or text. RCLI classifies intent and executes 40 actions locally via AppleScript and shell commands.
+Control your Mac by voice or text. The LLM routes intent to 43 actions executed locally via AppleScript and shell commands. Actions can be individually enabled/disabled (persisted across sessions) via the Actions panel or CLI.
 
 | Category | Actions |
 |----------|---------|
 | **Productivity** | `create_note`, `create_reminder`, `run_shortcut` |
 | **Communication** | `send_message`, `facetime_call`, `facetime_audio` |
 | **Media** | `play_on_spotify`, `play_apple_music`, `play_pause_music`, `next_track`, `previous_track`, `set_music_volume`, `get_now_playing` |
-| **System** | `open_app`, `quit_app`, `switch_app`, `set_volume`, `toggle_dark_mode`, `lock_screen`, `screenshot`, `search_files`, `open_settings`, `open_url` |
+| **System** | `open_app`, `quit_app`, `set_volume`, `toggle_dark_mode`, `lock_screen`, `screenshot`, `search_files`, `open_settings`, `open_url`, `get_battery`, `get_wifi`, `get_ip_address`, `get_uptime`, `get_disk_usage` |
 | **Window** | `close_window`, `minimize_window`, `fullscreen_window`, `get_frontmost_app`, `list_apps` |
-| **Info** | `get_battery`, `get_wifi`, `get_ip_address`, `get_uptime`, `get_disk_usage` |
-| **Web / Nav** | `search_web`, `search_youtube`, `get_browser_url`, `get_browser_tabs`, `open_maps`, `clipboard_read`, `clipboard_write` |
+| **Web / Nav** | `search_web`, `search_youtube`, `get_browser_url`, `get_browser_tabs`, `open_maps` |
+| **Clipboard** | `clipboard_read`, `clipboard_write` |
 
 ### RAG (Retrieval-Augmented Generation)
 
-Index local documents and query them by voice or text. Hybrid retrieval combining vector search (USearch HNSW) and BM25 full-text search, fused via Reciprocal Rank Fusion. Retrieval latency is ~4ms over 5K+ chunks.
+Index local documents and query them by voice or text. Hybrid retrieval combining vector search (USearch HNSW) and BM25 full-text search, fused via Reciprocal Rank Fusion. Retrieval latency is ~4ms over 5K+ chunks. Supports PDF, DOCX, and plain text files.
 
 ```bash
-rcli rag ingest ~/Documents/notes
-rcli rag query "What were the key decisions from last week?"
+rcli rag ingest ~/Documents/notes         # index a directory
+rcli rag query "What were the key decisions?"
 rcli ask --rag ~/Library/RCLI/index "summarize the project plan"
 ```
 
+In the TUI, drag a file or folder from Finder into the terminal to auto-index it, then ask questions immediately.
+
 ### Interactive TUI
 
-A terminal dashboard built with [FTXUI](https://github.com/ArthurSonzogni/FTXUI) featuring push-to-talk voice input, live hardware monitoring (CPU, GPU, memory), real-time performance metrics, model management, and an actions browser.
+A terminal dashboard built with [FTXUI](https://github.com/ArthurSonzogni/FTXUI) with push-to-talk, live hardware monitoring, performance metrics, model management, and an actions browser.
+
+| Key | Action |
+|-----|--------|
+| **SPACE** | Start / stop push-to-talk voice recording |
+| **M** | Models panel — browse, download, hot-swap LLM/STT/TTS without restart |
+| **A** | Actions panel — browse, enable/disable, run macOS actions |
+| **B** | Benchmarks panel — run STT, LLM, TTS, E2E benchmarks |
+| **R** | RAG panel — ingest documents, clear index |
+| **D** | Cleanup panel — delete unused models to free disk |
+| **T** | Toggle **tool call trace** — see every tool call and result inline |
+| **ESC** | Stop processing / close panel / quit |
+
+Drag a file or folder into the terminal to auto-index it for RAG.
+
+### Tool Call Trace
+
+Press **T** in the TUI to toggle tool call tracing. When enabled, every tool call the LLM makes is shown inline in the chat — the tool name, arguments passed, and the execution result (success/fail + output). This is useful for understanding how the LLM routes your requests, debugging action failures, and evaluating tool-calling performance across different models.
+
+```
+> open Safari
+  ~ [TRACE] Tool call: open_app({"app_name": "Safari"})
+  ~ [TRACE] open_app -> OK: {"success": true, "output": "Opened Safari"}
+  RCLI: Done! Safari is now open.
+```
+
+Use `rcli bench --suite tools` to benchmark tool-calling accuracy and latency for the active LLM, or `rcli bench --all-llm --suite tools` to compare across all installed models.
 
 ## Supported Models
 
@@ -193,7 +222,9 @@ All measurements on Apple M3 Max (14-core CPU, 30-core GPU, 36 GB unified memory
 ```bash
 rcli bench                          # run all benchmarks
 rcli bench --suite llm              # LLM only
+rcli bench --suite tools            # tool-calling accuracy and latency
 rcli bench --all-llm --suite llm    # compare all installed LLMs
+rcli bench --all-llm --suite tools  # compare tool calling across LLMs
 rcli bench --output results.json    # export to JSON
 ```
 
@@ -204,7 +235,9 @@ Suites: `stt`, `llm`, `tts`, `e2e`, `tools`, `rag`, `memory`, `all`.
 ```
 Mic → VAD → STT → [RAG] → LLM → TTS → Speaker
                             |
-                     Tool Calling → 40 macOS Actions
+                     Tool Calling → 43 macOS Actions
+                            |
+                     [Tool Trace] → TUI (optional)
 ```
 
 Three dedicated threads in live mode, synchronized via condition variables:
@@ -222,22 +255,25 @@ Three dedicated threads in live mode, synchronized via condition variables:
 - System prompt KV caching — reuses llama.cpp KV cache across queries
 - Sentence-level TTS scheduling — next sentence synthesizes while current plays
 - Hardware profiling at startup — detects P/E cores, Metal GPU, RAM for optimal config
+- Filtered tool definitions — top-k relevance scoring limits tool context for small LLMs
+- Token-budget conversation trimming — fits history to context window, evicts oldest turns
+- Live model hot-swap — switch LLM at runtime without restarting the pipeline
 
 ### Project Structure
 
 ```
 src/
-  engines/     STT, LLM, TTS, VAD, embedding engine wrappers
+  engines/     STT, LLM, TTS, VAD, embedding engine wrappers, model profiles
   pipeline/    Orchestrator, sentence detector, text sanitizer
   rag/         Vector index, BM25, hybrid retriever, document processor
   core/        Types, ring buffer, memory pool, hardware profiler
   audio/       CoreAudio mic/speaker I/O
   tools/       Tool calling engine with JSON schema definitions
-  bench/       Benchmark harness
-  actions/     40 macOS action implementations
+  bench/       Benchmark harness (STT, LLM, TTS, E2E, tools, RAG, memory)
+  actions/     43 macOS action implementations (AppleScript + shell)
   api/         C API (rcli_api.h) — public engine interface
   cli/         TUI dashboard (FTXUI), CLI commands
-  models/      Model registries (LLM, TTS, STT)
+  models/      Model registries (LLM, TTS, STT) with on-demand download
 scripts/       setup.sh, download_models.sh, package.sh
 Formula/       Homebrew formula (self-hosted tap)
 ```
@@ -272,7 +308,7 @@ Requires CMake 3.15+ and Apple Clang (C++17).
 <summary><strong>CLI Reference</strong></summary>
 
 ```
-rcli                          Interactive TUI (push-to-talk + text)
+rcli                          Interactive TUI (push-to-talk + text + trace)
 rcli listen                   Continuous voice mode (always listening)
 rcli ask <text>               One-shot text command
 rcli actions [name]           List actions or show detail for one
@@ -285,6 +321,7 @@ rcli voices                   Manage TTS voices
 rcli upgrade-llm              Download a larger LLM
 rcli upgrade-stt              Download Parakeet TDT
 rcli bench [--suite ...]      Run benchmarks
+rcli mic-test                 Test microphone audio levels
 rcli cleanup                  Remove unused models
 rcli setup                    Download default models (~1GB)
 rcli info                     Show engine info and installed models
@@ -296,6 +333,10 @@ Options:
   --ctx-size <n>      LLM context size (default: 4096)
   --no-speak          Text output only (no TTS playback)
   --verbose, -v       Show debug logs
+  --suite <name>      Benchmark suite: stt, llm, tts, e2e, tools, rag, memory, all
+  --all-llm           Benchmark all installed LLM models
+  --all-tts           Benchmark all installed TTS voices
+  --output <file>     Export benchmark results to JSON
 ```
 
 </details>

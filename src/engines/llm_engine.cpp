@@ -169,6 +169,19 @@ std::string LlmEngine::generate(const std::string& prompt, TokenCallback on_toke
 
     stats_.prompt_eval_us = now_us() - t_prompt_start;
 
+    // Collect stop strings: tool_call_end terminates generation after a tool call
+    std::vector<std::string> stop_strings;
+    if (!profile_.tool_call_end.empty())
+        stop_strings.push_back(profile_.tool_call_end);
+    if (profile_.tool_call_end != "</tool_call>" && profile_.tool_call_end != "<|tool_call_end|>") {
+        stop_strings.push_back("</tool_call>");
+        stop_strings.push_back("<|tool_call_end|>");
+    } else if (profile_.tool_call_end == "</tool_call>") {
+        stop_strings.push_back("<|tool_call_end|>");
+    } else if (profile_.tool_call_end == "<|tool_call_end|>") {
+        stop_strings.push_back("</tool_call>");
+    }
+
     // Generate tokens
     std::string result;
     int64_t t_gen_start = now_us();
@@ -201,6 +214,22 @@ std::string LlmEngine::generate(const std::string& prompt, TokenCallback on_toke
         std::string piece = token_to_text(new_token);
         result += piece;
         stats_.generated_tokens++;
+
+        // Stop early if we've completed a tool call (saves latency)
+        bool hit_stop = false;
+        if (in_tool_call_block) {
+            for (auto& stop : stop_strings) {
+                if (result.size() >= stop.size() &&
+                    result.compare(result.size() - stop.size(), stop.size(), stop) == 0) {
+                    hit_stop = true;
+                    break;
+                }
+            }
+        }
+        if (hit_stop) {
+            LOG_DEBUG("LLM", "Stopped at tool_call_end after %lld tokens", stats_.generated_tokens);
+            break;
+        }
 
         bool suppress = profile_.should_suppress_token(result, in_think_block, in_tool_call_block);
 
@@ -332,6 +361,19 @@ std::string LlmEngine::generate_with_cached_prompt(const std::string& user_porti
     }
     stats_.prompt_eval_us = now_us() - t_prompt_start;
 
+    // Collect stop strings for tool call termination
+    std::vector<std::string> stop_strings;
+    if (!profile_.tool_call_end.empty())
+        stop_strings.push_back(profile_.tool_call_end);
+    if (profile_.tool_call_end != "</tool_call>" && profile_.tool_call_end != "<|tool_call_end|>") {
+        stop_strings.push_back("</tool_call>");
+        stop_strings.push_back("<|tool_call_end|>");
+    } else if (profile_.tool_call_end == "</tool_call>") {
+        stop_strings.push_back("<|tool_call_end|>");
+    } else if (profile_.tool_call_end == "<|tool_call_end|>") {
+        stop_strings.push_back("</tool_call>");
+    }
+
     // Generate tokens (same logic as generate())
     std::string result;
     int64_t t_gen_start = now_us();
@@ -357,6 +399,22 @@ std::string LlmEngine::generate_with_cached_prompt(const std::string& user_porti
         std::string piece = token_to_text(new_token);
         result += piece;
         stats_.generated_tokens++;
+
+        // Stop early if we've completed a tool call
+        bool hit_stop = false;
+        if (in_tool_call_block) {
+            for (auto& stop : stop_strings) {
+                if (result.size() >= stop.size() &&
+                    result.compare(result.size() - stop.size(), stop.size(), stop) == 0) {
+                    hit_stop = true;
+                    break;
+                }
+            }
+        }
+        if (hit_stop) {
+            LOG_DEBUG("LLM", "Stopped at tool_call_end after %lld tokens", stats_.generated_tokens);
+            break;
+        }
 
         bool suppress = profile_.should_suppress_token(result, in_think_block, in_tool_call_block);
         if (!suppress && on_token) {

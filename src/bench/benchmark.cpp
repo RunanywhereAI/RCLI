@@ -1,5 +1,6 @@
 #include "bench/benchmark.h"
 #include "audio/audio_io.h"
+#include "core/constants.h"
 #include "pipeline/sentence_detector.h"
 #include "pipeline/text_sanitizer.h"
 #include "tools/tool_defs.h"
@@ -236,14 +237,7 @@ void Benchmark::bench_llm_by_length() {
 void Benchmark::bench_tool_calling() {
     fprintf(stderr, "\n--- Tool Calling Benchmark ---\n");
 
-    std::string system_prompt =
-        "You are a helpful voice assistant. Your responses will be spoken aloud, "
-        "so keep them natural and conversational. "
-        "IMPORTANT: Never use asterisks, bullet points, numbered lists, markdown formatting, "
-        "or any special symbols in your response. Write in plain conversational sentences only. "
-        "When you use a tool, output ONLY the tool_call block with no other text. "
-        "After receiving tool results, respond naturally by incorporating the "
-        "information into a conversational sentence.";
+    std::string system_prompt = RCLI_SYSTEM_PROMPT;
 
     std::string tool_defs = pipeline_.tools().get_tool_definitions_json();
 
@@ -254,7 +248,6 @@ void Benchmark::bench_tool_calling() {
 
     ToolTest tests[] = {
         {"What time is it right now?", "get_current_time"},
-        {"What is the weather in London?", "get_weather"},
         {"Calculate 42 plus 17", "calculate"},
     };
 

@@ -124,6 +124,21 @@ ScriptResult run_jxa(const std::string& script, int timeout_ms) {
 }
 
 ScriptResult run_shell(const std::string& command, int timeout_ms) {
+    // Safety check: block destructive commands
+    std::string lower = command;
+    for (auto& c : lower) c = std::tolower(static_cast<unsigned char>(c));
+    static const char* blocklist[] = {
+        "rm -rf /", "rm -rf ~", "rm -rf /*", "sudo rm",
+        "mkfs", "dd if=", ":(){ :|:", "chmod -r 777 /",
+        "sudo su", "sudo bash", "sudo sh",
+        "> /dev/sda", "shutdown", "reboot", "halt",
+    };
+    for (auto& blocked : blocklist) {
+        if (lower.find(blocked) != std::string::npos) {
+            return {false, "", "Blocked dangerous command", -1};
+        }
+    }
+
     const char* argv[] = {"/bin/sh", "-c", command.c_str(), nullptr};
     return run_subprocess(argv, timeout_ms);
 }

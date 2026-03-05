@@ -32,10 +32,10 @@ static ActionResult action_create_reminder(const std::string& args_json) {
 void register_reminders_actions(ActionRegistry& registry) {
     registry.register_action(
         {"create_reminder", "Create a reminder in Apple Reminders",
-         "{\"title\": \"reminder text\", \"due\": \"optional due date\", \"list\": \"optional list name\"}",
+         "{\"title\": \"reminder text\"}",
          true,
          "productivity",
-         "Remind me to buy groceries tomorrow",
+         "Remind me to buy groceries",
          "rcli action create_reminder '{\"title\": \"Buy groceries\"}'"},
         action_create_reminder);
 }
