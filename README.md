@@ -37,14 +37,14 @@
 
 ## Demo
 
-> Real-time screen recordings on Apple Silicon — no cloud, no edits, 1.5× speed.
+> Real-time screen recordings on Apple Silicon — no cloud, no edits, no tricks.
 
 <table>
 <tr>
 <td width="50%" align="center">
 <strong>Voice Conversation</strong><br>
 <em>Talk naturally — RCLI listens, understands, and responds on-device.</em><br><br>
-<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo1-voice-conversation.mp4">
+<a href="https://youtu.be/qeardCENcV0">
 <img src="assets/demos/demo1-voice-conversation.gif" alt="Voice Conversation Demo" width="100%">
 </a>
 <br><sub>🔊 Click for full video with audio</sub>
@@ -52,7 +52,7 @@
 <td width="50%" align="center">
 <strong>App Control</strong><br>
 <em>Control Spotify, adjust volume — 43 macOS actions by voice.</em><br><br>
-<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo2-spotify-volume.mp4">
+<a href="https://youtu.be/eTYwkgNoaKg">
 <img src="assets/demos/demo2-spotify-volume.gif" alt="App Control Demo" width="100%">
 </a>
 <br><sub>🔊 Click for full video with audio</sub>
@@ -62,7 +62,7 @@
 <td width="50%" align="center">
 <strong>Models & Benchmarks</strong><br>
 <em>Browse models, hot-swap LLMs, run benchmarks — all from the TUI.</em><br><br>
-<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo3-benchmarks.mp4">
+<a href="https://youtu.be/HD1aS37zIGE">
 <img src="assets/demos/demo3-benchmarks.gif" alt="Models & Benchmarks Demo" width="100%">
 </a>
 <br><sub>🔊 Click for full video with audio</sub>
@@ -70,7 +70,7 @@
 <td width="50%" align="center">
 <strong>Document Intelligence (RAG)</strong><br>
 <em>Ingest docs, ask questions by voice — ~4ms hybrid retrieval.</em><br><br>
-<a href="https://github.com/RunanywhereAI/RCLI/raw/main/assets/demos/demo4-rag-documents.mp4">
+<a href="https://youtu.be/8FEfbwS7cQ8">
 <img src="assets/demos/demo4-rag-documents.gif" alt="RAG Demo" width="100%">
 </a>
 <br><sub>🔊 Click for full video with audio</sub>
