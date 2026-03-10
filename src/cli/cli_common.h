@@ -175,7 +175,7 @@ inline bool models_exist(const std::string& dir) {
         return true;
     // Check MetalRT default LLM model
     std::string home = getenv("HOME") ? getenv("HOME") : "/tmp";
-    std::string mrt_lfm = home + "/Library/RCLI/models/metalrt/lfm2.5-1.2b-4bit/model.safetensors";
+    std::string mrt_lfm = home + "/Library/RCLI/models/metalrt/LFM2.5-1.2B-MLX-4bit/model.safetensors";
     if (stat(mrt_lfm.c_str(), &st) == 0) return true;
     return false;
 }

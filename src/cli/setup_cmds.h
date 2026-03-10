@@ -43,7 +43,7 @@ inline int cmd_setup(const Args& args) {
         has_llamacpp = (stat(lfm2.c_str(), &st) == 0 || stat(qwen3.c_str(), &st) == 0);
 
         std::string home = getenv("HOME") ? getenv("HOME") : "/tmp";
-        std::string mrt = home + "/Library/RCLI/models/metalrt/lfm2.5-1.2b-4bit/model.safetensors";
+        std::string mrt = home + "/Library/RCLI/models/metalrt/LFM2.5-1.2B-MLX-4bit/model.safetensors";
         has_metalrt = (stat(mrt.c_str(), &st) == 0);
     }
 

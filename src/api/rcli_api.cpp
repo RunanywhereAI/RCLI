@@ -458,23 +458,22 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
                             break;
                         }
                     }
+
+                    // Scan for installed STT/TTS components
                     auto comps = rcli::metalrt_component_models();
                     std::string stt_pref = rcli::read_selected_metalrt_stt_id();
-                    bool stt_found = false;
+                    bool stt_found = false, tts_found = false;
                     for (auto& cm : comps) {
                         if (!rcli::is_metalrt_component_installed(cm)) continue;
                         std::string comp_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
-                        if (cm.component == "stt") {
-                            if (stt_found) continue;  // Already picked an STT model
-                            // If user has a preference, only pick that one
+                        if (cm.component == "stt" && !stt_found) {
                             if (!stt_pref.empty() && cm.id != stt_pref) continue;
                             config.metalrt_stt.model_dir = comp_dir;
                             engine->stt_model_name = cm.name;
                             stt_found = true;
                             LOG_DEBUG("RCLI", "MetalRT STT: %s (%s)", cm.name.c_str(), comp_dir.c_str());
-                        } else if (cm.component == "tts") {
+                        } else if (cm.component == "tts" && !tts_found) {
                             config.metalrt_tts.model_dir = comp_dir;
-                            // Set TTS voice based on personality
                             {
                                 auto* pinfo = rastack::find_personality(engine->personality_key);
                                 config.metalrt_tts.voice = (pinfo && pinfo->voice[0] != '\0')
@@ -482,7 +481,65 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
                             }
                             engine->tts_model_name = cm.name;
                             config.audio.playback_rate = 24000;
+                            tts_found = true;
                             LOG_DEBUG("RCLI", "MetalRT TTS: %s (%s)", cm.name.c_str(), comp_dir.c_str());
+                        }
+                    }
+
+                    // Auto-download missing default STT/TTS components
+                    if (!stt_found || !tts_found) {
+                        LOG_INFO("RCLI", "MetalRT STT/TTS components missing — downloading defaults...");
+                        fprintf(stderr, "\n");
+                        for (auto& cm : comps) {
+                            if (!cm.default_install || rcli::is_metalrt_component_installed(cm)) continue;
+                            bool need_stt = (!stt_found && cm.component == "stt");
+                            bool need_tts = (!tts_found && cm.component == "tts");
+                            if (!need_stt && !need_tts) continue;
+                            std::string label = (cm.component == "stt") ? "STT" : "TTS";
+                            fprintf(stderr, "  Downloading %s: %s...\n", label.c_str(), cm.name.c_str());
+                            std::string cm_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
+                            std::string hf = "https://huggingface.co/" + cm.hf_repo + "/resolve/main/";
+                            std::string sub = cm.hf_subdir.empty() ? "" : cm.hf_subdir + "/";
+                            if (cm.component == "tts") {
+                                std::string dl = "bash -c 'set -e; mkdir -p \"" + cm_dir + "/voices\"; "
+                                    "curl -fL -# -o \"" + cm_dir + "/config.json\" \"" + hf + sub + "config.json\"; "
+                                    "curl -fL -# -o \"" + cm_dir + "/kokoro-v1_0.safetensors\" \"" + hf + sub + "kokoro-v1_0.safetensors\"; "
+                                    "for v in af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky "
+                                    "am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa "
+                                    "bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis; do "
+                                    "curl -fL -s -o \"" + cm_dir + "/voices/${v}.safetensors\" \"" + hf + sub + "voices/${v}.safetensors\"; done; '";
+                                system(dl.c_str());
+                            } else {
+                                std::string dl = "bash -c 'set -e; mkdir -p \"" + cm_dir + "\"; "
+                                    "curl -fL -# -o \"" + cm_dir + "/config.json\" \"" + hf + sub + "config.json\"; "
+                                    "curl -fL -# -o \"" + cm_dir + "/model.safetensors\" \"" + hf + sub + "model.safetensors\"; "
+                                    "curl -fL -# -o \"" + cm_dir + "/tokenizer.json\" \"" + hf + sub + "tokenizer.json\"; '";
+                                system(dl.c_str());
+                            }
+                        }
+                        // Re-scan after download
+                        for (auto& cm : comps) {
+                            if (!rcli::is_metalrt_component_installed(cm)) continue;
+                            std::string comp_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
+                            if (cm.component == "stt" && !stt_found) {
+                                if (!stt_pref.empty() && cm.id != stt_pref) continue;
+                                config.metalrt_stt.model_dir = comp_dir;
+                                engine->stt_model_name = cm.name;
+                                stt_found = true;
+                            } else if (cm.component == "tts" && !tts_found) {
+                                config.metalrt_tts.model_dir = comp_dir;
+                                auto* pinfo = rastack::find_personality(engine->personality_key);
+                                config.metalrt_tts.voice = (pinfo && pinfo->voice[0] != '\0')
+                                    ? pinfo->voice : "af_heart";
+                                engine->tts_model_name = cm.name;
+                                config.audio.playback_rate = 24000;
+                                tts_found = true;
+                            }
+                        }
+                        if (!stt_found || !tts_found) {
+                            LOG_ERROR("RCLI", "MetalRT STT/TTS download failed. Falling back to llama.cpp.");
+                            fprintf(stderr, "  STT/TTS download failed. Falling back to llama.cpp.\n\n");
+                            config.llm_backend = rastack::LlmBackend::LLAMACPP;
                         }
                     }
                 }
