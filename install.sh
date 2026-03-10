@@ -42,8 +42,11 @@ fi
 info "Tapping $TAP..."
 brew tap "$TAP" "https://github.com/$REPO.git" 2>/dev/null || true
 
+# Force-update the tap so Homebrew sees the latest formula
+brew update --force 2>/dev/null || true
+
 info "Installing RCLI v${VERSION}..."
-if brew install "$FORMULA" 2>/dev/null; then
+if brew upgrade "$FORMULA" 2>/dev/null || brew install "$FORMULA" 2>/dev/null; then
     ok "Installed via Homebrew"
 else
     warn "brew install failed (likely macOS 26 CLT issue). Installing manually..."
