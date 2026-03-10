@@ -2,7 +2,7 @@ class Rcli < Formula
   desc "On-device voice AI for macOS — STT, LLM, TTS, 43 actions, and local RAG"
   homepage "https://github.com/RunanywhereAI/RCLI"
   url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.3.2/rcli-0.3.2-Darwin-arm64.tar.gz"
-  sha256 "8ef20abb744988445a72225d69d75806a5170ade4a1af53401261dd350b84dbc"
+  sha256 "06db2630206ef9feff764ef53a20b41027d3fca1df330928d0e4384d5273205a"
   license "MIT"
   version "0.3.2"
 
