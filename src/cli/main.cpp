@@ -911,9 +911,58 @@ static int cmd_engine(const Args& args) {
 
     if (target == "metalrt") {
         if (!rastack::MetalRTLoader::instance().is_available()) {
-            fprintf(stderr, "\n  %s%sMetalRT is not installed.%s Run %srcli metalrt install%s first.\n\n",
-                    color::bold, color::yellow, color::reset, color::bold, color::reset);
-            return 1;
+            fprintf(stderr, "\n  MetalRT not found. Installing automatically...\n\n");
+            if (!rastack::MetalRTLoader::install()) {
+                fprintf(stderr, "  %s%sMetalRT install failed.%s Check internet and try: %srcli metalrt install%s\n\n",
+                        color::bold, color::red, color::reset, color::bold, color::reset);
+                return 1;
+            }
+            fprintf(stderr, "  %s%sMetalRT engine installed!%s\n\n", color::bold, color::green, color::reset);
+
+            auto models = rcli::all_models();
+            for (auto& m : models) {
+                if (m.metalrt_id == "metalrt-lfm2.5-1.2b" && !rcli::is_metalrt_model_installed(m)) {
+                    fprintf(stderr, "  Downloading MetalRT LLM: %s...\n", m.name.c_str());
+                    std::string mrt_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
+                    std::string cfg_url = m.metalrt_url;
+                    auto pos = cfg_url.rfind("model.safetensors");
+                    if (pos != std::string::npos) cfg_url.replace(pos, 17, "config.json");
+                    std::string dl = "bash -c 'set -e; mkdir -p \"" + mrt_dir + "\"; "
+                        "curl -fL -# -o \"" + mrt_dir + "/model.safetensors\" \"" + m.metalrt_url + "\"; "
+                        "curl -fL -# -o \"" + mrt_dir + "/tokenizer.json\" \"" + m.metalrt_tokenizer_url + "\"; "
+                        "curl -fL -# -o \"" + mrt_dir + "/config.json\" \"" + cfg_url + "\"; '";
+                    if (system(dl.c_str()) != 0)
+                        fprintf(stderr, "  %sLLM download failed.%s\n", color::yellow, color::reset);
+                    break;
+                }
+            }
+            auto comps = rcli::metalrt_component_models();
+            for (auto& cm : comps) {
+                if (!cm.default_install || rcli::is_metalrt_component_installed(cm)) continue;
+                std::string label = (cm.component == "stt") ? "STT" : "TTS";
+                fprintf(stderr, "  Downloading MetalRT %s: %s...\n", label.c_str(), cm.name.c_str());
+                std::string cm_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
+                std::string hf = "https://huggingface.co/" + cm.hf_repo + "/resolve/main/";
+                std::string sub = cm.hf_subdir.empty() ? "" : cm.hf_subdir + "/";
+                if (cm.component == "tts") {
+                    std::string dl = "bash -c 'set -e; mkdir -p \"" + cm_dir + "/voices\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/config.json\" \"" + hf + sub + "config.json\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/kokoro-v1_0.safetensors\" \"" + hf + sub + "kokoro-v1_0.safetensors\"; "
+                        "for v in af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky "
+                        "am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa "
+                        "bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis; do "
+                        "curl -fL -s -o \"" + cm_dir + "/voices/${v}.safetensors\" \"" + hf + sub + "voices/${v}.safetensors\"; done; '";
+                    if (system(dl.c_str()) != 0)
+                        fprintf(stderr, "  %s%s download failed.%s\n", color::yellow, label.c_str(), color::reset);
+                } else {
+                    std::string dl = "bash -c 'set -e; mkdir -p \"" + cm_dir + "\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/config.json\" \"" + hf + sub + "config.json\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/model.safetensors\" \"" + hf + sub + "model.safetensors\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/tokenizer.json\" \"" + hf + sub + "tokenizer.json\"; '";
+                    if (system(dl.c_str()) != 0)
+                        fprintf(stderr, "  %s%s download failed.%s\n", color::yellow, label.c_str(), color::reset);
+                }
+            }
         }
         rcli::write_engine_preference("metalrt");
         fprintf(stderr, "\n  %s%sEngine set to MetalRT.%s Restart RCLI to apply.\n\n",
