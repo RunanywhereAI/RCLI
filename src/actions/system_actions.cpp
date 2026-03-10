@@ -160,6 +160,48 @@ static ActionResult action_get_ip_address(const std::string& args_json) {
             "{\"action\": \"get_ip_address\", \"local\": \"" + local_ip + "\", \"public\": \"" + pub_ip + "\"}"};
 }
 
+static ActionResult action_toggle_mute(const std::string& args_json) {
+    (void)args_json;
+    auto r = run_applescript("set curVol to output muted of (get volume settings)\n"
+                             "set volume output muted (not curVol)\n"
+                             "if curVol then\n  return \"unmuted\"\nelse\n  return \"muted\"\nend if");
+    if (r.success) {
+        std::string state = trim_output(r.output);
+        return {true, "Audio " + state, "", "{\"action\": \"toggle_mute\", \"state\": \"" + state + "\"}"};
+    }
+    return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};
+}
+
+static ActionResult action_set_brightness(const std::string& args_json) {
+    std::string level = json_get_string(args_json, "level");
+    if (level.empty())
+        return {false, "", "Brightness level required (0-100)", "{\"error\": \"missing level\"}"};
+    // brightness value is 0.0-1.0 for the shell command
+    float pct = std::stof(level) / 100.0f;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 1.0f) pct = 1.0f;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%.2f", pct);
+    auto r = run_shell(std::string("brightness ") + buf + " 2>/dev/null");
+    if (!r.success) {
+        // fallback: use AppleScript via System Events
+        int keyPresses = static_cast<int>(pct * 16);
+        std::string script = "tell application \"System Events\"\n"
+                             "  repeat 16 times\n"
+                             "    key code 145\n"  // brightness down
+                             "  end repeat\n"
+                             "  repeat " + std::to_string(keyPresses) + " times\n"
+                             "    key code 144\n"  // brightness up
+                             "  end repeat\n"
+                             "end tell";
+        r = run_applescript(script, 10000);
+    }
+    if (r.success)
+        return {true, "Brightness set to " + level + "%", "",
+                "{\"action\": \"set_brightness\", \"level\": " + level + "}"};
+    return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};
+}
+
 static ActionResult action_empty_trash(const std::string& args_json) {
     (void)args_json;
     auto r = run_applescript(
@@ -275,6 +317,24 @@ void register_system_actions(ActionRegistry& registry) {
          "Empty my trash",
          "rcli action empty_trash '{}'"},
         action_empty_trash);
+
+    registry.register_action(
+        {"toggle_mute", "Mute or unmute system audio",
+         "{}",
+         true,
+         "system",
+         "Mute my Mac",
+         "rcli action toggle_mute '{}'"},
+        action_toggle_mute);
+
+    registry.register_action(
+        {"set_brightness", "Set screen brightness (0-100)",
+         "{\"level\": \"0-100\"}",
+         true,
+         "system",
+         "Set brightness to 50 percent",
+         "rcli action set_brightness '{\"level\": \"50\"}'"},
+        action_set_brightness);
 
     registry.register_action(
         {"toggle_do_not_disturb", "Toggle Do Not Disturb / Focus mode",
