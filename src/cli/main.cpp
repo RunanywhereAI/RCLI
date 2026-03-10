@@ -112,8 +112,6 @@ static int cmd_interactive(const Args& args) {
         return 1;
     }
 
-    rcli_process_command(g_engine, "hi"); // warm up LLM
-
     bool rag_loaded = false;
     if (!args.rag_index.empty()) {
         if (rcli_rag_load_index(g_engine, args.rag_index.c_str()) == 0) {

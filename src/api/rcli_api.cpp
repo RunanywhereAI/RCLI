@@ -992,6 +992,12 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     // --- MetalRT path: tool-aware inference via generate_raw (pre-formatted prompt) ---
     if (engine->pipeline.using_metalrt()) {
         auto& mrt = engine->pipeline.metalrt_llm();
+        if (!mrt.is_initialized()) {
+            LOG_ERROR("RCLI", "MetalRT flagged as active but engine not initialized");
+            engine->last_response = "Error: MetalRT engine not available. "
+                "Try: rcli engine llamacpp";
+            return engine->last_response.c_str();
+        }
         const auto& profile = mrt.profile();
 
         std::string base_prompt = rastack::apply_personality(
