@@ -12,13 +12,13 @@ static bool gpu_supports_metal31() {
     size_t len = sizeof(chip);
     if (sysctlbyname("machdep.cpu.brand_string", chip, &len, nullptr, 0) != 0)
         return false;
-    // M3, M3 Pro, M3 Max, M3 Ultra, M4, etc. all support Metal 3.1
-    // M1 and M2 families do NOT support Metal 3.1 (bfloat16 in shaders)
     std::string s(chip);
-    if (s.find("M4") != std::string::npos) return true;
-    if (s.find("M3") != std::string::npos) return true;
-    // M1, M2, and anything else: not supported
-    return false;
+    // M1 and M2 lack Metal 3.1 (Apple GPU Family <9). The metallib is
+    // compiled with -std=metal3.1 which requires Family 9+.
+    if (s.find("M1") != std::string::npos) return false;
+    if (s.find("M2") != std::string::npos) return false;
+    // M3, M4, and all future chips (M5, M6, ...) support Metal 3.1+.
+    return s.find("Apple M") != std::string::npos;
 }
 
 // =============================================================================

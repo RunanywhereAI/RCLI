@@ -238,13 +238,11 @@ bool Orchestrator::init(const PipelineConfig& config) {
             LOG_WARN("Pipeline", "MetalRT TTS model path not configured");
         }
 
-        // Restore original signal handlers, remove breadcrumb (init survived)
-        sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
-        sigaction(SIGBUS, &s_old_sigbus, nullptr);
-        metalrt_breadcrumb_remove();
-
         if (!stt_ok || !tts_ok) {
             if (config.llm_backend == LlmBackend::METALRT) {
+                sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+                sigaction(SIGBUS, &s_old_sigbus, nullptr);
+                metalrt_breadcrumb_remove();
                 LOG_ERROR("Pipeline", "MetalRT STT/TTS not available. "
                           "Install with: rcli setup --metalrt");
                 return false;
@@ -255,15 +253,73 @@ bool Orchestrator::init(const PipelineConfig& config) {
             metalrt_stt_initialized_ = false;
             metalrt_tts_initialized_ = false;
         }
+
+        // Verification inference: exercise the Metal GPU compute path while
+        // the crash guard is still active. MetalRT init can succeed (model
+        // loads into GPU memory) while actual compute segfaults on certain
+        // M3/M4 hardware due to Metal shader / driver issues.
+        if (active_backend_ == LlmBackend::METALRT) {
+            LOG_INFO("Pipeline", "Running MetalRT verification inference...");
+            std::string verify_result = metalrt_.generate("Hi", nullptr);
+            if (verify_result.empty()) {
+                LOG_WARN("Pipeline", "MetalRT verification inference returned empty — "
+                         "falling back to llama.cpp");
+                if (!llm_.is_initialized()) {
+                    LOG_INFO("Pipeline", "Attempting late llama.cpp LLM init for fallback...");
+                    llm_.init(config.llm);
+                }
+                if (llm_.is_initialized()) {
+                    active_backend_ = LlmBackend::LLAMACPP;
+                    metalrt_stt_initialized_ = false;
+                    metalrt_tts_initialized_ = false;
+                    tools_.set_model_profile(&llm_.profile());
+                    std::string tool_system = llm_.profile().build_tool_system_prompt(
+                        config.system_prompt, tools_.get_tool_definitions_json());
+                    llm_.cache_system_prompt(tool_system);
+                } else {
+                    sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+                    sigaction(SIGBUS, &s_old_sigbus, nullptr);
+                    metalrt_breadcrumb_remove();
+                    LOG_ERROR("Pipeline", "MetalRT verification failed and llama.cpp not available");
+                    return false;
+                }
+            } else {
+                LOG_INFO("Pipeline", "MetalRT verification passed");
+                metalrt_.clear_kv();
+                metalrt_.reset_conversation();
+                if (metalrt_.has_prompt_cache()) {
+                    std::string mrt_system = metalrt_.profile().build_tool_system_prompt(
+                        config_.system_prompt, tools_.get_tool_definitions_json());
+                    std::string mrt_prefix = metalrt_.profile().build_system_prefix(mrt_system);
+                    metalrt_.cache_system_prompt(mrt_prefix);
+                }
+            }
+        }
+
+        // Restore original signal handlers, remove breadcrumb (init survived)
+        sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+        sigaction(SIGBUS, &s_old_sigbus, nullptr);
+        metalrt_breadcrumb_remove();
     } else {
         // MetalRT not active — clean up breadcrumb if it was created
         metalrt_breadcrumb_remove();
     }
 
     // --- Final validation: at least one LLM backend must be working ---
+    if (active_backend_ == LlmBackend::METALRT && !metalrt_.is_initialized()) {
+        LOG_ERROR("Pipeline", "MetalRT flagged as active but not initialized — "
+                  "this should not happen");
+        if (llm_.is_initialized()) {
+            LOG_WARN("Pipeline", "Falling back to llama.cpp");
+            active_backend_ = LlmBackend::LLAMACPP;
+        } else {
+            return false;
+        }
+    }
     if (!llm_.is_initialized() && active_backend_ != LlmBackend::METALRT) {
         LOG_ERROR("Pipeline", "No LLM backend available — "
-                  "neither llama.cpp nor MetalRT initialized successfully");
+                  "neither llama.cpp nor MetalRT initialized successfully. "
+                  "Check that models exist in the models directory.");
         return false;
     }
 

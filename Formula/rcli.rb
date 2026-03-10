@@ -40,8 +40,6 @@ class Rcli < Formula
         rcli models             # manage all AI models (LLM, STT, TTS)
         rcli cleanup            # remove unused models to free disk space
 
-      Benchmarks:
-        rcli bench              # run all benchmarks (STT, LLM, TTS, E2E)
     EOS
   end
 

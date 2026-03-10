@@ -29,7 +29,6 @@ inline void print_usage(const char* argv0) {
         "    %supgrade-llm%s        Upgrade LLM (Qwen3.5, LFM2, and more)\n"
         "    %spersonality%s        Change assistant personality (quirky, cynical, nerdy, ...)\n"
         "    %scleanup%s            Remove unused models to free disk space\n"
-        "    %sbench%s              Run benchmarks (STT, LLM, TTS, E2E, RAG)\n"
         "    %sinfo%s               Show engine info\n\n"
         "%s  OPTIONS%s\n"
         "    --models <dir>      Models directory (default: ~/Library/RCLI/models)\n"
@@ -52,7 +51,6 @@ inline void print_usage(const char* argv0) {
         color::bold, color::reset,
         argv0,
         color::bold, color::reset,
-        color::green, color::reset,
         color::green, color::reset,
         color::green, color::reset,
         color::green, color::reset,
@@ -136,43 +134,6 @@ inline void print_help_interactive() {
     fprintf(stderr, "  %s%s  Try:%s\n", color::bold, color::orange, color::reset);
     fprintf(stderr, "  %s\"Open Safari\"  \"What's on my calendar?\"  \"Set volume to 50\"%s\n\n",
             color::dim, color::reset);
-}
-
-inline void print_help_bench() {
-    fprintf(stderr,
-        "\n%s%s  RCLI bench%s  —  Comprehensive Benchmarks\n\n"
-        "  Runs benchmarks across all AI subsystems with bundled speech samples.\n\n"
-        "%s  SUITES%s\n"
-        "    all        Everything below (default)\n"
-        "    stt        Speech-to-text latency + accuracy (WER)\n"
-        "    llm        TTFT, throughput, tool calling\n"
-        "    tts        Text-to-speech latency + RTF\n"
-        "    e2e        Full pipeline: STT \xe2\x86\x92 LLM \xe2\x86\x92 TTS\n"
-        "    tools      Action keyword matching speed\n"
-        "    rag        Embedding, retrieval, full RAG query\n"
-        "    memory     Process RSS after model load + generation\n\n"
-        "%s  OPTIONS%s\n"
-        "    --suite <name>     Suite to run (default: all, comma-separated ok)\n"
-        "    --runs <n>         Measured runs per test (default: 3)\n"
-        "    --output <file>    Save JSON results to file\n"
-        "    --rag <index>      Load RAG index for RAG benchmarks\n"
-        "    --models <dir>     Models directory\n"
-        "    --llm <id>         Override LLM model for benchmark\n"
-        "    --tts <id>         Override TTS model for benchmark\n"
-        "    --stt <id>         Override STT model for benchmark\n"
-        "    --all-llm          Benchmark all installed LLM models\n"
-        "    --all-tts          Benchmark all installed TTS models\n\n"
-        "%s  EXAMPLES%s\n"
-        "    rcli bench                          # run all benchmarks\n"
-        "    rcli bench --suite llm              # LLM only\n"
-        "    rcli bench --suite stt,tts          # STT + TTS\n"
-        "    rcli bench --output results.json    # save to file\n"
-        "    rcli bench --all-llm --suite llm    # compare all installed LLMs\n"
-        "    rcli bench --rag ~/Library/RCLI/index --suite rag\n\n",
-        color::bold, color::orange, color::reset,
-        color::bold, color::reset,
-        color::bold, color::reset,
-        color::bold, color::reset);
 }
 
 inline void print_help_rag() {

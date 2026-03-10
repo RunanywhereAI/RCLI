@@ -292,19 +292,7 @@ public:
                 if (event == Event::Character(' ')) { actions_toggle_selected(); return true; }
                 return true;
             }
-            if (bench_mode_) {
-                if (event == Event::Escape) { bench_mode_ = false; return true; }
-                if (event == Event::ArrowUp) {
-                    if (bench_cursor_ > 0) bench_cursor_--;
-                    return true;
-                }
-                if (event == Event::ArrowDown) {
-                    if (bench_cursor_ < (int)bench_entries_.size() - 1) bench_cursor_++;
-                    return true;
-                }
-                if (event == Event::Return) { bench_run_selected(); return true; }
-                return true;
-            }
+
             if (rag_mode_) {
                 if (rag_input_active_) {
                     if (event == Event::Escape) {
@@ -422,7 +410,7 @@ public:
                 }
                 if (c == "m" || c == "M") { enter_models_mode(); return true; }
                 if (c == "a" || c == "A") { enter_actions_mode(); return true; }
-                if (c == "b" || c == "B") { enter_bench_mode(); return true; }
+
                 if (c == "r" || c == "R") { enter_rag_mode(); return true; }
                 if (c == "d" || c == "D") { close_all_panels(); enter_cleanup_mode(); return true; }
                 if (c == "p" || c == "P") { enter_personality_mode(); return true; }
@@ -432,11 +420,8 @@ public:
                     add_system_message(tool_trace_enabled_ ? "Tool call trace: ON" : "Tool call trace: OFF");
                     return true;
                 }
-                if (c == "v" || c == "V") {
-                    verbose_metrics_ = !verbose_metrics_.load(std::memory_order_relaxed);
-                    add_system_message(verbose_metrics_ ? "Verbose metrics: ON" : "Verbose metrics: OFF");
-                    return true;
-                }
+
+
                 if (c == "x" || c == "X") {
                     rcli_clear_history(engine_);
                     ctx_prompt_tokens_.store(0, std::memory_order_relaxed);
@@ -480,66 +465,7 @@ public:
 
 private:
     std::string format_llm_perf(bool is_rag = false) {
-        if (!engine_) return "";
-        int tok = 0; double tps = 0, ttft = 0, total = 0;
-        rcli_get_last_llm_perf(engine_, &tok, &tps, &ttft, &total);
-        if (tok <= 0) return "";
-
-        double pfill_tps = 0, dec_tps = 0, pfill_ms = 0, dec_ms = 0;
-        const char* eng_name = nullptr;
-        rcli_get_last_llm_perf_extended(engine_,
-            &pfill_tps, &dec_tps, &pfill_ms, &dec_ms, nullptr, &eng_name);
-
-        // Update MetalRT metrics - single source of truth for GPU utilization
-        if (eng_name && std::string(eng_name) == "MetalRT") {
-            metalrt_active_.store(true);
-            tokens_per_second_.store(static_cast<int>(tps));
-
-            // Set streaming active when generating tokens
-            if (tok > 0 && tps > 0) {
-                streaming_active_.store(true);
-            }
-
-            // Single GPU utilization calculation
-            // Smooth transitions with time-based decay
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - last_update_time_).count();
-
-            float target_util = std::min(1.0f, static_cast<float>(tps) / 150.0f);  // Adjusted for more realistic scaling
-            float current = gpu_utilization_.load();
-
-            // Smooth transition
-            if (elapsed > 100) {  // Update every 100ms
-                float new_util = current + (target_util - current) * 0.3f;  // Smooth factor
-                gpu_utilization_.store(new_util);
-                last_update_time_ = now;
-            }
-
-            // Token stream update for 3D effect
-            // (tokens are added elsewhere during streaming)
-        } else {
-            metalrt_active_.store(false);
-            streaming_active_.store(false);
-
-            // Gradual decay when not MetalRT
-            float current = gpu_utilization_.load();
-            if (current > 0.01f) {
-                gpu_utilization_.store(current * 0.9f);  // Decay factor
-            }
-        }
-
-        std::ostringstream os;
-        os << std::fixed;
-        os.precision(0);
-        std::string label = is_rag ? "RAG+LLM" : (eng_name ? eng_name : "LLM");
-        os << label << ": " << tok << " tok  "
-           << tps << " tok/s  TTFT " << ttft << "ms";
-        if (pfill_ms > 0)
-            os << "  prefill " << pfill_ms << "ms";
-        if (dec_ms > 0)
-            os << "  decode " << dec_ms << "ms";
-        return os.str();
+        return "";
     }
 
     void start_recording() {
@@ -584,15 +510,6 @@ private:
             std::string user_text = transcript;
             add_user_message(user_text);
 
-            if (verbose_metrics_.load(std::memory_order_relaxed)) {
-                double audio_ms = 0, trans_ms = 0;
-                rcli_get_last_stt_perf(engine_, &audio_ms, &trans_ms);
-                if (trans_ms > 0) {
-                    std::ostringstream os;
-                    os << std::fixed << std::setprecision(0) << "STT: " << trans_ms << "ms";
-                    add_system_message(os.str());
-                }
-            }
 
             voice_state_ = VoiceState::THINKING;
             screen_->Post(Event::Custom);
@@ -622,27 +539,6 @@ private:
                             if (ev == "first_audio") {
                                 double ttfa = std::stod(data);
                                 app->last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
-                                if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
-                                    app->append_ttfa_to_last_perf(ttfa);
-                                    app->screen_->Post(Event::Custom);
-                                }
-                            } else if (ev == "complete") {
-                                std::string json(data);
-                                double total_tts = 0;
-                                auto pos = json.find("\"total_tts_ms\":");
-                                if (pos != std::string::npos) {
-                                    total_tts = std::stod(json.substr(pos + 15));
-                                }
-                                if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
-                                    if (total_tts > 0) {
-                                        std::ostringstream ts;
-                                        ts << std::fixed;
-                                        ts.precision(1);
-                                        ts << "TTS: " << total_tts << "ms (streamed)";
-                                        app->add_system_message(ts.str());
-                                    }
-                                    app->screen_->Post(Event::Custom);
-                                }
                             }
                         };
                         rcli_speak_streaming(engine_, response, rag_tts_cb, this);
@@ -676,21 +572,11 @@ private:
                         double ttfa = std::stod(data);
                         app->last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
                         // Append TTFA to perf line now (no-op if "response" hasn't fired yet)
-                        if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
-                            app->append_ttfa_to_last_perf(ttfa);
-                            app->screen_->Post(Event::Custom);
-                        }
                         app->voice_state_ = VoiceState::SPEAKING;
                         app->screen_->Post(Event::Custom);
                     } else if (ev == "response") {
                         std::string perf = app->format_llm_perf(false);
                         // If first_audio already fired, append TTFA to perf before adding
-                        double ttfa = app->last_ttfa_ms_.load(std::memory_order_relaxed);
-                        if (ttfa > 0 && app->verbose_metrics_.load(std::memory_order_relaxed)) {
-                            std::ostringstream os;
-                            os << std::fixed << std::setprecision(0) << "  TTFA " << ttfa << "ms";
-                            perf += os.str();
-                        }
                         int pt = 0, cs = 0;
                         rcli_get_context_info(app->engine_, &pt, &cs);
                         if (pt > 0) app->ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
@@ -698,24 +584,6 @@ private:
                         app->add_response(data, perf);
                         app->check_context_full();
                         app->screen_->Post(Event::Custom);
-                    } else if (ev == "complete") {
-                        // Parse TTS stats from JSON and display
-                        std::string json(data);
-                        double total_tts = 0;
-                        auto pos = json.find("\"total_tts_ms\":");
-                        if (pos != std::string::npos) {
-                            total_tts = std::stod(json.substr(pos + 15));
-                        }
-                        if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
-                            if (total_tts > 0) {
-                                std::ostringstream ts;
-                                ts << std::fixed;
-                                ts.precision(1);
-                                ts << "TTS: " << total_tts << "ms (streamed)";
-                                app->add_system_message(ts.str());
-                            }
-                            app->screen_->Post(Event::Custom);
-                        }
                     }
                 };
 
@@ -764,8 +632,6 @@ private:
             layout.push_back(build_models_panel_interactive() | flex);
         else if (actions_mode_)
             layout.push_back(build_actions_panel_interactive() | flex);
-        else if (bench_mode_)
-            layout.push_back(build_bench_panel() | flex);
         else if (rag_mode_)
             layout.push_back(build_rag_panel() | flex);
         else
@@ -879,9 +745,6 @@ private:
 
     Element build_models_panel() {
         std::string llm_name = "N/A", stt_name = "N/A", tts_name = "N/A";
-        std::string llm_perf;
-        const char* perf_engine = nullptr;
-        double prefill_tps = 0, decode_tps = 0;
 
         if (engine_) {
             const char* n = rcli_get_llm_model(engine_);
@@ -890,36 +753,6 @@ private:
             if (n) stt_name = n;
             n = rcli_get_tts_model(engine_);
             if (n) tts_name = n;
-
-            int tok = 0; double tps = 0, ttft = 0, total = 0;
-            rcli_get_last_llm_perf(engine_, &tok, &tps, &ttft, &total);
-            double prefill_ms = 0, decode_ms = 0;
-            rcli_get_last_llm_perf_extended(engine_,
-                &prefill_tps, &decode_tps, &prefill_ms, &decode_ms, nullptr, &perf_engine);
-            if (tok > 0) {
-                std::ostringstream os;
-                os << std::fixed;
-                os.precision(0);
-                os << tok << " tok  " << tps << " tok/s  TTFT " << ttft << "ms";
-                if (prefill_ms > 0)
-                    os << "  prefill " << prefill_ms << "ms";
-                if (decode_ms > 0)
-                    os << "  decode " << decode_ms << "ms";
-                double stt_audio = 0, stt_trans = 0;
-                rcli_get_last_stt_perf(engine_, &stt_audio, &stt_trans);
-                if (stt_trans > 0) {
-                    os << "  STT " << stt_trans << "ms";
-                }
-                int tts_samples = 0; double tts_synth = 0, tts_rtf = 0;
-                rcli_get_last_tts_perf(engine_, &tts_samples, &tts_synth, &tts_rtf);
-                if (tts_samples > 0) {
-                    os.precision(1);
-                    os << "  TTS " << tts_synth << "ms " << tts_rtf << "x RT";
-                }
-                llm_perf = os.str();
-            }
-
-            // STT/TTS perf is now included in llm_perf above
         }
 
         auto rag_indicator = rag_loaded_.load()
@@ -988,32 +821,25 @@ private:
             rag_indicator,
         });
 
-        // Row 2: Metrics — minimal by default, verbose with [V] toggle
+        // Row 2: Metrics
         Elements metrics;
-        bool verbose = verbose_metrics_.load(std::memory_order_relaxed);
-        bool perf_is_metalrt = (perf_engine && std::string(perf_engine) == "MetalRT");
 
         if (is_metalrt_engine) {
             float gpu_util = gpu_utilization_.load();
             int tps = tokens_per_second_.load();
             bool is_active = streaming_active_.load() || metalrt_active_.load();
 
-            std::string badge = metalrt_viz_.RenderBadge(gpu_util, tps, is_active, verbose);
+            std::string badge = metalrt_viz_.RenderBadge(gpu_util, tps, is_active, false);
             auto badge_color = is_active ? theme_.info : theme_.warning;
             metrics.push_back(text(badge) | ftxui::bold | ftxui::color(badge_color));
         }
 
-        if (verbose) {
-            if (ttfa > 0) {
-                auto ttfa_color = (ttfa < 100) ? theme_.success
-                                : (ttfa < 300) ? theme_.warning : theme_.error;
-                std::ostringstream os;
-                os << std::fixed << std::setprecision(0) << "  TTFA " << ttfa << "ms";
-                metrics.push_back(text(os.str()) | ftxui::bold | ftxui::color(ttfa_color));
-            }
-            if (!llm_perf.empty()) {
-                metrics.push_back(text("  " + llm_perf) | dim);
-            }
+        if (ttfa > 0) {
+            auto ttfa_color = (ttfa < 100) ? theme_.success
+                            : (ttfa < 300) ? theme_.warning : theme_.error;
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(0) << "TTFA " << ttfa << "ms";
+            metrics.push_back(text("  " + os.str()) | ftxui::bold | ftxui::color(ttfa_color));
         }
 
         if (metrics.empty()) {
@@ -1120,12 +946,6 @@ private:
                 if (i == chat_history_.size() - 1 && msg.perf.empty())
                     line = line | focus;
                 lines.push_back(line);
-                if (!msg.perf.empty() && verbose_metrics_.load(std::memory_order_relaxed)) {
-                    Element perf_elem = text("    " + msg.perf) | dim;
-                    if (i == chat_history_.size() - 1)
-                        perf_elem = perf_elem | focus;
-                    lines.push_back(perf_elem);
-                }
             }
         }
 
@@ -1174,13 +994,7 @@ private:
                 text("[Up/Down] navigate  [Enter] run  [ESC] close ") | dim,
             });
         }
-        if (bench_mode_) {
-            return hbox({
-                text(" Benchmarks ") | ftxui::bold | ftxui::color(theme_.accent),
-                filler(),
-                text("[Up/Down] navigate  [Enter] run  [ESC] close ") | dim,
-            });
-        }
+
         if (rag_mode_) {
             return hbox({
                 text(" RAG ") | ftxui::bold | ftxui::color(theme_.accent),
@@ -1190,7 +1004,6 @@ private:
         }
 
         bool trace_on = tool_trace_enabled_.load(std::memory_order_relaxed);
-        bool verbose_on = verbose_metrics_.load(std::memory_order_relaxed);
 
         Elements left;
         left.push_back(text(" Voice AI + RAG") | ftxui::bold);
@@ -1202,17 +1015,12 @@ private:
         right.push_back(text("[SPACE] talk  ") | dim);
         right.push_back(text("[M] models  ") | dim);
         right.push_back(text("[A] actions  ") | dim);
-        right.push_back(text("[B] bench  ") | dim);
         right.push_back(text("[R] RAG  ") | dim);
         right.push_back(text("[D] cleanup  ") | dim);
         if (trace_on)
             right.push_back(text("[T] trace  ") | ftxui::color(theme_.info));
         else
             right.push_back(text("[T] trace  ") | dim);
-        if (verbose_on)
-            right.push_back(text("[V] metrics  ") | ftxui::color(theme_.info));
-        else
-            right.push_back(text("[V] metrics  ") | dim);
         right.push_back(text("[Q] quit") | dim);
 
         return hbox({
@@ -1337,7 +1145,6 @@ private:
         cleanup_mode_ = false;
         models_mode_ = false;
         actions_mode_ = false;
-        bench_mode_ = false;
         rag_mode_ = false;
         personality_mode_ = false;
     }
@@ -2114,140 +1921,6 @@ private:
     }
 
     // ====================================================================
-    // [B] Bench panel — pick and run benchmarks
-    // ====================================================================
-
-    void enter_bench_mode() {
-        close_all_panels();
-        bench_entries_.clear();
-        bench_cursor_ = 0;
-        bench_output_.clear();
-        bench_running_ = false;
-
-        bench_entries_.push_back({"Run Full Benchmark (STT + LLM + TTS + E2E)", "all"});
-        bench_entries_.push_back({"LLM only", "llm"});
-        bench_entries_.push_back({"STT only", "stt"});
-        bench_entries_.push_back({"TTS only", "tts"});
-        if (rag_loaded_) bench_entries_.push_back({"RAG only", "rag"});
-        bench_mode_ = true;
-    }
-
-    void bench_run_selected() {
-        if (bench_cursor_ < 0 || bench_cursor_ >= (int)bench_entries_.size()) return;
-        if (bench_running_) return;
-
-        bench_running_ = true;
-        std::string suite = bench_entries_[bench_cursor_].suite_key;
-        bench_output_ = "Running " + bench_entries_[bench_cursor_].name + "...";
-
-        std::thread([this, suite]() {
-            int rc = rcli_run_full_benchmark(engine_, suite.c_str(), 3, nullptr);
-            std::ostringstream out;
-            out << std::fixed;
-            if (rc == 0) {
-                bool show_llm = (suite == "llm" || suite == "all");
-                bool show_stt = (suite == "stt" || suite == "all");
-                bool show_tts = (suite == "tts" || suite == "all");
-                bool show_e2e = (suite == "all");
-
-                out << "Benchmark complete!\n";
-
-                int tok = 0; double tps = 0, ttft = 0, total = 0;
-                if (show_llm) {
-                    rcli_get_last_llm_perf(engine_, &tok, &tps, &ttft, &total);
-                    const char* bench_eng = nullptr;
-                    rcli_get_last_llm_perf_extended(engine_, nullptr, nullptr, nullptr, nullptr, nullptr, &bench_eng);
-                    std::string eng_label = bench_eng ? bench_eng : "LLM";
-                    if (tok > 0) {
-                        out.precision(1);
-                        out << "  " << eng_label << ": " << tok << " tokens, "
-                            << tps << " tok/s, TTFT " << ttft << "ms\n";
-                    }
-                }
-                double audio_ms = 0, trans_ms = 0;
-                if (show_stt) {
-                    rcli_get_last_stt_perf(engine_, &audio_ms, &trans_ms);
-                    if (trans_ms > 0) {
-                        out.precision(0);
-                        out << "  STT: " << trans_ms << "ms transcription\n";
-                    }
-                }
-                int samples = 0; double synth_ms = 0, rtf = 0;
-                if (show_tts) {
-                    rcli_get_last_tts_perf(engine_, &samples, &synth_ms, &rtf);
-                    if (samples > 0) {
-                        out.precision(1);
-                        out << "  TTS: " << synth_ms << "ms, " << rtf << "x real-time\n";
-                    }
-                }
-                if (show_e2e && trans_ms > 0 && ttft > 0 && synth_ms > 0) {
-                    double ttfa_est = trans_ms + ttft + synth_ms;
-                    out.precision(0);
-                    out << "  E2E (est): " << ttfa_est << "ms"
-                        << (ttfa_est < 500 ? " ok" : "") << "\n";
-                }
-            } else {
-                out << "Benchmark failed (code " << rc << ")";
-            }
-            bench_output_ = out.str();
-            bench_running_ = false;
-            screen_->Post(Event::Custom);
-        }).detach();
-    }
-
-    Element build_bench_panel() {
-        Elements lines;
-        lines.push_back(text("  Benchmarks") |
-            ftxui::bold | ftxui::color(theme_.accent));
-        lines.push_back(text("  Up/Down navigate, ENTER run, ESC close") | dim);
-        lines.push_back(text(""));
-
-        if (engine_) {
-            const char* llm = rcli_get_llm_model(engine_);
-            const char* stt = rcli_get_stt_model(engine_);
-            const char* tts = rcli_get_tts_model(engine_);
-            lines.push_back(text("  Active models (benchmarked):") | ftxui::bold);
-            lines.push_back(hbox({
-                text("    LLM: ") | ftxui::bold | ftxui::color(theme_.accent),
-                text(llm ? llm : "none"),
-            }));
-            lines.push_back(hbox({
-                text("    STT: ") | ftxui::bold | ftxui::color(theme_.accent),
-                text(stt ? stt : "none"),
-            }));
-            lines.push_back(hbox({
-                text("    TTS: ") | ftxui::bold | ftxui::color(theme_.accent),
-                text(tts ? tts : "none"),
-            }));
-            lines.push_back(text(""));
-        }
-
-        for (int i = 0; i < (int)bench_entries_.size(); i++) {
-            bool sel = (i == bench_cursor_);
-            std::string prefix = sel ? " > " : "   ";
-            auto elem = text(prefix + bench_entries_[i].name);
-            if (sel) elem = elem | ftxui::bold | ftxui::color(theme_.text_selected) | focus;
-            else elem = elem | dim;
-            lines.push_back(elem);
-        }
-
-        if (!bench_output_.empty()) {
-            lines.push_back(text(""));
-            std::istringstream iss(bench_output_);
-            std::string line;
-            std::vector<std::string> out_lines;
-            while (std::getline(iss, line)) out_lines.push_back(line);
-            for (size_t i = 0; i < out_lines.size(); i++) {
-                auto c = bench_running_ ? theme_.warning : theme_.success;
-                auto elem = text("  " + out_lines[i]) | ftxui::color(c);
-                if (i == out_lines.size() - 1) elem = elem | focus;
-                lines.push_back(elem);
-            }
-        }
-        return vbox(std::move(lines)) | yframe | vscroll_indicator;
-    }
-
-    // ====================================================================
     // [R] RAG panel — status, clear, ingest
     // ====================================================================
 
@@ -2443,13 +2116,13 @@ private:
             add_system_message("--- Panels ---");
             add_system_message("  M      Models (browse / switch / download)");
             add_system_message("  A      Actions (browse / run macOS actions)");
-            add_system_message("  B      Benchmarks");
+
             add_system_message("  P      Personality");
             add_system_message("  R      RAG panel");
             add_system_message("  D      Delete / cleanup models");
             add_system_message("--- Toggles ---");
             add_system_message("  T      Tool call trace (show tool calls & results)");
-            add_system_message("  V      Verbose metrics (TTFA, STT, TTS, tok/s)");
+
             return;
         }
 
@@ -2468,10 +2141,6 @@ private:
             return;
         }
 
-        if (cmd == "bench" || cmd == "benchmark") {
-            enter_bench_mode();
-            return;
-        }
 
         if (!engine_) {
             add_response("Engine not initialized.", "");
@@ -2656,29 +2325,14 @@ private:
                     double ttfa = std::chrono::duration<double, std::milli>(t_audio - t_start).count();
                     last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
 
-                    if (verbose_metrics_.load(std::memory_order_relaxed)) {
-                        append_ttfa_to_last_perf(ttfa);
-                        screen_->Post(Event::Custom);
-                    }
-
                     voice_state_ = VoiceState::SPEAKING;
                     screen_->Post(Event::Custom);
                     fprintf(stderr, "[TRACE] [tui-thread] calling rcli_speak ...\n");
                     rcli_speak(engine_, response);
                     fprintf(stderr, "[TRACE] [tui-thread] rcli_speak returned\n");
 
-                    if (verbose_metrics_.load(std::memory_order_relaxed)) {
-                        int samples = 0; double synth_ms = 0, rtf = 0;
-                        rcli_get_last_tts_perf(engine_, &samples, &synth_ms, &rtf);
-                        if (samples > 0) {
-                            std::ostringstream ts;
-                            ts << std::fixed;
-                            ts.precision(1);
-                            ts << "TTS: " << synth_ms << "ms " << rtf << "x RT";
-                            add_system_message(ts.str());
-                        }
-                        screen_->Post(Event::Custom);
-                    }
+
+
                     fprintf(stderr, "[TRACE] [tui-thread] entering wait_for_speech ...\n");
                     wait_for_speech();
                     fprintf(stderr, "[TRACE] [tui-thread] wait_for_speech done\n");
@@ -2777,7 +2431,7 @@ private:
     // disabled, the callback returns immediately with no allocation or locking,
     // so leaving the callback always registered has effectively zero overhead.
     std::atomic<bool> tool_trace_enabled_{false};
-    std::atomic<bool> verbose_metrics_{false};
+
     std::atomic<double> last_ttfa_ms_{0.0};
     std::atomic<int> ctx_prompt_tokens_{0};
     std::atomic<int> ctx_size_{0};
@@ -2851,13 +2505,6 @@ private:
     std::string personality_message_;
     ftxui::Color personality_msg_color_;
 
-    // Bench panel state
-    struct BenchEntry { std::string name, suite_key; };
-    bool bench_mode_ = false;
-    int bench_cursor_ = 0;
-    std::vector<BenchEntry> bench_entries_;
-    std::string bench_output_;
-    bool bench_running_ = false;
 
     // RAG panel state
     struct RagOption { std::string name, action; };

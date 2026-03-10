@@ -112,10 +112,6 @@ static int cmd_interactive(const Args& args) {
         return 1;
     }
 
-    rcli_process_command(g_engine, "hi"); // warm up LLM
-    double warmup_tps = 0;
-    rcli_get_last_llm_perf(g_engine, nullptr, &warmup_tps, nullptr, nullptr);
-
     bool rag_loaded = false;
     if (!args.rag_index.empty()) {
         if (rcli_rag_load_index(g_engine, args.rag_index.c_str()) == 0) {
@@ -145,12 +141,10 @@ static int cmd_interactive(const Args& args) {
         fprintf(stderr, "  %s·%s  %s%sRAG active%s", color::dim, color::reset, color::bold, color::green, color::reset);
     fprintf(stderr, "\n");
 
-    fprintf(stderr, "  %s%s \xc2\xb7 %s \xc2\xb7 %s \xc2\xb7 Apple Silicon",
+    fprintf(stderr, "  %s%s \xc2\xb7 %s \xc2\xb7 %s \xc2\xb7 Apple Silicon%s\n",
             color::dim, llm_name, tts_name_live,
-            args.rag_index.empty() ? "RAG off" : "RAG on");
-    if (warmup_tps > 0)
-        fprintf(stderr, " \xc2\xb7 %.0f tok/s", warmup_tps);
-    fprintf(stderr, "%s\n", color::reset);
+            args.rag_index.empty() ? "RAG off" : "RAG on",
+            color::reset);
 
     // Launch full-screen TUI dashboard
     {
@@ -270,7 +264,6 @@ static int cmd_listen(const Args& args) {
 
         if (transcript && transcript[0]) {
             fprintf(stderr, "  %s%sYou:%s %s\n", color::bold, color::blue, color::reset, transcript);
-            print_stt_perf(g_engine);
             fprintf(stderr, "  %sThinking...%s", color::dim, color::reset);
             fflush(stderr);
 
@@ -279,7 +272,6 @@ static int cmd_listen(const Args& args) {
 
             if (response && response[0]) {
                 print_response(response);
-                print_llm_perf(g_engine);
                 if (!args.no_speak) {
                     std::atomic<bool> tts_done{false};
                     std::thread tts_thread([&]() {
@@ -306,7 +298,6 @@ static int cmd_listen(const Args& args) {
                         }
                     }
                     fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
-                    print_tts_perf(g_engine);
                 }
             }
         } else {
@@ -429,76 +420,13 @@ static int cmd_ask(const Args& args) {
     }
     if (response && response[0]) {
         fprintf(stdout, "%s\n", response);
-        print_llm_perf(g_engine);
         if (!args.no_speak) {
             rcli_speak(g_engine, response);
-            print_tts_perf(g_engine);
         }
     }
 
     rcli_destroy(g_engine);
     return 0;
-}
-
-// =============================================================================
-// Benchmark
-// =============================================================================
-
-static int cmd_bench(const Args& args) {
-    if (args.help) { print_help_bench(); return 0; }
-    if (!models_exist(args.models_dir)) { print_missing_models(args.models_dir); return 1; }
-
-    fprintf(stderr, "\n");
-    fprintf(stderr, "  %s\xe2\x94\x8c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90%s\n",
-            color::dim, color::reset);
-    fprintf(stderr, "  %s\xe2\x94\x82%s %s%s RCLI Benchmark%s                    %s\xe2\x94\x82%s\n",
-            color::dim, color::reset, color::bold, color::orange, color::reset, color::dim, color::reset);
-    fprintf(stderr, "  %s\xe2\x94\x82%s %sSuite: %-10s  Runs: %-3d%s              %s\xe2\x94\x82%s\n",
-            color::dim, color::reset, color::dim,
-            args.bench_suite.c_str(), args.bench_runs, color::reset,
-            color::dim, color::reset);
-    fprintf(stderr, "  %s\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98%s\n",
-            color::dim, color::reset);
-
-    fprintf(stderr, "\n  %sInitializing engine...%s\n", color::dim, color::reset);
-
-    g_engine = rcli_create(nullptr);
-    if (!g_engine) {
-        fprintf(stderr, "  %s%sError: Failed to create engine%s\n", color::bold, color::red, color::reset);
-        return 1;
-    }
-
-    if (rcli_init(g_engine, args.models_dir.c_str(), args.gpu_layers) != 0) {
-        fprintf(stderr, "  %s%sError: Failed to initialize%s\n", color::bold, color::red, color::reset);
-        rcli_destroy(g_engine);
-        return 1;
-    }
-
-    // Display active models being benchmarked
-    const char* llm_name = rcli_get_llm_model(g_engine);
-    const char* stt_name = rcli_get_stt_model(g_engine);
-    const char* tts_name = rcli_get_tts_model(g_engine);
-    fprintf(stderr, "\n  %s%sBenchmarking:%s\n", color::bold, color::orange, color::reset);
-    fprintf(stderr, "    LLM = %s%s%s\n", color::green, llm_name ? llm_name : "N/A", color::reset);
-    fprintf(stderr, "    STT = %s%s%s\n", color::green, stt_name ? stt_name : "N/A", color::reset);
-    fprintf(stderr, "    TTS = %s%s%s\n\n", color::green, tts_name ? tts_name : "N/A", color::reset);
-
-    if (!args.rag_index.empty()) {
-        if (rcli_rag_load_index(g_engine, args.rag_index.c_str()) != 0) {
-            fprintf(stderr, "  %s%sWarning: Could not load RAG index%s\n",
-                    color::bold, color::yellow, color::reset);
-        }
-    }
-
-    const char* output = args.bench_output.empty() ? nullptr : args.bench_output.c_str();
-    int rc = rcli_run_full_benchmark(g_engine, args.bench_suite.c_str(),
-                                           args.bench_runs, output);
-
-    rcli_destroy(g_engine);
-
-    fprintf(stderr, "  %s%sRCLI%s %s\xe2\x80\x94 Benchmark complete.%s\n\n",
-            color::bold, color::orange, color::reset, color::dim, color::reset);
-    return rc;
 }
 
 // =============================================================================
@@ -843,79 +771,13 @@ static int cmd_metalrt(const Args& args) {
         return 0;
     }
 
-    if (args.arg1 == "bench") {
-        if (!rastack::MetalRTLoader::instance().is_available()) {
-            fprintf(stderr, "\n  MetalRT is not installed. Run %srcli metalrt install%s first.\n\n",
-                    color::bold, color::reset);
-            return 1;
-        }
-
-        auto models = rcli::all_models();
-        const rcli::LlmModelDef* bench_model = nullptr;
-        for (auto& m : models) {
-            if (m.metalrt_supported && rcli::is_metalrt_model_installed(m)) {
-                if (!bench_model || m.metalrt_size_mb > bench_model->metalrt_size_mb)
-                    bench_model = &m;
-            }
-        }
-        if (!bench_model) {
-            fprintf(stderr, "\n  No MetalRT models installed. Run %srcli metalrt download%s first.\n\n",
-                    color::bold, color::reset);
-            return 1;
-        }
-
-        std::string model_dir = rcli::metalrt_models_dir() + "/" + bench_model->metalrt_dir_name;
-        fprintf(stderr, "\n%s%s  MetalRT Benchmark%s\n\n", color::bold, color::orange, color::reset);
-        fprintf(stderr, "  Model: %s\n", bench_model->name.c_str());
-        fprintf(stderr, "  Path:  %s\n\n", model_dir.c_str());
-
-        rastack::MetalRTEngineConfig cfg;
-        cfg.model_dir = model_dir;
-        cfg.max_tokens = 128;
-        cfg.temperature = 0.0f;
-
-        rastack::MetalRTEngine engine;
-        if (!engine.init(cfg)) {
-            fprintf(stderr, "  %s%sFailed to init MetalRT engine.%s\n\n",
-                    color::bold, color::red, color::reset);
-            return 1;
-        }
-
-        fprintf(stderr, "  Device: %s\n\n", engine.device_name().c_str());
-
-        const char* prompts[] = {
-            "Hello, how are you?",
-            "Explain quantum computing in one sentence.",
-            "Write a haiku about the ocean.",
-        };
-
-        for (int i = 0; i < 3; i++) {
-            fprintf(stderr, "  Run %d: \"%s\"\n", i + 1, prompts[i]);
-            engine.reset_conversation();
-            std::string result = engine.generate(prompts[i]);
-
-            const auto& stats = engine.last_stats();
-            fprintf(stderr, "    Prefill: %6.1f ms (%d tokens, %.0f tok/s)\n",
-                    stats.prompt_eval_us / 1000.0, stats.prompt_tokens, stats.prompt_tps());
-            fprintf(stderr, "    Decode:  %6.1f ms (%d tokens, %.0f tok/s)\n",
-                    stats.generation_us / 1000.0, stats.generated_tokens, stats.gen_tps());
-            fprintf(stderr, "    Output:  \"%.*s%s\"\n\n",
-                    (int)std::min(result.size(), (size_t)80), result.c_str(),
-                    result.size() > 80 ? "..." : "");
-        }
-
-        engine.shutdown();
-        return 0;
-    }
-
     fprintf(stderr,
         "\n%s%s  rcli metalrt%s  —  Manage MetalRT engine\n\n"
         "  Commands:\n"
         "    rcli metalrt install    Download and install MetalRT binary\n"
         "    rcli metalrt remove     Uninstall MetalRT binary\n"
         "    rcli metalrt status     Show version, models, signature status\n"
-        "    rcli metalrt download   Download MetalRT model weights\n"
-        "    rcli metalrt bench      Benchmark MetalRT inference speed\n\n",
+        "    rcli metalrt download   Download MetalRT model weights\n\n",
         color::bold, color::orange, color::reset);
     return args.arg1.empty() ? 0 : 1;
 }
@@ -1085,12 +947,11 @@ int main(int argc, char** argv) {
     if (args.command == "upgrade-stt") return cmd_upgrade_stt(args);
     if (args.command == "upgrade-llm") return cmd_upgrade_llm(args);
     if (args.command == "cleanup")     return cmd_cleanup(args);
-    if (args.command == "bench")       return cmd_bench(args);
     if (args.command == "info")        return cmd_info();
     if (args.command == "metalrt") {
         // Subcommands: install, remove, status, download, bench → management
         if (!args.arg1.empty() && (args.arg1 == "install" || args.arg1 == "remove" ||
-            args.arg1 == "status" || args.arg1 == "download" || args.arg1 == "bench"))
+            args.arg1 == "status" || args.arg1 == "download"))
             return cmd_metalrt(args);
         // Bare "rcli metalrt" → launch interactive TUI with MetalRT engine
         Args override_args = args;

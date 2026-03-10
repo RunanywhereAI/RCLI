@@ -112,20 +112,12 @@ struct Args {
     std::string arg2;
     std::string models_dir;
     std::string rag_index;
-    std::string bench_suite = "all";
-    std::string bench_output;
-    std::string bench_llm;
-    std::string bench_tts;
-    std::string bench_stt;
-    int bench_runs = 3;
     int gpu_layers = 99;
     int ctx_size = 4096;
     std::string engine_override;  // "metalrt" or "llamacpp" — set when command is an engine name
     bool no_speak = false;
     bool verbose = false;
     bool help = false;
-    bool bench_all_llm = false;
-    bool bench_all_tts = false;
 };
 
 inline std::string default_models_dir() {
@@ -143,14 +135,6 @@ inline Args parse_args(int argc, char** argv) {
         if (a == "--gpu-layers" && i + 1 < argc)  { args.gpu_layers = std::atoi(argv[++i]); continue; }
         if (a == "--ctx-size" && i + 1 < argc)     { args.ctx_size = std::atoi(argv[++i]); continue; }
         if (a == "--rag" && i + 1 < argc)          { args.rag_index = argv[++i]; continue; }
-        if (a == "--suite" && i + 1 < argc)        { args.bench_suite = argv[++i]; continue; }
-        if (a == "--runs" && i + 1 < argc)         { args.bench_runs = std::atoi(argv[++i]); continue; }
-        if (a == "--output" && i + 1 < argc)       { args.bench_output = argv[++i]; continue; }
-        if (a == "--llm" && i + 1 < argc)          { args.bench_llm = argv[++i]; continue; }
-        if (a == "--tts" && i + 1 < argc)          { args.bench_tts = argv[++i]; continue; }
-        if (a == "--stt" && i + 1 < argc)          { args.bench_stt = argv[++i]; continue; }
-        if (a == "--all-llm")                       { args.bench_all_llm = true; continue; }
-        if (a == "--all-tts")                       { args.bench_all_tts = true; continue; }
         if (a == "--no-speak")                     { args.no_speak = true; continue; }
         if (a == "--verbose" || a == "-v")         { args.verbose = true; continue; }
         if (a == "--help" || a == "-h")            { args.help = true; continue; }
@@ -340,60 +324,6 @@ inline RCLIHandle create_and_init_engine(const Args& args) {
         return nullptr;
     }
     return engine;
-}
-
-// Print a one-liner with LLM perf stats after a response.
-// Shows: engine · tokens · decode tok/s · TTFT · prefill ms · decode ms
-inline void print_llm_perf(RCLIHandle engine) {
-    int tokens = 0;
-    double tps = 0, ttft = 0, total = 0;
-    rcli_get_last_llm_perf(engine, &tokens, &tps, &ttft, &total);
-    if (tokens <= 0 || tps <= 0) return;
-
-    double pfill_tps = 0, dec_tps = 0, pfill_ms = 0, dec_ms = 0;
-    const char* eng_name = nullptr;
-    rcli_get_last_llm_perf_extended(engine,
-        &pfill_tps, &dec_tps, &pfill_ms, &dec_ms, nullptr, &eng_name);
-
-    fflush(stdout);
-    bool is_metalrt = (eng_name && std::string(eng_name) == "MetalRT");
-    const char* eng_color = is_metalrt ? color::green : color::dim;
-
-    fprintf(stderr, "  %s> %s%s%s \xc2\xb7 %d tok \xc2\xb7 %.0f tok/s \xc2\xb7 TTFT %.0fms",
-            color::dim, eng_color, eng_name ? eng_name : "LLM", color::dim,
-            tokens, tps, ttft);
-    if (pfill_ms > 0)
-        fprintf(stderr, " \xc2\xb7 prefill %.0fms", pfill_ms);
-    if (dec_ms > 0)
-        fprintf(stderr, " \xc2\xb7 decode %.0fms", dec_ms);
-    fprintf(stderr, "%s\n", color::reset);
-}
-
-// Print TTS perf after speaking.
-inline void print_tts_perf(RCLIHandle engine) {
-    double synth_ms = 0, rtf = 0;
-    rcli_get_last_tts_perf(engine, nullptr, &synth_ms, &rtf);
-    if (synth_ms > 0) {
-        fprintf(stderr, "  %sTTS %.0fms \xc2\xb7 %.2fx realtime%s\n",
-                color::dim, synth_ms, rtf, color::reset);
-    }
-}
-
-// Print STT perf after transcription.
-inline void print_stt_perf(RCLIHandle engine) {
-    double audio_ms = 0, transcribe_ms = 0;
-    rcli_get_last_stt_perf(engine, &audio_ms, &transcribe_ms);
-    if (transcribe_ms > 0) {
-        fflush(stdout);
-        if (audio_ms > 0) {
-            double rtf = transcribe_ms / audio_ms;
-            fprintf(stderr, "  %sSTT %.0fms \xc2\xb7 %.1fs audio \xc2\xb7 %.2fx RT%s\n",
-                    color::dim, transcribe_ms, audio_ms / 1000.0, rtf, color::reset);
-        } else {
-            fprintf(stderr, "  %sSTT %.0fms%s\n",
-                    color::dim, transcribe_ms, color::reset);
-        }
-    }
 }
 
 inline bool ensure_mic_permission();  // Defined in main.cpp (uses Objective-C bridge)

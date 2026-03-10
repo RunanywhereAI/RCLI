@@ -40,7 +40,13 @@ if [ -z "$ONNX_DYLIB" ]; then
     ONNX_DYLIB=$(find "$BUILD_DIR/_deps/onnxruntime-src/lib" -name "libonnxruntime.*.dylib" ! -name "libonnxruntime.dylib" 2>/dev/null | head -1)
 fi
 if [ -z "$ONNX_DYLIB" ]; then
-    echo "  WARNING: Could not find versioned libonnxruntime dylib"
+    ONNX_DYLIB=$(find "$BUILD_DIR" -name "libonnxruntime.*.dylib" ! -name "libonnxruntime.dylib" 2>/dev/null | head -1)
+fi
+if [ -z "$ONNX_DYLIB" ]; then
+    echo "  ERROR: Could not find versioned libonnxruntime dylib anywhere in $BUILD_DIR"
+    echo "  Searched: _deps/onnxruntime-src/lib and recursive fallback"
+    echo "  The packaged binary will fail with dyld errors without this library."
+    exit 1
 fi
 DYLIBS+=("$ONNX_DYLIB")
 
@@ -58,6 +64,35 @@ ONNX_BASENAME=$(basename "$ONNX_DYLIB")
 if [ ! -f "$DIST_DIR/lib/libonnxruntime.dylib" ] && [ -f "$DIST_DIR/lib/$ONNX_BASENAME" ]; then
     (cd "$DIST_DIR/lib" && ln -sf "$ONNX_BASENAME" libonnxruntime.dylib)
 fi
+
+# --- Validate all required dylibs are present ---
+echo ""
+echo "Validating packaged dylibs..."
+REQUIRED_LIBS=(libllama libggml libsherpa-onnx-c-api libonnxruntime)
+MISSING=0
+for req in "${REQUIRED_LIBS[@]}"; do
+    if ! ls "$DIST_DIR/lib/"${req}* 1>/dev/null 2>&1; then
+        echo "  ERROR: Required library missing: $req"
+        MISSING=1
+    fi
+done
+
+# Verify the binary can find its dylibs via otool
+NEEDED=$(otool -L "$DIST_DIR/bin/rcli" | grep '@rpath' | awk '{print $1}' | sed 's|@rpath/||')
+for lib in $NEEDED; do
+    if [ ! -f "$DIST_DIR/lib/$lib" ] && [ ! -L "$DIST_DIR/lib/$lib" ]; then
+        echo "  ERROR: Binary references @rpath/$lib but it's not in lib/"
+        MISSING=1
+    fi
+done
+
+if [ "$MISSING" -ne 0 ]; then
+    echo ""
+    echo "  Package is incomplete — missing required shared libraries."
+    echo "  The binary will crash with dyld errors on user machines."
+    exit 1
+fi
+echo "  All required dylibs present."
 
 echo ""
 echo "Fixing rpaths..."
