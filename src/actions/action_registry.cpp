@@ -260,7 +260,10 @@ void ActionRegistry::load_preferences(const std::string& path) {
 
     if (enabled_list.empty() && disabled_list.empty()) return;
 
-    // Apply: enable listed ones, disable listed ones
+    // Replace: start from the enabled list, then apply disabled overrides.
+    // This ensures old preferences files (which may have had all actions
+    // enabled) don't override new default_enabled=false settings.
+    enabled_.clear();
     for (auto& n : enabled_list) {
         if (actions_.count(n)) enabled_.insert(n);
     }
