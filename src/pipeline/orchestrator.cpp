@@ -1705,7 +1705,7 @@ void Orchestrator::llm_thread_fn() {
                 std::string l_hint = tools_.build_tool_hint(user_text);
                 std::string l_hinted = l_hint.empty() ? user_text : (l_hint + "\n" + user_text);
 
-                if (metalrt_.has_prompt_cache() && l_trimmed.empty()) {
+                if (metalrt_.has_prompt_cache()) {
                     std::string user_turn = metalrt_.profile().build_user_turn(l_hinted);
                     response = metalrt_.generate_raw_continue(user_turn, speculative_callback);
                 } else {
