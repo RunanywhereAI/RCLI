@@ -13,6 +13,8 @@ inline void print_usage(const char* argv0) {
         "    %s <command> [options]\n\n"
         "%s  COMMANDS%s\n"
         "    %s(no command)%s      Interactive mode (push-to-talk + text input)\n"
+        "    %smetalrt%s            Interactive mode using MetalRT engine\n"
+        "    %sllamacpp%s           Interactive mode using llama.cpp engine\n"
         "    %slisten%s             Voice mode — push-to-talk with SPACE\n"
         "    %sask%s <text>         One-shot text command\n"
         "    %sactions%s [name]     List all actions, or show detail for one\n"
@@ -38,6 +40,8 @@ inline void print_usage(const char* argv0) {
         "    --verbose, -v       Show debug logs from engines\n\n"
         "%s  EXAMPLES%s\n"
         "    rcli                                    # interactive mode\n"
+        "    rcli metalrt                            # interactive mode (MetalRT)\n"
+        "    rcli llamacpp                           # interactive mode (llama.cpp)\n"
         "    rcli listen                             # hands-free voice control\n"
         "    rcli ask \"open Safari\"                  # one-shot command\n"
         "    rcli ask \"create a note called Ideas\"   # triggers action\n"
@@ -48,6 +52,8 @@ inline void print_usage(const char* argv0) {
         color::bold, color::reset,
         argv0,
         color::bold, color::reset,
+        color::green, color::reset,
+        color::green, color::reset,
         color::green, color::reset,
         color::green, color::reset,
         color::green, color::reset,

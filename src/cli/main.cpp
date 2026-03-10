@@ -79,7 +79,14 @@ static int cmd_interactive(const Args& args) {
     fprintf(stderr, "\n  %sLoading AI models...%s ", color::dim, color::reset);
     fflush(stderr);
 
-    g_engine = rcli_create(nullptr);
+    // Pass engine override via config JSON if specified (e.g. "rcli metalrt", "rcli llamacpp")
+    const char* config_json = nullptr;
+    std::string config_buf;
+    if (!args.engine_override.empty()) {
+        config_buf = "{\"engine\": \"" + args.engine_override + "\"}";
+        config_json = config_buf.c_str();
+    }
+    g_engine = rcli_create(config_json);
     if (!g_engine) {
         fprintf(stderr, "\n  %s%sError: Failed to create engine%s\n", color::bold, color::red, color::reset);
         return 1;
@@ -1080,7 +1087,24 @@ int main(int argc, char** argv) {
     if (args.command == "cleanup")     return cmd_cleanup(args);
     if (args.command == "bench")       return cmd_bench(args);
     if (args.command == "info")        return cmd_info();
-    if (args.command == "metalrt")     return cmd_metalrt(args);
+    if (args.command == "metalrt") {
+        // Subcommands: install, remove, status, download, bench → management
+        if (!args.arg1.empty() && (args.arg1 == "install" || args.arg1 == "remove" ||
+            args.arg1 == "status" || args.arg1 == "download" || args.arg1 == "bench"))
+            return cmd_metalrt(args);
+        // Bare "rcli metalrt" → launch interactive TUI with MetalRT engine
+        Args override_args = args;
+        override_args.engine_override = "metalrt";
+        override_args.command.clear();
+        return cmd_interactive(override_args);
+    }
+    if (args.command == "llamacpp") {
+        // "rcli llamacpp" → launch interactive TUI with llama.cpp engine
+        Args override_args = args;
+        override_args.engine_override = "llamacpp";
+        override_args.command.clear();
+        return cmd_interactive(override_args);
+    }
     if (args.command == "engine")      return cmd_engine(args);
     if (args.command == "personality") return cmd_personality(args);
 

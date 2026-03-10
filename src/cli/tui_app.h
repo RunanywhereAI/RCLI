@@ -271,19 +271,6 @@ public:
                 if (event == Event::Return) { models_select_or_download(); return true; }
                 return true;
             }
-            if (engine_mode_) {
-                if (event == Event::Escape) { engine_mode_ = false; return true; }
-                if (event == Event::ArrowUp) {
-                    if (engine_cursor_ > 0) engine_cursor_--;
-                    return true;
-                }
-                if (event == Event::ArrowDown) {
-                    if (engine_cursor_ < (int)engine_entries_.size() - 1) engine_cursor_++;
-                    return true;
-                }
-                if (event == Event::Return) { engine_select(); return true; }
-                return true;
-            }
             if (personality_mode_) {
                 if (event == Event::Escape) { personality_mode_ = false; return true; }
                 if (event == Event::ArrowUp) {
@@ -438,7 +425,6 @@ public:
                 if (c == "b" || c == "B") { enter_bench_mode(); return true; }
                 if (c == "r" || c == "R") { enter_rag_mode(); return true; }
                 if (c == "d" || c == "D") { close_all_panels(); enter_cleanup_mode(); return true; }
-                if (c == "e" || c == "E") { enter_engine_switcher(); return true; }
                 if (c == "p" || c == "P") { enter_personality_mode(); return true; }
                 // V key: voice mode removed — push-to-talk via SPACE is always active
                 if (c == "t" || c == "T") {
@@ -763,8 +749,6 @@ private:
 
         if (cleanup_mode_)
             layout.push_back(build_cleanup_panel() | flex);
-        else if (engine_mode_)
-            layout.push_back(build_engine_panel() | flex);
         else if (personality_mode_)
             layout.push_back(build_personality_panel() | flex);
         else if (models_mode_)
@@ -1346,150 +1330,7 @@ private:
         actions_mode_ = false;
         bench_mode_ = false;
         rag_mode_ = false;
-        engine_mode_ = false;
         personality_mode_ = false;
-    }
-
-    // ====================================================================
-    // [E] Engine panel — select llama.cpp / MetalRT
-    // ====================================================================
-
-    void enter_engine_switcher() {
-        close_all_panels();
-        engine_entries_.clear();
-        engine_cursor_ = 0;
-        engine_message_.clear();
-
-        std::string current = rcli::read_engine_preference();
-        if (current.empty()) current = "auto";
-
-        bool metalrt_gpu_ok = rastack::MetalRTLoader::gpu_supported();
-        bool metalrt_available = false;
-        if (metalrt_gpu_ok) {
-            std::string dylib_path = rastack::MetalRTLoader::engines_dir() + "/libmetalrt.dylib";
-            struct stat st;
-            metalrt_available = (stat(dylib_path.c_str(), &st) == 0);
-        }
-
-        engine_entries_.push_back({"llamacpp",
-            "llama.cpp",
-            "CPU inference \u00B7 GGUF models \u00B7 Universal compatibility",
-            current == "llamacpp"});
-
-        std::string mrt_desc = metalrt_gpu_ok
-            ? (std::string("GPU-accelerated \u00B7 MLX 4-bit \u00B7 Apple Silicon optimized") +
-               (metalrt_available ? "" : "  [not installed]"))
-            : "Requires Apple M3 or later";
-        engine_entries_.push_back({"metalrt",
-            "MetalRT",
-            mrt_desc,
-            current == "metalrt"});
-
-        if (current == "auto") {
-            for (auto& e : engine_entries_)
-                if (e.id == "metalrt" && metalrt_available) e.is_active = true;
-                else if (e.id == "llamacpp" && !metalrt_available) e.is_active = true;
-        }
-
-        engine_mode_ = true;
-    }
-
-    void engine_select() {
-        if (engine_cursor_ < 0 || engine_cursor_ >= (int)engine_entries_.size()) return;
-        auto& sel = engine_entries_[engine_cursor_];
-
-        if (sel.is_active) {
-            engine_message_ = sel.name + " is already active.";
-            engine_msg_color_ = ftxui::Color::Yellow;
-            return;
-        }
-
-        if (sel.id == "metalrt") {
-            if (!rastack::MetalRTLoader::gpu_supported()) {
-                engine_message_ = "MetalRT requires Apple M3 or later. Use llama.cpp instead.";
-                engine_msg_color_ = ftxui::Color::Red;
-                return;
-            }
-            std::string dylib_path = rastack::MetalRTLoader::engines_dir() + "/libmetalrt.dylib";
-            struct stat st;
-            if (stat(dylib_path.c_str(), &st) != 0) {
-                engine_message_ = "Installing MetalRT engine...";
-                engine_msg_color_ = ftxui::Color::Yellow;
-                screen_->PostEvent(ftxui::Event::Custom);
-
-                std::thread([this]() {
-                    bool ok = rastack::MetalRTLoader::install();
-                    if (!ok) {
-                        engine_message_ = "MetalRT install failed. Check internet and try: rcli metalrt install";
-                        engine_msg_color_ = ftxui::Color::Red;
-                        screen_->PostEvent(ftxui::Event::Custom);
-                        return;
-                    }
-                    engine_message_ = "MetalRT installed! Downloading default models...";
-                    engine_msg_color_ = ftxui::Color::Yellow;
-                    screen_->PostEvent(ftxui::Event::Custom);
-
-                    auto models = rcli::all_models();
-                    for (auto& m : models) {
-                        if (m.metalrt_id == "metalrt-lfm2.5-1.2b" && !rcli::is_metalrt_model_installed(m)) {
-                            std::string mrt_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
-                            std::string cfg_url = m.metalrt_url;
-                            auto pos = cfg_url.rfind("model.safetensors");
-                            if (pos != std::string::npos) cfg_url.replace(pos, 17, "config.json");
-                            std::string dl = "bash -c 'set -e; mkdir -p \"" + mrt_dir + "\"; "
-                                "curl -fL -s -o \"" + mrt_dir + "/model.safetensors\" \"" + m.metalrt_url + "\"; "
-                                "curl -fL -s -o \"" + mrt_dir + "/tokenizer.json\" \"" + m.metalrt_tokenizer_url + "\"; "
-                                "curl -fL -s -o \"" + mrt_dir + "/config.json\" \"" + cfg_url + "\"; '";
-                            system(dl.c_str());
-                            break;
-                        }
-                    }
-                    auto comps = rcli::metalrt_component_models();
-                    for (auto& cm : comps) {
-                        if (!cm.default_install || rcli::is_metalrt_component_installed(cm)) continue;
-                        std::string cm_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
-                        std::string hf = "https://huggingface.co/" + cm.hf_repo + "/resolve/main/";
-                        std::string sub = cm.hf_subdir.empty() ? "" : cm.hf_subdir + "/";
-                        if (cm.component == "tts") {
-                            std::string dl = "bash -c 'set -e; mkdir -p \"" + cm_dir + "/voices\"; "
-                                "curl -fL -s -o \"" + cm_dir + "/config.json\" \"" + hf + sub + "config.json\"; "
-                                "curl -fL -s -o \"" + cm_dir + "/kokoro-v1_0.safetensors\" \"" + hf + sub + "kokoro-v1_0.safetensors\"; "
-                                "for v in af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky "
-                                "am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa "
-                                "bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis; do "
-                                "curl -fL -s -o \"" + cm_dir + "/voices/${v}.safetensors\" \"" + hf + sub + "voices/${v}.safetensors\"; done; '";
-                            system(dl.c_str());
-                        } else {
-                            std::string dl = "bash -c 'set -e; mkdir -p \"" + cm_dir + "\"; "
-                                "curl -fL -s -o \"" + cm_dir + "/config.json\" \"" + hf + sub + "config.json\"; "
-                                "curl -fL -s -o \"" + cm_dir + "/model.safetensors\" \"" + hf + sub + "model.safetensors\"; "
-                                "curl -fL -s -o \"" + cm_dir + "/tokenizer.json\" \"" + hf + sub + "tokenizer.json\"; '";
-                            system(dl.c_str());
-                        }
-                    }
-
-                    rcli::write_engine_preference("metalrt");
-                    for (auto& e : engine_entries_) e.is_active = (e.id == "metalrt");
-                    engine_message_ = "MetalRT installed & ready! Restart RCLI to activate.";
-                    engine_msg_color_ = ftxui::Color::Green;
-                    screen_->PostEvent(ftxui::Event::Custom);
-                }).detach();
-                return;
-            }
-        }
-
-        rcli::write_engine_preference(sel.id);
-
-        for (auto& e : engine_entries_) e.is_active = false;
-        sel.is_active = true;
-
-        if (sel.id == "metalrt") {
-            engine_message_ = "MetalRT Engine selected. Restart to apply.";
-            engine_msg_color_ = theme_.info;
-        } else {
-            engine_message_ = "Switched to llama.cpp. Restart to apply.";
-            engine_msg_color_ = ftxui::Color::Green;
-        }
     }
 
     // ====================================================================
@@ -1990,69 +1831,6 @@ private:
                 screen_->Post(Event::Custom);
             }).detach();
         }
-    }
-
-    Element build_engine_panel() {
-        Elements rows;
-        rows.push_back(text("  \u2501\u2501\u2501 Engine Selection \u2501\u2501\u2501") | ftxui::bold | ftxui::color(theme_.accent));
-        rows.push_back(text("  Choose inference backend. Restart RCLI after switching.") | dim);
-        rows.push_back(text(""));
-
-        for (int i = 0; i < (int)engine_entries_.size(); i++) {
-            auto& e = engine_entries_[i];
-            bool selected = (i == engine_cursor_);
-            bool is_mrt = (e.id == "metalrt");
-
-            std::string cursor = selected ? " \u25B6 " : "   ";
-            std::string active_tag = e.is_active ? "  [active]" : "";
-
-            Element name_el;
-            if (is_mrt) {
-                name_el = hbox({
-                    text(cursor),
-                    text(e.name) | ftxui::bold | ftxui::color(theme_.info),
-                    text(active_tag) | ftxui::bold | ftxui::color(theme_.success),
-                });
-            } else {
-                name_el = text(cursor + e.name + active_tag);
-            }
-
-            if (selected) {
-                if (!is_mrt) name_el = name_el | ftxui::bold | ftxui::color(theme_.accent);
-                name_el = name_el | inverted;
-            } else if (e.is_active && !is_mrt) {
-                name_el = name_el | ftxui::color(theme_.success);
-            }
-
-            auto desc_el = text("     " + e.description) | dim;
-
-            rows.push_back(name_el);
-            rows.push_back(desc_el);
-
-            if (is_mrt) {
-                rows.push_back(
-                    text("     Fastest inference on Apple Silicon \u00B7 Sub-100ms TTFT")
-                    | ftxui::bold | ftxui::color(theme_.success));
-            } else {
-                rows.push_back(
-                    text("     Good for: Maximum model compatibility")
-                    | dim);
-            }
-
-            if (i < (int)engine_entries_.size() - 1)
-                rows.push_back(text(""));
-        }
-
-        rows.push_back(text(""));
-        rows.push_back(text("  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500") | dim);
-        rows.push_back(text("  [Enter] Select  [Esc] Back") | dim);
-
-        if (!engine_message_.empty()) {
-            rows.push_back(text(""));
-            rows.push_back(text("  " + engine_message_) | ftxui::color(engine_msg_color_));
-        }
-
-        return vbox(std::move(rows));
     }
 
     Element build_personality_panel() {
@@ -2654,7 +2432,6 @@ private:
             add_system_message("  X      Clear conversation + reset context");
             add_system_message("  Q      Quit");
             add_system_message("--- Panels ---");
-            add_system_message("  E      Switch inference engine");
             add_system_message("  M      Models (browse / switch / download)");
             add_system_message("  A      Actions (browse / run macOS actions)");
             add_system_message("  B      Benchmarks");
@@ -3035,14 +2812,6 @@ private:
     std::vector<ActionEntry> actions_entries_;
     std::string actions_message_;
     ftxui::Color actions_msg_color_ = theme_.warning;
-
-    // Engine panel state
-    bool engine_mode_ = false;
-    int engine_cursor_ = 0;
-    struct EngineEntry { std::string id, name, description; bool is_active = false; };
-    std::vector<EngineEntry> engine_entries_;
-    std::string engine_message_;
-    ftxui::Color engine_msg_color_;
 
     // Voice mode state
     bool voice_mode_active_ = false;

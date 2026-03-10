@@ -47,6 +47,7 @@ struct RCLIEngine {
 
     // Config overrides from rcli_create() config_json
     std::string config_system_prompt;
+    std::string config_engine_override;  // "metalrt", "llamacpp", or "" (use preference file)
     int config_gpu_layers = -1;
     int config_ctx_size   = -1;
 
@@ -161,6 +162,8 @@ RCLIHandle rcli_create(const char* config_json) {
         if (!dir.empty()) engine->models_dir = dir;
         std::string prompt = config_get_string(cfg, "system_prompt");
         if (!prompt.empty()) engine->config_system_prompt = prompt;
+        std::string eng = config_get_string(cfg, "engine");
+        if (!eng.empty()) engine->config_engine_override = eng;
         engine->config_gpu_layers = config_get_int(cfg, "gpu_layers", -1);
         engine->config_ctx_size = config_get_int(cfg, "ctx_size", -1);
     }
@@ -331,9 +334,11 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
         rastack::RCLI_SYSTEM_PROMPT, engine->personality_key);
     LOG_DEBUG("RCLI", "Personality: %s", engine->personality_key.c_str());
 
-    // --- MetalRT (optional, based on user engine preference) ---
+    // --- MetalRT (optional, based on user engine preference or CLI override) ---
     {
-        std::string engine_pref = rcli::read_engine_preference();
+        std::string engine_pref = engine->config_engine_override.empty()
+            ? rcli::read_engine_preference()
+            : engine->config_engine_override;
         if (engine_pref == "metalrt" && !rastack::MetalRTLoader::gpu_supported()) {
             LOG_WARN("RCLI", "MetalRT requires Apple M3+ (Metal 3.1). Falling back to llama.cpp.");
             fprintf(stderr, "  MetalRT requires Apple M3 or later. Falling back to llama.cpp.\n");

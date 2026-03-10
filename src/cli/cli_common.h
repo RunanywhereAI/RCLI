@@ -120,6 +120,7 @@ struct Args {
     int bench_runs = 3;
     int gpu_layers = 99;
     int ctx_size = 4096;
+    std::string engine_override;  // "metalrt" or "llamacpp" — set when command is an engine name
     bool no_speak = false;
     bool verbose = false;
     bool help = false;
