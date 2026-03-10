@@ -590,6 +590,13 @@ static int cmd_rag(const Args& args) {
 
 static int cmd_metalrt(const Args& args) {
     if (args.arg1 == "install") {
+        if (!rastack::MetalRTLoader::gpu_supported()) {
+            fprintf(stderr, "\n  %s%sMetalRT requires Apple M3 or later.%s\n"
+                    "  Your Mac uses an M1/M2 chip which doesn't support Metal 3.1 shaders.\n"
+                    "  Please use llama.cpp instead: %srcli engine llamacpp%s\n\n",
+                    color::bold, color::red, color::reset, color::bold, color::reset);
+            return 1;
+        }
         auto& loader = rastack::MetalRTLoader::instance();
         if (loader.is_available()) {
             std::string ver = rastack::MetalRTLoader::installed_version();
@@ -910,6 +917,13 @@ static int cmd_engine(const Args& args) {
     std::string target = args.arg1;
 
     if (target == "metalrt") {
+        if (!rastack::MetalRTLoader::gpu_supported()) {
+            fprintf(stderr, "\n  %s%sMetalRT requires Apple M3 or later.%s\n"
+                    "  Your Mac uses an M1/M2 chip which doesn't support Metal 3.1 shaders.\n"
+                    "  Please use llama.cpp instead: %srcli engine llamacpp%s\n\n",
+                    color::bold, color::red, color::reset, color::bold, color::reset);
+            return 1;
+        }
         if (!rastack::MetalRTLoader::instance().is_available()) {
             fprintf(stderr, "\n  MetalRT not found. Installing automatically...\n\n");
             if (!rastack::MetalRTLoader::install()) {

@@ -55,29 +55,44 @@ inline int cmd_setup(const Args& args) {
     }
 
     // --- Engine choice ---
+    bool metalrt_gpu_ok = rastack::MetalRTLoader::gpu_supported();
+
     fprintf(stderr, "  Choose your inference engine:\n\n");
     fprintf(stderr, "  %s1%s  %sOpen Source%s (llama.cpp + sherpa-onnx)              ~1 GB\n",
             color::bold, color::reset, color::green, color::reset);
     fprintf(stderr, "     Community-maintained, all models supported.\n");
     fprintf(stderr, "     Downloads: LFM2 1.2B + Whisper + Piper TTS\n\n");
-    fprintf(stderr, "  %s2%s  %sMetalRT%s (Apple Silicon GPU acceleration)           ~0.9 GB\n",
-            color::bold, color::reset, color::cyan, color::reset);
-    fprintf(stderr, "     GPU-accelerated engine: ~550 tok/s (LFM2.5 1.2B)\n");
-    fprintf(stderr, "     Downloads: LFM2.5 1.2B + Whisper Tiny + Kokoro TTS\n");
-    fprintf(stderr, "     More models available on-demand via %srcli models%s\n\n",
-            color::bold, color::reset);
-    fprintf(stderr, "  %s3%s  %sBoth%s (recommended)                                 ~1.9 GB\n",
-            color::bold, color::reset, color::orange, color::reset);
-    fprintf(stderr, "     Install both engines. Use MetalRT when available,\n");
-    fprintf(stderr, "     fall back to llama.cpp for unsupported models.\n\n");
-    fprintf(stderr, "  Enter choice [1-3]: ");
+    if (metalrt_gpu_ok) {
+        fprintf(stderr, "  %s2%s  %sMetalRT%s (Apple Silicon GPU acceleration)           ~0.9 GB\n",
+                color::bold, color::reset, color::cyan, color::reset);
+        fprintf(stderr, "     GPU-accelerated engine: ~550 tok/s (LFM2.5 1.2B)\n");
+        fprintf(stderr, "     Downloads: LFM2.5 1.2B + Whisper Tiny + Kokoro TTS\n");
+        fprintf(stderr, "     More models available on-demand via %srcli models%s\n\n",
+                color::bold, color::reset);
+        fprintf(stderr, "  %s3%s  %sBoth%s (recommended)                                 ~1.9 GB\n",
+                color::bold, color::reset, color::orange, color::reset);
+        fprintf(stderr, "     Install both engines. Use MetalRT when available,\n");
+        fprintf(stderr, "     fall back to llama.cpp for unsupported models.\n\n");
+        fprintf(stderr, "  Enter choice [1-3]: ");
+    } else {
+        fprintf(stderr, "  %s2%s  %sMetalRT%s  %s(requires Apple M3 or later)%s\n\n",
+                color::bold, color::reset, color::cyan, color::reset,
+                color::dim, color::reset);
+        fprintf(stderr, "  Your Mac doesn't support MetalRT (Metal 3.1 required).\n");
+        fprintf(stderr, "  Installing llama.cpp automatically.\n\n");
+    }
     fflush(stderr);
 
-    char engine_buf[16] = {};
-    if (read(STDIN_FILENO, engine_buf, sizeof(engine_buf) - 1) <= 0) engine_buf[0] = '3';
-    if (engine_buf[0] == '\n') engine_buf[0] = '3';
-    int engine_choice = engine_buf[0] - '0';
-    if (engine_choice < 1 || engine_choice > 3) engine_choice = 3;
+    int engine_choice;
+    if (!metalrt_gpu_ok) {
+        engine_choice = 1;
+    } else {
+        char engine_buf[16] = {};
+        if (read(STDIN_FILENO, engine_buf, sizeof(engine_buf) - 1) <= 0) engine_buf[0] = '3';
+        if (engine_buf[0] == '\n') engine_buf[0] = '3';
+        engine_choice = engine_buf[0] - '0';
+        if (engine_choice < 1 || engine_choice > 3) engine_choice = 3;
+    }
 
     bool install_llamacpp = (engine_choice == 1 || engine_choice == 3);
     bool install_metalrt  = (engine_choice == 2 || engine_choice == 3);

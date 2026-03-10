@@ -1363,8 +1363,9 @@ private:
         std::string current = rcli::read_engine_preference();
         if (current.empty()) current = "auto";
 
+        bool metalrt_gpu_ok = rastack::MetalRTLoader::gpu_supported();
         bool metalrt_available = false;
-        {
+        if (metalrt_gpu_ok) {
             std::string dylib_path = rastack::MetalRTLoader::engines_dir() + "/libmetalrt.dylib";
             struct stat st;
             metalrt_available = (stat(dylib_path.c_str(), &st) == 0);
@@ -1375,10 +1376,13 @@ private:
             "CPU inference \u00B7 GGUF models \u00B7 Universal compatibility",
             current == "llamacpp"});
 
+        std::string mrt_desc = metalrt_gpu_ok
+            ? (std::string("GPU-accelerated \u00B7 MLX 4-bit \u00B7 Apple Silicon optimized") +
+               (metalrt_available ? "" : "  [not installed]"))
+            : "Requires Apple M3 or later";
         engine_entries_.push_back({"metalrt",
             "MetalRT",
-            std::string("GPU-accelerated \u00B7 MLX 4-bit \u00B7 Apple Silicon optimized") +
-                (metalrt_available ? "" : "  [not installed]"),
+            mrt_desc,
             current == "metalrt"});
 
         if (current == "auto") {
@@ -1401,6 +1405,11 @@ private:
         }
 
         if (sel.id == "metalrt") {
+            if (!rastack::MetalRTLoader::gpu_supported()) {
+                engine_message_ = "MetalRT requires Apple M3 or later. Use llama.cpp instead.";
+                engine_msg_color_ = ftxui::Color::Red;
+                return;
+            }
             std::string dylib_path = rastack::MetalRTLoader::engines_dir() + "/libmetalrt.dylib";
             struct stat st;
             if (stat(dylib_path.c_str(), &st) != 0) {

@@ -5,6 +5,21 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mach-o/dyld.h>
+#include <sys/sysctl.h>
+
+static bool gpu_supports_metal31() {
+    char chip[64] = {};
+    size_t len = sizeof(chip);
+    if (sysctlbyname("machdep.cpu.brand_string", chip, &len, nullptr, 0) != 0)
+        return false;
+    // M3, M3 Pro, M3 Max, M3 Ultra, M4, etc. all support Metal 3.1
+    // M1 and M2 families do NOT support Metal 3.1 (bfloat16 in shaders)
+    std::string s(chip);
+    if (s.find("M4") != std::string::npos) return true;
+    if (s.find("M3") != std::string::npos) return true;
+    // M1, M2, and anything else: not supported
+    return false;
+}
 
 // =============================================================================
 // LOCAL-FIRST CONFIGURATION
@@ -83,6 +98,10 @@ bool MetalRTLoader::is_local_mode() {
     return METALRT_LOCAL_BUILD || (env && env[0] != '\0') || !resolve_local_repo().empty();
 }
 
+bool MetalRTLoader::gpu_supported() {
+    return gpu_supports_metal31();
+}
+
 bool MetalRTLoader::is_available() const {
     struct stat st;
     return stat(dylib_path().c_str(), &st) == 0;
@@ -94,6 +113,17 @@ bool MetalRTLoader::load() {
     std::string path = dylib_path();
     if (!is_available()) {
         LOG_ERROR("MetalRT", "dylib not found at %s", path.c_str());
+        return false;
+    }
+
+    if (!gpu_supports_metal31()) {
+        LOG_ERROR("MetalRT", "MetalRT requires Apple M3 or later (Metal 3.1). "
+                  "Your chip does not support bfloat16 GPU shaders. "
+                  "Use llama.cpp engine instead: rcli engine llamacpp");
+        fprintf(stderr, "\n  %s%sMetalRT requires Apple M3 or later.%s\n"
+                "  Your Mac uses an M1/M2 chip which doesn't support Metal 3.1 shaders.\n"
+                "  Please use llama.cpp instead: %srcli engine llamacpp%s\n\n",
+                "\033[1m", "\033[31m", "\033[0m", "\033[1m", "\033[0m");
         return false;
     }
 
@@ -361,6 +391,14 @@ static bool install_from_remote(const std::string& edir, const std::string& vers
 }
 
 bool MetalRTLoader::install(const std::string& version) {
+    if (!gpu_supports_metal31()) {
+        fprintf(stderr, "\n  %s%sMetalRT requires Apple M3 or later.%s\n"
+                "  Your Mac uses an M1/M2 chip which doesn't support Metal 3.1 shaders.\n"
+                "  Please use llama.cpp instead: %srcli engine llamacpp%s\n\n",
+                "\033[1m", "\033[31m", "\033[0m", "\033[1m", "\033[0m");
+        return false;
+    }
+
     std::string edir = engines_dir();
     std::string mkdir_cmd = "mkdir -p '" + edir + "'";
     if (system(mkdir_cmd.c_str()) != 0) return false;

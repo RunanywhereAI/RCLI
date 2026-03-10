@@ -334,6 +334,11 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
     // --- MetalRT (optional, based on user engine preference) ---
     {
         std::string engine_pref = rcli::read_engine_preference();
+        if (engine_pref == "metalrt" && !rastack::MetalRTLoader::gpu_supported()) {
+            LOG_WARN("RCLI", "MetalRT requires Apple M3+ (Metal 3.1). Falling back to llama.cpp.");
+            fprintf(stderr, "  MetalRT requires Apple M3 or later. Falling back to llama.cpp.\n");
+            engine_pref = "llamacpp";
+        }
         if (engine_pref == "metalrt") {
             auto& mrt_loader = rastack::MetalRTLoader::instance();
             if (mrt_loader.is_available()) {

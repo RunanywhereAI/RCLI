@@ -137,6 +137,7 @@ public:
     static std::string engines_dir();
     static std::string local_repo_path();
     static bool is_local_mode();
+    static bool gpu_supported();
 
     static constexpr uint32_t REQUIRED_ABI_VERSION = 2;
 
