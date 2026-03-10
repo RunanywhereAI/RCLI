@@ -1,5 +1,5 @@
 remote_theme: pages-themes/hacker@v0.2.0
 title: RCLI
-description: On-device voice AI for macOS — STT, LLM, TTS, 38+ actions, and local RAG. 100% local, zero cloud.
+description: On-device voice AI for macOS — STT, LLM, TTS, 43 actions, and local RAG. 100% local, zero cloud.
 plugins:
   - jekyll-remote-theme

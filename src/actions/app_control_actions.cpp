@@ -89,7 +89,7 @@ void register_app_control_actions(ActionRegistry& registry) {
     registry.register_action(
         {"open_url", "Open a URL in the default browser",
          "{\"url\": \"https://...\"}",
-         false,
+         true,
          "system",
          "Go to github.com",
          "rcli action open_url '{\"url\": \"https://github.com\"}'"},
@@ -98,7 +98,7 @@ void register_app_control_actions(ActionRegistry& registry) {
     registry.register_action(
         {"list_apps", "List currently running applications",
          "{}",
-         false,
+         true,
          "system",
          "What apps are running?",
          "rcli action list_apps '{}'"},
@@ -107,7 +107,7 @@ void register_app_control_actions(ActionRegistry& registry) {
     registry.register_action(
         {"quit_app", "Quit a macOS application",
          "{\"app\": \"application name\"}",
-         false,
+         true,
          "system",
          "Quit Safari",
          "rcli action quit_app '{\"app\": \"Safari\"}'"},
@@ -116,7 +116,7 @@ void register_app_control_actions(ActionRegistry& registry) {
     registry.register_action(
         {"get_frontmost_app", "Get the name of the currently active application",
          "{}",
-         false,
+         true,
          "system",
          "What app am I using?",
          "rcli action get_frontmost_app '{}'"},

@@ -1,5 +1,5 @@
 class Rcli < Formula
-  desc "On-device voice AI for macOS — STT, LLM, TTS, 38+ actions, and local RAG"
+  desc "On-device voice AI for macOS — STT, LLM, TTS, 43 actions, and local RAG"
   homepage "https://github.com/RunanywhereAI/RCLI"
   url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.1.5/rcli-0.1.5-Darwin-arm64.tar.gz"
   sha256 "c80573dcad9f4cd205afaa7ac1ed0b491bd9de5840572e7a355a7c9bc243adbd"
@@ -25,7 +25,7 @@ class Rcli < Formula
       Get started:
         rcli setup              # download models (~1GB, one-time)
         rcli                    # interactive mode (push-to-talk + text)
-        rcli actions            # see all 38+ available actions
+        rcli actions            # see all 43 available actions
         rcli ask "open Safari"  # one-shot voice command
 
       Voice mode:

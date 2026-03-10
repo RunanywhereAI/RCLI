@@ -33,6 +33,7 @@ static ModelProfile make_lfm2() {
     ModelProfile p;
     p.family           = ModelFamily::LFM2;
     p.family_name      = "LFM2";
+    p.bos_token        = "<|startoftext|>";
     p.msg_start        = "<|im_start|>";
     p.msg_end          = "<|im_end|>";
     p.role_separator   = "\n";
@@ -44,6 +45,57 @@ static ModelProfile make_lfm2() {
     p.tool_call_json_format = false; // func(key="val") format
     p.tool_response_start = "<|tool_response_start|>";
     p.tool_response_end   = "<|tool_response_end|>";
+
+    // Embed the LFM2.5 GGUF chat template so build_chat_prompt uses
+    // llama_chat_apply_template — identical to the llama.cpp path.
+    p.has_gguf_template = true;
+    p.gguf_template =
+        "{{- bos_token -}}"
+        "{%- set keep_past_thinking = keep_past_thinking | default(false) -%}"
+        "{%- set ns = namespace(system_prompt=\"\") -%}"
+        "{%- if messages[0][\"role\"] == \"system\" -%}"
+        "    {%- set ns.system_prompt = messages[0][\"content\"] -%}"
+        "    {%- set messages = messages[1:] -%}"
+        "{%- endif -%}"
+        "{%- if tools -%}"
+        "    {%- set ns.system_prompt = ns.system_prompt + (\"\\n\" if ns.system_prompt else \"\") + \"List of tools: [\" -%}"
+        "    {%- for tool in tools -%}"
+        "        {%- if tool is not string -%}"
+        "            {%- set tool = tool | tojson -%}"
+        "        {%- endif -%}"
+        "        {%- set ns.system_prompt = ns.system_prompt + tool -%}"
+        "        {%- if not loop.last -%}"
+        "            {%- set ns.system_prompt = ns.system_prompt + \", \" -%}"
+        "        {%- endif -%}"
+        "    {%- endfor -%}"
+        "    {%- set ns.system_prompt = ns.system_prompt + \"]\" -%}"
+        "{%- endif -%}"
+        "{%- if ns.system_prompt -%}"
+        "    {{- \"<|im_start|>system\\n\" + ns.system_prompt + \"<|im_end|>\\n\" -}}"
+        "{%- endif -%}"
+        "{%- set ns.last_assistant_index = -1 -%}"
+        "{%- for message in messages -%}"
+        "    {%- if message[\"role\"] == \"assistant\" -%}"
+        "        {%- set ns.last_assistant_index = loop.index0 -%}"
+        "    {%- endif -%}"
+        "{%- endfor -%}"
+        "{%- for message in messages -%}"
+        "    {{- \"<|im_start|>\" + message[\"role\"] + \"\\n\" -}}"
+        "    {%- set content = message[\"content\"] -%}"
+        "    {%- if content is not string -%}"
+        "        {%- set content = content | tojson -%}"
+        "    {%- endif -%}"
+        "    {%- if message[\"role\"] == \"assistant\" and not keep_past_thinking and loop.index0 != ns.last_assistant_index -%}"
+        "        {%- if \"</think>\" in content -%}"
+        "            {%- set content = content.split(\"</think>\")[-1] | trim -%}"
+        "        {%- endif -%}"
+        "    {%- endif -%}"
+        "    {{- content + \"<|im_end|>\\n\" -}}"
+        "{%- endfor -%}"
+        "{%- if add_generation_prompt -%}"
+        "    {{- \"<|im_start|>assistant\\n\" -}}"
+        "{%- endif -%}";
+
     return p;
 }
 
@@ -310,6 +362,7 @@ std::string ModelProfile::build_chat_prompt(
         prompt += user_message + " [/INST]";
     } else {
         // ChatML-family (Qwen3, LFM2, generic ChatML, Phi, etc.)
+        if (!bos_token.empty()) prompt += bos_token;
         prompt += msg_start + "system" + role_separator + system_prompt + msg_end + "\n";
         for (auto& [role, content] : history) {
             prompt += msg_start + role + role_separator + content + msg_end + "\n";
@@ -336,7 +389,7 @@ std::string ModelProfile::build_system_prefix(const std::string& system_prompt) 
     if (family == ModelFamily::MISTRAL)
         return "";  // Mistral v1 doesn't have a system role
 
-    return msg_start + "system" + role_separator + system_prompt + msg_end + "\n";
+    return bos_token + msg_start + "system" + role_separator + system_prompt + msg_end + "\n";
 }
 
 std::string ModelProfile::build_user_turn(const std::string& user_message) const {
@@ -385,6 +438,7 @@ std::string ModelProfile::build_tool_continuation(
 
     // Manual fallback (ChatML family)
     std::string prompt;
+    if (!bos_token.empty()) prompt += bos_token;
     prompt += msg_start + "system" + role_separator + system_prompt + msg_end + "\n";
     prompt += msg_start + "user" + role_separator + user_message + no_think_suffix + msg_end + "\n";
     prompt += msg_start + "assistant" + role_separator + assistant_tool_call_text + msg_end + "\n";
@@ -414,11 +468,12 @@ std::string ModelProfile::build_tool_system_prompt(
                   "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
                   "</tool_call>";
     } else if (family == ModelFamily::LFM2) {
-        // Matches LFM2's training format with <|tool_list_start|>/<|tool_list_end|>
         prompt += "\n\nYou have access to the following tools: "
                   "<|tool_list_start|>" + tool_defs_json + "<|tool_list_end|>\n\n"
-                  "When you need to call a tool, use this exact format:\n"
+                  "When the user asks you to perform an action, you MUST call the appropriate tool. "
+                  "Use this exact format:\n"
                   "<|tool_call_start|>[function_name(arg1=\"value1\", arg2=\"value2\")]<|tool_call_end|>\n\n"
+                  "Example: if the user says \"open Safari\", call open_app(app=\"Safari\").\n"
                   "If no tool is needed, respond conversationally.";
     } else {
         // Generic format using the profile's tool_call_start/end tokens
@@ -633,6 +688,20 @@ std::string ModelProfile::clean_output(const std::string& raw) const {
     strip_tag_blocks(tool_call_start, tool_call_end);
     strip_tag_blocks("<|tool_call_start|>", "<|tool_call_end|>");
     strip_tag_blocks("<tool_call>", "</tool_call>");
+
+    // Strip tool response wrappers — models sometimes echo these in summaries
+    auto strip_wrapper_tags = [&](const std::string& start, const std::string& end) {
+        if (start.empty()) return;
+        size_t a = r.find(start);
+        if (a != std::string::npos) {
+            r.erase(a, start.length());
+            size_t b = r.find(end);
+            if (b != std::string::npos) r.erase(b, end.length());
+        }
+    };
+    strip_wrapper_tags(tool_response_start, tool_response_end);
+    strip_wrapper_tags("<tool_response>", "</tool_response>");
+    strip_wrapper_tags("<|tool_response_start|>", "<|tool_response_end|>");
 
     // Strip /no_think artifacts
     size_t pos;

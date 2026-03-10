@@ -60,6 +60,9 @@ public:
 
     bool is_initialized() const { return initialized_; }
 
+    // Change speaker at runtime (Kokoro multi-voice)
+    void set_speaker_id(int id) { config_.speaker_id = id; }
+
 private:
     const SherpaOnnxOfflineTts* tts_ = nullptr;
     TtsConfig config_;

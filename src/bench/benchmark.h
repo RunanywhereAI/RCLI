@@ -28,11 +28,13 @@ public:
 
     // Individual benchmarks
     void bench_stt(const std::string& wav_path);
+    void bench_metalrt_stt(const std::string& wav_path);
     void bench_llm();
     void bench_llm_cached();
     void bench_llm_by_length();
     void bench_tool_calling();
     void bench_tts();
+    void bench_metalrt_tts();
     void bench_e2e(const std::string& wav_path);
     void bench_e2e_long();
     void bench_e2e_by_length();

@@ -19,7 +19,9 @@ enum class PipelineState : uint8_t {
     LISTENING,
     PROCESSING,
     SPEAKING,
-    INTERRUPTED
+    INTERRUPTED,
+    BARGE_IN,       // User speech detected during TTS playback
+    VOICE_IDLE      // Pure voice mode: always-listening, waiting for wake word
 };
 
 inline const char* pipeline_state_str(PipelineState s) {
@@ -29,6 +31,8 @@ inline const char* pipeline_state_str(PipelineState s) {
         case PipelineState::PROCESSING:  return "PROCESSING";
         case PipelineState::SPEAKING:    return "SPEAKING";
         case PipelineState::INTERRUPTED: return "INTERRUPTED";
+        case PipelineState::BARGE_IN:    return "BARGE_IN";
+        case PipelineState::VOICE_IDLE:  return "VOICE_IDLE";
     }
     return "UNKNOWN";
 }

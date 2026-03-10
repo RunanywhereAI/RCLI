@@ -279,11 +279,36 @@ private:
                 }
             }
 
-            // GPU and ANE utilization are not reliably accessible without
-            // root/private APIs. We estimate GPU from Metal activity heuristic
-            // and leave ANE as 0 unless powermetrics is available.
+            // Read GPU utilization from IOKit AGXAccelerator PerformanceStatistics
             s.gpu_percent = 0.0f;
             s.ane_percent = 0.0f;
+            {
+                CFMutableDictionaryRef match = IOServiceMatching("AGXAccelerator");
+                io_iterator_t iter = 0;
+                if (match && IOServiceGetMatchingServices(kIOMainPortDefault, match, &iter) == KERN_SUCCESS) {
+                    io_service_t svc = IOIteratorNext(iter);
+                    if (svc) {
+                        CFMutableDictionaryRef props = nullptr;
+                        if (IORegistryEntryCreateCFProperties(svc, &props,
+                                kCFAllocatorDefault, 0) == KERN_SUCCESS && props) {
+                            CFDictionaryRef perf = (CFDictionaryRef)CFDictionaryGetValue(
+                                props, CFSTR("PerformanceStatistics"));
+                            if (perf && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
+                                CFNumberRef util = (CFNumberRef)CFDictionaryGetValue(
+                                    perf, CFSTR("Device Utilization %"));
+                                if (util && CFGetTypeID(util) == CFNumberGetTypeID()) {
+                                    int64_t pct = 0;
+                                    CFNumberGetValue(util, kCFNumberSInt64Type, &pct);
+                                    s.gpu_percent = (float)pct;
+                                }
+                            }
+                            CFRelease(props);
+                        }
+                        IOObjectRelease(svc);
+                    }
+                    IOObjectRelease(iter);
+                }
+            }
 
             {
                 std::lock_guard<std::mutex> lock(mu_);

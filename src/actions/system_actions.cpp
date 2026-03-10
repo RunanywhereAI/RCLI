@@ -164,7 +164,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"screenshot", "Take a screenshot",
          "{\"path\": \"optional save path\"}",
-         false,
+         true,
          "system",
          "Take a screenshot",
          "rcli action screenshot '{}'"},
@@ -191,7 +191,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"lock_screen", "Lock the screen",
          "{}",
-         false,
+         true,
          "system",
          "Lock my screen",
          "rcli action lock_screen '{}'"},
@@ -218,7 +218,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"open_settings", "Open System Settings (optionally to a specific pane: wifi, bluetooth, sound, display, battery, keyboard, privacy, notifications, general, appearance, etc.)",
          "{\"pane\": \"optional pane name\"}",
-         false,
+         true,
          "system",
          "Open Wi-Fi settings",
          "rcli action open_settings '{\"pane\": \"wifi\"}'"},
@@ -227,7 +227,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"get_disk_usage", "Show disk space usage",
          "{}",
-         false,
+         true,
          "system",
          "How much disk space do I have?",
          "rcli action get_disk_usage '{}'"},
@@ -236,7 +236,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"get_uptime", "Show how long the system has been running",
          "{}",
-         false,
+         true,
          "system",
          "How long has my Mac been running?",
          "rcli action get_uptime '{}'"},
@@ -245,7 +245,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"get_ip_address", "Show local and public IP addresses",
          "{}",
-         false,
+         true,
          "system",
          "What's my IP address?",
          "rcli action get_ip_address '{}'"},

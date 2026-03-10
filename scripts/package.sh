@@ -35,9 +35,12 @@ DYLIBS=(
     "$BUILD_DIR/lib/libsherpa-onnx-c-api.dylib"
 )
 
-ONNX_DYLIB=$(find "$BUILD_DIR/_deps/onnxruntime-src/lib" -name "libonnxruntime.*.dylib" ! -name "*.dylib" -o -name "libonnxruntime.*.*.dylib" | head -1)
+ONNX_DYLIB=$(find "$BUILD_DIR/_deps/onnxruntime-src/lib" -name "libonnxruntime.*.*.dylib" 2>/dev/null | head -1)
 if [ -z "$ONNX_DYLIB" ]; then
-    ONNX_DYLIB="$BUILD_DIR/_deps/onnxruntime-src/lib/libonnxruntime.1.23.2.dylib"
+    ONNX_DYLIB=$(find "$BUILD_DIR/_deps/onnxruntime-src/lib" -name "libonnxruntime.*.dylib" ! -name "libonnxruntime.dylib" 2>/dev/null | head -1)
+fi
+if [ -z "$ONNX_DYLIB" ]; then
+    echo "  WARNING: Could not find versioned libonnxruntime dylib"
 fi
 DYLIBS+=("$ONNX_DYLIB")
 

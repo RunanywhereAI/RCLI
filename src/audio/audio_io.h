@@ -54,6 +54,10 @@ public:
 
     float get_rms() const { return current_rms_.load(std::memory_order_relaxed); }
 
+    // Barge-in support: is speaker currently outputting non-silence?
+    bool is_playing() const { return playback_active_.load(std::memory_order_relaxed); }
+    float playback_rms() const { return playback_rms_.load(std::memory_order_relaxed); }
+
 private:
 #if defined(__APPLE__) && !RASTACK_FILE_AUDIO_ONLY
     // CoreAudio (macOS only — iOS uses AVAudioEngine in Swift layer)
@@ -82,6 +86,8 @@ private:
     RingBuffer<float>*  playback_rb_ = nullptr;
     std::atomic<bool>   running_{false};
     std::atomic<float>  current_rms_{0.0f};
+    std::atomic<bool>   playback_active_{false};   // true when speaker outputting audio
+    std::atomic<float>  playback_rms_{0.0f};       // RMS of current playback output
     int                 device_capture_rate_ = 0;  // actual hardware sample rate
     std::vector<float>  resample_buf_;             // scratch for downsampling
 };

@@ -125,7 +125,97 @@ inline std::string sanitize_for_tts(const std::string& text) {
         out = std::move(cleaned);
     }
 
-    // 6. Collapse multiple whitespace to single space, trim
+    // 6a. Normalize smart/curly quotes to ASCII (LLMs often output U+2019)
+    {
+        std::string cleaned;
+        cleaned.reserve(out.size());
+        for (size_t i = 0; i < out.size(); i++) {
+            // U+2018 (') and U+2019 (') = \xe2\x80\x98 / \xe2\x80\x99
+            if (i + 2 < out.size() &&
+                (unsigned char)out[i] == 0xe2 && (unsigned char)out[i+1] == 0x80 &&
+                ((unsigned char)out[i+2] == 0x98 || (unsigned char)out[i+2] == 0x99)) {
+                cleaned += '\'';
+                i += 2;
+            }
+            // U+201C (") and U+201D (") = \xe2\x80\x9c / \xe2\x80\x9d
+            else if (i + 2 < out.size() &&
+                     (unsigned char)out[i] == 0xe2 && (unsigned char)out[i+1] == 0x80 &&
+                     ((unsigned char)out[i+2] == 0x9c || (unsigned char)out[i+2] == 0x9d)) {
+                cleaned += '"';
+                i += 2;
+            }
+            else {
+                cleaned += out[i];
+            }
+        }
+        out = std::move(cleaned);
+    }
+
+    // 6b. Expand contractions that Kokoro's G2P may spell out letter-by-letter
+    {
+        struct Contraction { const char* from; const char* to; };
+        static const Contraction table[] = {
+            {"you're", "you are"}, {"You're", "You are"},
+            {"they're", "they are"}, {"They're", "They are"},
+            {"we're", "we are"}, {"We're", "We are"},
+            {"I'm", "I am"}, {"i'm", "I am"},
+            {"he's", "he is"}, {"He's", "He is"},
+            {"she's", "she is"}, {"She's", "She is"},
+            {"it's", "it is"}, {"It's", "It is"},
+            {"that's", "that is"}, {"That's", "That is"},
+            {"what's", "what is"}, {"What's", "What is"},
+            {"there's", "there is"}, {"There's", "There is"},
+            {"here's", "here is"}, {"Here's", "Here is"},
+            {"who's", "who is"}, {"Who's", "Who is"},
+            {"don't", "do not"}, {"Don't", "Do not"},
+            {"doesn't", "does not"}, {"Doesn't", "Does not"},
+            {"didn't", "did not"}, {"Didn't", "Did not"},
+            {"won't", "will not"}, {"Won't", "Will not"},
+            {"wouldn't", "would not"}, {"Wouldn't", "Would not"},
+            {"couldn't", "could not"}, {"Couldn't", "Could not"},
+            {"shouldn't", "should not"}, {"Shouldn't", "Should not"},
+            {"can't", "cannot"}, {"Can't", "Cannot"},
+            {"isn't", "is not"}, {"Isn't", "Is not"},
+            {"aren't", "are not"}, {"Aren't", "Are not"},
+            {"wasn't", "was not"}, {"Wasn't", "Was not"},
+            {"weren't", "were not"}, {"Weren't", "Were not"},
+            {"haven't", "have not"}, {"Haven't", "Have not"},
+            {"hasn't", "has not"}, {"Hasn't", "Has not"},
+            {"hadn't", "had not"}, {"Hadn't", "Had not"},
+            {"I'll", "I will"}, {"you'll", "you will"}, {"You'll", "You will"},
+            {"he'll", "he will"}, {"she'll", "she will"},
+            {"we'll", "we will"}, {"We'll", "We will"},
+            {"they'll", "they will"}, {"They'll", "They will"},
+            {"I've", "I have"}, {"you've", "you have"}, {"You've", "You have"},
+            {"we've", "we have"}, {"We've", "We have"},
+            {"they've", "they have"}, {"They've", "They have"},
+            {"I'd", "I would"}, {"you'd", "you would"}, {"You'd", "You would"},
+            {"he'd", "he would"}, {"she'd", "she would"},
+            {"we'd", "we would"}, {"they'd", "they would"},
+            {"let's", "let us"}, {"Let's", "Let us"},
+        };
+        for (auto& c : table) {
+            std::string needle(c.from);
+            std::string replacement(c.to);
+            size_t pos = 0;
+            while ((pos = out.find(needle, pos)) != std::string::npos) {
+                // Only replace whole words: check boundaries
+                bool left_ok = (pos == 0 || out[pos - 1] == ' ' || out[pos - 1] == '\n');
+                size_t end = pos + needle.size();
+                bool right_ok = (end >= out.size() || out[end] == ' ' || out[end] == ',' ||
+                                 out[end] == '.' || out[end] == '!' || out[end] == '?' ||
+                                 out[end] == '\n' || out[end] == ';' || out[end] == ':');
+                if (left_ok && right_ok) {
+                    out.replace(pos, needle.size(), replacement);
+                    pos += replacement.size();
+                } else {
+                    pos += needle.size();
+                }
+            }
+        }
+    }
+
+    // 7. Collapse multiple whitespace to single space, trim
     {
         std::string cleaned;
         cleaned.reserve(out.size());

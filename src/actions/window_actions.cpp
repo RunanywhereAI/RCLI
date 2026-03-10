@@ -39,7 +39,7 @@ void register_window_actions(ActionRegistry& registry) {
     registry.register_action(
         {"minimize_window", "Minimize the frontmost window",
          "{}",
-         false,
+         true,
          "system",
          "Minimize this window",
          "rcli action minimize_window '{}'"},
@@ -48,7 +48,7 @@ void register_window_actions(ActionRegistry& registry) {
     registry.register_action(
         {"fullscreen_window", "Toggle fullscreen for the frontmost window",
          "{}",
-         false,
+         true,
          "system",
          "Make this fullscreen",
          "rcli action fullscreen_window '{}'"},
@@ -57,7 +57,7 @@ void register_window_actions(ActionRegistry& registry) {
     registry.register_action(
         {"close_window", "Close the frontmost window",
          "{}",
-         false,
+         true,
          "system",
          "Close this window",
          "rcli action close_window '{}'"},

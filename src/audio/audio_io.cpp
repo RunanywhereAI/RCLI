@@ -287,6 +287,19 @@ OSStatus AudioIO::playback_callback(void* inRefCon,
     if (read < inNumberFrames) {
         std::memset(out + read, 0, (inNumberFrames - read) * sizeof(float));
     }
+
+    // Track playback activity and RMS for barge-in detection
+    if (read > 0) {
+        float sum_sq = 0.0f;
+        for (size_t i = 0; i < read; ++i) sum_sq += out[i] * out[i];
+        float rms = std::sqrtf(sum_sq / (float)read);
+        self->playback_rms_.store(rms, std::memory_order_relaxed);
+        self->playback_active_.store(rms > 0.001f, std::memory_order_relaxed);
+    } else {
+        self->playback_rms_.store(0.0f, std::memory_order_relaxed);
+        self->playback_active_.store(false, std::memory_order_relaxed);
+    }
+
     return noErr;
 }
 

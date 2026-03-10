@@ -3,8 +3,10 @@
 #include "models/tts_model_registry.h"
 #include "models/stt_model_registry.h"
 #include "pipeline/orchestrator.h"
+#include "engines/metalrt_loader.h"
 #include "audio/audio_io.h"
 #include "core/constants.h"
+#include "core/personality.h"
 #include "core/log.h"
 #include "bench/benchmark.h"
 #include "engines/embedding_engine.h"
@@ -14,7 +16,10 @@
 #include "rag/document_processor.h"
 #include "rag/index_builder.h"
 #include "pipeline/text_sanitizer.h"
+#include "pipeline/sentence_detector.h"
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cctype>
 #include <csignal>
 #include <cstdio>
@@ -45,6 +50,9 @@ struct RCLIEngine {
     int config_gpu_layers = -1;
     int config_ctx_size   = -1;
 
+    // Personality
+    std::string personality_key = "default";
+
     // Which offline STT backend is active
     bool using_parakeet = false;
     std::string llm_model_name = "Qwen3 0.6B";
@@ -58,8 +66,11 @@ struct RCLIEngine {
     bool rag_ready = false;
     std::string last_rag_result;
 
-    // TTS playback PID (for interruption)
+    // TTS playback PID (for interruption via afplay)
     std::atomic<pid_t> tts_pid{0};
+
+    // Streaming TTS cancellation flag
+    std::atomic<bool> streaming_cancelled{false};
 
     // Response buffers (owned by engine, returned to callers)
     std::string last_transcript;
@@ -86,9 +97,29 @@ struct RCLIEngine {
     // Conversation memory (session-scoped, for multi-turn chat)
     std::vector<std::pair<std::string, std::string>> conversation_history;
 
+    // Compacted summary of earlier conversation turns (prepended to history as context)
+    std::string conversation_summary;
+
+    // MetalRT incremental KV: how many chars of continuation are already prefilled in KV.
+    size_t metalrt_kv_continuation_len = 0;
+
+    // Prompt tokens from the last main conversation prompt (system + history + user turn).
+    // Updated only from the primary inference call, NOT from tool-call summary/retry prompts,
+    // so the context gauge shows stable, meaningful usage.
+    int ctx_main_prompt_tokens = 0;
+
     std::mutex mutex;
     bool initialized = false;
 };
+
+// Build a brief system prompt with personality applied.
+// Used for action summaries, retries, and fallback paths that need personality.
+static std::string brief_system_prompt(const RCLIEngine* engine) {
+    return rastack::apply_personality(
+        "You are RCLI, a smart macOS voice assistant. "
+        "Answer questions directly and naturally. Be brief.",
+        engine->personality_key);
+}
 
 extern "C" {
 
@@ -293,8 +324,118 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
     config.audio.mode = AudioMode::LIVE_MODE;
 #endif
 
-    // --- System prompt (shared constant from core/constants.h) ---
-    config.system_prompt = rastack::RCLI_SYSTEM_PROMPT;
+    // --- System prompt with personality ---
+    engine->personality_key = rcli::read_personality_preference();
+    if (engine->personality_key.empty()) engine->personality_key = "default";
+    config.system_prompt = rastack::apply_personality(
+        rastack::RCLI_SYSTEM_PROMPT, engine->personality_key);
+    LOG_DEBUG("RCLI", "Personality: %s", engine->personality_key.c_str());
+
+    // --- MetalRT (optional, based on user engine preference) ---
+    {
+        std::string engine_pref = rcli::read_engine_preference();
+        if (engine_pref == "metalrt") {
+            auto& mrt_loader = rastack::MetalRTLoader::instance();
+            if (mrt_loader.is_available()) {
+                config.llm_backend = rastack::LlmBackend::METALRT;
+                auto models = rcli::all_models();
+
+                std::string selected_model = rcli::read_selected_model_id();
+                std::string selected_family;
+                for (auto& m : models) {
+                    if (m.id == selected_model) { selected_family = m.family; break; }
+                }
+
+                // 1. Exact ID match (model is itself MetalRT-supported)
+                for (auto& m : models) {
+                    if (m.metalrt_supported && rcli::is_metalrt_model_installed(m) &&
+                        m.id == selected_model) {
+                        config.metalrt.model_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
+                        LOG_DEBUG("RCLI", "MetalRT exact match: %s", m.metalrt_dir_name.c_str());
+                        break;
+                    }
+                }
+
+                // 2. Family match (e.g. lfm2-1.2b -> lfm2.5-1.2b in same "lfm2" family)
+                if (config.metalrt.model_dir.empty() && !selected_family.empty()) {
+                    int best_size = 0;
+                    for (auto& m : models) {
+                        if (m.metalrt_supported && rcli::is_metalrt_model_installed(m) &&
+                            m.family == selected_family && m.metalrt_size_mb > best_size) {
+                            best_size = m.metalrt_size_mb;
+                            config.metalrt.model_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
+                        }
+                    }
+                    if (!config.metalrt.model_dir.empty()) {
+                        LOG_DEBUG("RCLI", "MetalRT family match (%s): %s",
+                                  selected_family.c_str(), config.metalrt.model_dir.c_str());
+                    }
+                }
+
+                // 3. Fallback: pick the largest installed MetalRT model
+                if (config.metalrt.model_dir.empty()) {
+                    int best_size = 0;
+                    for (auto& m : models) {
+                        if (m.metalrt_supported && rcli::is_metalrt_model_installed(m) &&
+                            m.metalrt_size_mb > best_size) {
+                            best_size = m.metalrt_size_mb;
+                            config.metalrt.model_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
+                        }
+                    }
+                    if (!config.metalrt.model_dir.empty()) {
+                        LOG_DEBUG("RCLI", "MetalRT fallback to largest: %s", config.metalrt.model_dir.c_str());
+                    }
+                }
+
+                if (config.metalrt.model_dir.empty()) {
+                    LOG_ERROR("RCLI", "Engine set to MetalRT but no MetalRT models installed. "
+                              "Install models with: rcli setup --metalrt");
+                    return -1;
+                } else {
+                    for (auto& m : models) {
+                        if (m.metalrt_supported &&
+                            config.metalrt.model_dir == rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name) {
+                            engine->llm_model_name = m.name;
+                            break;
+                        }
+                    }
+                    auto comps = rcli::metalrt_component_models();
+                    std::string stt_pref = rcli::read_selected_metalrt_stt_id();
+                    bool stt_found = false;
+                    for (auto& cm : comps) {
+                        if (!rcli::is_metalrt_component_installed(cm)) continue;
+                        std::string comp_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
+                        if (cm.component == "stt") {
+                            if (stt_found) continue;  // Already picked an STT model
+                            // If user has a preference, only pick that one
+                            if (!stt_pref.empty() && cm.id != stt_pref) continue;
+                            config.metalrt_stt.model_dir = comp_dir;
+                            engine->stt_model_name = cm.name;
+                            stt_found = true;
+                            LOG_DEBUG("RCLI", "MetalRT STT: %s (%s)", cm.name.c_str(), comp_dir.c_str());
+                        } else if (cm.component == "tts") {
+                            config.metalrt_tts.model_dir = comp_dir;
+                            // Set TTS voice based on personality
+                            {
+                                auto* pinfo = rastack::find_personality(engine->personality_key);
+                                config.metalrt_tts.voice = (pinfo && pinfo->voice[0] != '\0')
+                                    ? pinfo->voice : "af_heart";
+                            }
+                            engine->tts_model_name = cm.name;
+                            config.audio.playback_rate = 24000;
+                            LOG_DEBUG("RCLI", "MetalRT TTS: %s (%s)", cm.name.c_str(), comp_dir.c_str());
+                        }
+                    }
+                }
+            } else {
+                LOG_ERROR("RCLI", "Engine set to MetalRT but libmetalrt.dylib not found. "
+                          "Install with: rcli metalrt install");
+                return -1;
+            }
+        } else if (engine_pref == "auto") {
+            config.llm_backend = rastack::LlmBackend::AUTO;
+        }
+    }
 
     // Load user action preferences (enable/disable state)
     {
@@ -384,7 +525,10 @@ int rcli_start_capture(RCLIHandle handle) {
 const char* rcli_stop_capture_and_transcribe(RCLIHandle handle) {
     if (!handle) return "";
     auto* engine = static_cast<RCLIEngine*>(handle);
+    LOG_TRACE("RCLI", "[stop_capture_and_transcribe] calling pipeline ...");
     engine->last_transcript = engine->pipeline.stop_capture_and_transcribe();
+    LOG_TRACE("RCLI", "[stop_capture_and_transcribe] done, transcript='%.40s'",
+             engine->last_transcript.c_str());
     return engine->last_transcript.c_str();
 }
 
@@ -417,6 +561,7 @@ static std::vector<std::pair<std::string, std::string>> truncate_history(
 }
 
 // Compute trimmed history for a given user input and system prompt.
+// Uses llama.cpp for token counting (works for both paths since tokenizers are similar).
 static std::vector<std::pair<std::string, std::string>> get_trimmed_history(
     RCLIEngine* engine,
     const std::string& system_prompt,
@@ -433,6 +578,36 @@ static std::vector<std::pair<std::string, std::string>> get_trimmed_history(
                             std::max(0, history_budget));
 }
 
+// MetalRT-aware history trimming using MetalRT's own tokenizer and context size.
+static std::vector<std::pair<std::string, std::string>> get_trimmed_history_metalrt(
+    RCLIEngine* engine,
+    MetalRTEngine& mrt,
+    const std::string& system_prompt,
+    const std::string& input)
+{
+    if (engine->conversation_history.empty()) return {};
+
+    int ctx_size = mrt.context_size();
+    if (ctx_size <= 0) ctx_size = 4096;
+    int system_tokens = mrt.count_tokens(system_prompt);
+    int user_tokens = mrt.count_tokens(input);
+    int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
+
+    if (history_budget <= 0) return {};
+
+    std::vector<std::pair<std::string, std::string>> result;
+    int total_tokens = 0;
+    for (int i = static_cast<int>(engine->conversation_history.size()) - 1; i >= 0; i--) {
+        int entry_tokens = mrt.count_tokens(
+            engine->conversation_history[i].first + ": " +
+            engine->conversation_history[i].second);
+        if (total_tokens + entry_tokens > history_budget) break;
+        total_tokens += entry_tokens;
+        result.insert(result.begin(), engine->conversation_history[i]);
+    }
+    return result;
+}
+
 // Cap conversation history to last N entries (must be even to keep pairs aligned)
 static void cap_history(std::vector<std::pair<std::string, std::string>>& history,
                         size_t max_entries = 20)
@@ -441,6 +616,128 @@ static void cap_history(std::vector<std::pair<std::string, std::string>>& histor
         history.erase(history.begin());
         if (!history.empty()) history.erase(history.begin());
     }
+}
+
+// Auto-compact: when context usage exceeds threshold, summarize older turns into a
+// brief recap and replace them. Preserves key context while freeing token budget.
+// Returns true if compaction occurred (caller should reset KV state).
+static bool maybe_auto_compact(RCLIEngine* engine, int ctx_size, int system_tokens,
+                               int user_tokens)
+{
+    if (engine->conversation_history.size() < 10) return false;
+
+    int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
+    if (history_budget <= 0) return false;
+
+    // Count total history tokens
+    int total_history_tokens = 0;
+    for (auto& entry : engine->conversation_history) {
+        if (engine->pipeline.using_metalrt()) {
+            total_history_tokens += engine->pipeline.metalrt_llm().count_tokens(
+                entry.first + ": " + entry.second);
+        } else {
+            total_history_tokens += engine->pipeline.llm().count_tokens(
+                entry.first + ": " + entry.second);
+        }
+    }
+
+    // Trigger compaction only when history is nearly full (90% of budget)
+    if (total_history_tokens < (int)(history_budget * 0.90)) return false;
+
+    // Split: summarize the older half, keep the recent half
+    size_t split = engine->conversation_history.size() / 2;
+    if (split % 2 != 0) split++;
+    if (split < 2) return false;
+
+    // Build text of old turns
+    std::string old_turns;
+    for (size_t i = 0; i < split; i++) {
+        old_turns += engine->conversation_history[i].first + ": " +
+                     engine->conversation_history[i].second + "\n";
+    }
+
+    // Generate summary
+    std::string summary_prompt_text =
+        "Summarize this conversation excerpt in 2-3 sentences. "
+        "Keep key facts, names, numbers, and decisions. Be concise.\n\n" + old_turns;
+
+    std::string summary;
+    if (engine->pipeline.using_metalrt()) {
+        auto& mrt = engine->pipeline.metalrt_llm();
+        std::string sp = mrt.profile().build_chat_prompt(
+            "You are a conversation summarizer. Output only the summary, nothing else.",
+            {}, summary_prompt_text);
+        summary = mrt.profile().clean_output(mrt.generate_raw(sp));
+    } else {
+        summary = engine->pipeline.llm().generate(
+            engine->pipeline.llm().build_chat_prompt(
+                "You are a conversation summarizer. Output only the summary, nothing else.",
+                {}, summary_prompt_text),
+            nullptr);
+        summary = clean_llm_output(engine, summary);
+    }
+
+    if (summary.empty()) return false;
+
+    // Merge with existing summary if any
+    if (!engine->conversation_summary.empty()) {
+        engine->conversation_summary += " " + summary;
+    } else {
+        engine->conversation_summary = summary;
+    }
+
+    // Remove old turns, keep recent ones
+    engine->conversation_history.erase(
+        engine->conversation_history.begin(),
+        engine->conversation_history.begin() + static_cast<int>(split));
+
+    // Prepend summary as a context entry at the front of history
+    engine->conversation_history.insert(
+        engine->conversation_history.begin(),
+        {"system", "[Earlier conversation summary] " + engine->conversation_summary});
+
+    LOG_TRACE("RCLI", "Auto-compacted %zu old turns into summary (%zu chars), "
+            "%zu entries remain",
+            split, engine->conversation_summary.size(),
+            engine->conversation_history.size());
+
+    return true;
+}
+
+// Build a conversation context string for MetalRT (which has no explicit history API).
+// Appended to system prompt so the LLM sees prior turns as context.
+static std::string strip_tool_markers(const std::string& text) {
+    std::string out = text;
+    // Remove tool call tags and their content to prevent false detection
+    static const char* markers[] = {
+        "<tool_call>", "</tool_call>", "<|tool_call|>", "<|/tool_call|>",
+        "<|tool_start|>", "<|tool_end|>", nullptr
+    };
+    for (const char** m = markers; *m; ++m) {
+        size_t pos;
+        while ((pos = out.find(*m)) != std::string::npos) {
+            out.erase(pos, strlen(*m));
+        }
+    }
+    return out;
+}
+
+static std::string build_metalrt_history_context(RCLIEngine* engine) {
+    if (engine->conversation_history.empty()) return "";
+    // Keep last 6 turns max (~3 exchanges) to limit prompt bloat
+    std::string ctx = "\n\nConversation so far:\n";
+    size_t start = 0;
+    if (engine->conversation_history.size() > 6)
+        start = engine->conversation_history.size() - 6;
+    for (size_t i = start; i < engine->conversation_history.size(); i++) {
+        auto& [role, msg] = engine->conversation_history[i];
+        // Strip tool markers from history to prevent false tool-call detection
+        std::string clean = strip_tool_markers(msg);
+        std::string trimmed = clean.substr(0, 150);
+        if (clean.size() > 150) trimmed += "...";
+        ctx += (role == "user" ? "User: " : "Assistant: ") + trimmed + "\n";
+    }
+    return ctx;
 }
 
 // Fallback: detect bare function calls like "func_name(arg=val)" without tool-call tags.
@@ -517,24 +814,196 @@ static std::vector<rastack::ToolCall> try_parse_bare_tool_calls(
     return calls;
 }
 
+// =============================================================================
+// Process command entry points
+// =============================================================================
+
+
 const char* rcli_process_command(RCLIHandle handle, const char* text) {
     if (!handle || !text) return "";
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->initialized) return "";
 
+    LOG_TRACE("RCLI", "[process_command] waiting for engine->mutex ...");
     std::lock_guard<std::mutex> lock(engine->mutex);
+    LOG_TRACE("RCLI", "[process_command] engine->mutex acquired, input='%.40s'", text);
     std::string input(text);
 
+    // --- MetalRT path: tool-aware inference via generate_raw (pre-formatted prompt) ---
+    if (engine->pipeline.using_metalrt()) {
+        auto& mrt = engine->pipeline.metalrt_llm();
+        const auto& profile = mrt.profile();
+
+        std::string base_prompt = rastack::apply_personality(
+            rastack::RCLI_SYSTEM_PROMPT, engine->personality_key);
+        std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
+        std::string system_prompt = profile.build_tool_system_prompt(
+            base_prompt, tool_defs);
+
+        std::string hint = engine->pipeline.tools().build_tool_hint(input);
+        std::string hinted_input = hint.empty() ? input : (hint + "\n" + input);
+
+        int sys_tok = mrt.count_tokens(system_prompt);
+        int usr_tok = mrt.count_tokens(hinted_input);
+        int ctx_sz = mrt.context_size();
+        if (ctx_sz <= 0) ctx_sz = 4096;
+        if (maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok)) {
+            engine->metalrt_kv_continuation_len = 0;
+        }
+
+        auto trimmed = get_trimmed_history_metalrt(engine, mrt, system_prompt, hinted_input);
+        std::string full_prompt = profile.build_chat_prompt(
+            system_prompt, trimmed, hinted_input);
+
+        if (trimmed.size() < engine->conversation_history.size()) {
+            engine->metalrt_kv_continuation_len = 0;
+        }
+
+        std::string raw_output;
+        const auto& cached = mrt.cached_prompt();
+        if (mrt.has_prompt_cache() && !cached.empty() &&
+            full_prompt.size() > cached.size() &&
+            full_prompt.compare(0, cached.size(), cached) == 0) {
+            std::string full_continuation = full_prompt.substr(cached.size());
+
+            if (engine->metalrt_kv_continuation_len > 0 &&
+                engine->metalrt_kv_continuation_len < full_continuation.size()) {
+                std::string new_part = full_continuation.substr(engine->metalrt_kv_continuation_len);
+                LOG_TRACE("RCLI", "[process_command] incremental continue "
+                        "(new=%zu chars, skip=%zu already in KV)",
+                        new_part.size(), engine->metalrt_kv_continuation_len);
+                raw_output = mrt.generate_raw_continue(new_part, nullptr, false);
+            } else {
+                LOG_TRACE("RCLI", "[process_command] full continue "
+                        "(continuation=%zu chars)", full_continuation.size());
+                raw_output = mrt.generate_raw_continue(full_continuation, nullptr, true);
+            }
+            engine->metalrt_kv_continuation_len = full_continuation.size();
+        } else {
+            LOG_TRACE("RCLI", "[process_command] calling mrt.generate_raw() ...");
+            raw_output = mrt.generate_raw(full_prompt);
+            engine->metalrt_kv_continuation_len = 0;
+        }
+        engine->ctx_main_prompt_tokens = mrt.count_tokens(full_prompt);
+        LOG_TRACE("RCLI", "[process_command] mrt generate returned (%zu chars), ctx_tokens=%d",
+                raw_output.size(), engine->ctx_main_prompt_tokens);
+
+        auto tool_calls = profile.parse_tool_calls(raw_output);
+        if (tool_calls.empty() && profile.family == rastack::ModelFamily::LFM2) {
+            tool_calls = try_parse_bare_tool_calls(engine, raw_output);
+        }
+
+        std::string cleaned = profile.clean_output(raw_output);
+
+        if (!tool_calls.empty()) {
+            if (engine->tool_trace_cb) {
+                for (auto& call : tool_calls) {
+                    engine->tool_trace_cb("detected", call.name.c_str(),
+                        call.arguments_json.c_str(), 0, engine->tool_trace_ud);
+                }
+            }
+
+            bool any_valid = false;
+            std::string combined_response;
+            for (auto& call : tool_calls) {
+                const auto* def = engine->actions.get_def(call.name);
+                if (def && engine->actions.is_enabled(call.name)) {
+                    any_valid = true;
+                    auto action_result = engine->actions.execute(call.name, call.arguments_json);
+
+                    if (engine->action_cb) {
+                        engine->action_cb(call.name.c_str(), action_result.raw_json.c_str(),
+                                          action_result.success ? 1 : 0, engine->action_ud);
+                    }
+                    if (engine->tool_trace_cb) {
+                        engine->tool_trace_cb("result", call.name.c_str(),
+                            action_result.raw_json.c_str(),
+                            action_result.success ? 1 : 0, engine->tool_trace_ud);
+                    }
+
+                    if (action_result.success) {
+                        combined_response += action_result.output;
+                    } else {
+                        std::string err_sys = brief_system_prompt(engine)
+                            + " Do NOT output JSON. Do NOT use <think> tags.";
+                        std::string err_msg = "The user asked: \"" + input + "\". "
+                            "You tried \"" + call.name + "\" but it failed: " + action_result.error +
+                            " Explain briefly.";
+                        std::string err_prompt = profile.build_chat_prompt(err_sys, {}, err_msg);
+                        std::string summary = mrt.generate_raw(err_prompt);
+                        engine->metalrt_kv_continuation_len = 0;
+                        combined_response += profile.clean_output(summary);
+                    }
+                } else if (engine->pipeline.tools().has_tool(call.name)) {
+                    any_valid = true;
+                    auto result = engine->pipeline.tools().execute(call);
+                    if (engine->tool_trace_cb) {
+                        engine->tool_trace_cb("result", call.name.c_str(),
+                            result.result_json.c_str(),
+                            result.success ? 1 : 0, engine->tool_trace_ud);
+                    }
+                    combined_response += result.success ? result.result_json : ("Error: " + result.result_json);
+                }
+                if (!combined_response.empty() && &call != &tool_calls.back()) combined_response += " ";
+            }
+            if (any_valid && !combined_response.empty()) {
+                std::string sum_sys = brief_system_prompt(engine)
+                    + " Do NOT output JSON. Do NOT use <think> tags.";
+                std::string sum_msg = "The user said: \"" + input + "\". Tool results: "
+                    + combined_response + "\nSummarize briefly.";
+                std::string sum_prompt = profile.build_chat_prompt(sum_sys, {}, sum_msg);
+                std::string summary = profile.clean_output(mrt.generate_raw(sum_prompt));
+                engine->metalrt_kv_continuation_len = 0;
+                engine->last_response = summary.empty() ? combined_response : summary;
+                engine->conversation_history.emplace_back("user", input);
+                engine->conversation_history.emplace_back("assistant", engine->last_response);
+                cap_history(engine->conversation_history);
+                return engine->last_response.c_str();
+            }
+        }
+
+        if (!cleaned.empty()) {
+            engine->last_response = cleaned;
+        } else {
+            std::string retry_sys = brief_system_prompt(engine);
+            std::string retry_prompt = profile.build_chat_prompt(retry_sys, {}, input + " Answer directly.");
+            std::string retry = mrt.generate_raw(retry_prompt);
+            engine->metalrt_kv_continuation_len = 0;
+            engine->last_response = profile.clean_output(retry);
+        }
+
+        if (!engine->last_response.empty()) {
+            engine->conversation_history.emplace_back("user", input);
+            engine->conversation_history.emplace_back("assistant", engine->last_response);
+            cap_history(engine->conversation_history);
+        }
+        return engine->last_response.c_str();
+    }
+
     // === Single LLM-driven path: tool definitions in system prompt ===
-    // Pre-filter tools by query relevance to avoid overwhelming small models
-    std::string tool_defs = engine->actions.get_filtered_definitions_json(input, 10);
+    std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
     std::string system_prompt = engine->pipeline.llm().profile().build_tool_system_prompt(
-        rastack::RCLI_SYSTEM_PROMPT, tool_defs);
+        std::string(rastack::RCLI_SYSTEM_PROMPT), tool_defs);
+    {
+        auto* pinfo = rastack::find_personality(engine->personality_key);
+        if (pinfo && pinfo->prompt[0] != '\0')
+            system_prompt += "\n" + std::string(pinfo->prompt);
+    }
+
+    {
+        int ctx_sz = engine->pipeline.llm().context_size();
+        int sys_tok = engine->pipeline.llm().count_tokens(system_prompt);
+        int usr_tok = engine->pipeline.llm().count_tokens(input);
+        maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok);
+    }
 
     auto history = get_trimmed_history(engine, system_prompt, input);
-    std::string raw_llm_output = engine->pipeline.llm().generate(
-        engine->pipeline.llm().build_chat_prompt(system_prompt, history, input),
-        nullptr);
+    std::string hint = engine->pipeline.tools().build_tool_hint(input);
+    std::string hinted_input = hint.empty() ? input : (hint + "\n" + input);
+    std::string full_chat_prompt = engine->pipeline.llm().build_chat_prompt(
+        system_prompt, history, hinted_input);
+    std::string raw_llm_output = engine->pipeline.llm().generate(full_chat_prompt, nullptr);
+    engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(full_chat_prompt);
 
     // Parse tool calls from RAW output first (before cleaning strips the tags)
     auto tool_calls = engine->pipeline.llm().profile().parse_tool_calls(raw_llm_output);
@@ -584,13 +1053,13 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
                 if (action_result.success) {
                     combined_response += action_result.output;
                 } else {
+                    std::string err_sp = brief_system_prompt(engine)
+                        + " The user asked: \"" + input + "\". "
+                        "You tried the action \"" + call.name + "\" but it failed with: " + action_result.error + "\n"
+                        "Explain what went wrong in one short sentence and suggest what the user can do. "
+                        "Do NOT say you can't do things. Do NOT output JSON. Do NOT use <think> tags.";
                     std::string summary = engine->pipeline.llm().generate(
-                        engine->pipeline.llm().build_chat_prompt(
-                            "You are RCLI, a macOS voice assistant. The user asked: \"" + input + "\". "
-                            "You tried the action \"" + call.name + "\" but it failed with: " + action_result.error + "\n"
-                            "Explain what went wrong in one short sentence and suggest what the user can do. "
-                            "Do NOT say you can't do things. Do NOT output JSON. Do NOT use <think> tags.",
-                            {}, ""),
+                        engine->pipeline.llm().build_chat_prompt(err_sp, {}, ""),
                         nullptr);
                     combined_response += clean_llm_output(engine, summary);
                 }
@@ -610,7 +1079,14 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
             if (!combined_response.empty() && &call != &tool_calls.back()) combined_response += " ";
         }
         if (any_valid && !combined_response.empty()) {
-            engine->last_response = combined_response;
+            engine->pipeline.llm().clear_kv_cache();
+            std::string cont_prompt = engine->pipeline.llm().build_chat_prompt(
+                brief_system_prompt(engine) + " Summarize the result briefly."
+                " Do NOT output JSON. Do NOT use <think> tags.",
+                {}, "The user said: \"" + input + "\". Tool results: " + combined_response);
+            std::string summary = engine->pipeline.llm().generate(cont_prompt, nullptr);
+            summary = clean_llm_output(engine, summary);
+            engine->last_response = summary.empty() ? combined_response : summary;
             engine->conversation_history.emplace_back("user", input);
             engine->conversation_history.emplace_back("assistant", engine->last_response);
             cap_history(engine->conversation_history);
@@ -622,11 +1098,11 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     if (!llm_output.empty() && llm_output.find("<|tool_call") == std::string::npos) {
         engine->last_response = llm_output;
     } else {
+        std::string fallback_sp = brief_system_prompt(engine)
+            + " Do NOT use <think> tags.";
         engine->last_response = engine->pipeline.llm().generate(
             engine->pipeline.llm().build_chat_prompt(
-                "You are RCLI, a friendly macOS voice assistant. "
-                "Keep responses brief and natural. Do NOT use <think> tags.",
-                history, input),
+                fallback_sp, history, input),
             nullptr);
         engine->last_response = clean_llm_output(engine, engine->last_response);
     }
@@ -634,14 +1110,13 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     engine->last_response = clean_llm_output(engine, engine->last_response);
 
     if (engine->last_response.empty()) {
-        auto retry_history = get_trimmed_history(engine,
+        std::string retry_sp = rastack::apply_personality(
             "You are RCLI. Answer the user directly in one sentence. "
-            "Do NOT use <think> tags.", input);
+            "Do NOT use <think> tags.", engine->personality_key);
+        auto retry_history = get_trimmed_history(engine, retry_sp, input);
         std::string retry = engine->pipeline.llm().generate(
             engine->pipeline.llm().build_chat_prompt(
-                "You are RCLI. Answer the user directly in one sentence. "
-                "Do NOT use <think> tags.",
-                retry_history, input + " Answer directly."),
+                retry_sp, retry_history, input + " Answer directly."),
             nullptr);
         engine->last_response = clean_llm_output(engine, retry);
     }
@@ -660,41 +1135,604 @@ int rcli_speak(RCLIHandle handle, const char* text) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->initialized) return -1;
 
+    LOG_TRACE("RCLI", "[speak] entry, text='%.40s'", text);
+
     // Kill any currently playing TTS first
     rcli_stop_speaking(handle);
 
+    // Ensure CoreAudio playback is running (stop_capture_and_transcribe stops it)
+    if (!engine->pipeline.audio().is_running()) {
+        engine->pipeline.audio().start();
+    }
+
     std::string clean_text = rastack::sanitize_for_tts(std::string(text));
-    if (clean_text.empty()) return 0;
-    auto audio = engine->pipeline.tts().synthesize(clean_text);
-    if (audio.empty()) return -1;
+    if (clean_text.empty()) { LOG_TRACE("RCLI", "[speak] clean_text empty, returning 0"); return 0; }
 
-    int sample_rate = engine->pipeline.tts().sample_rate();
+    LOG_TRACE("RCLI", "[speak] clean_text='%.40s' (%zu chars)", clean_text.c_str(), clean_text.size());
 
+    std::vector<float> audio;
+    int sample_rate;
+    if (engine->pipeline.using_metalrt_tts()) {
+        LOG_TRACE("RCLI", "[speak] calling metalrt_tts().synthesize() ...");
+        audio = engine->pipeline.metalrt_tts().synthesize(clean_text);
+        LOG_TRACE("RCLI", "[speak] synthesize returned %zu samples", audio.size());
+        sample_rate = engine->pipeline.metalrt_tts().sample_rate();
+    } else if (engine->pipeline.using_metalrt()) {
+        LOG_ERROR("RCLI", "MetalRT is active but TTS is not on GPU — aborting TTS. "
+                  "Reinstall MetalRT components with: rcli setup --metalrt");
+        return -1;
+    } else {
+        audio = engine->pipeline.tts().synthesize(clean_text);
+        sample_rate = engine->pipeline.tts().sample_rate();
+    }
+    if (audio.empty()) { LOG_TRACE("RCLI", "[speak] audio empty, returning -1"); return -1; }
+
+    LOG_TRACE("RCLI", "[speak] saving WAV (%zu samples, sr=%d) ...", audio.size(), sample_rate);
     std::string tmp_path = "/tmp/rcli_speak_" + std::to_string(getpid()) + ".wav";
     if (!AudioIO::save_wav(tmp_path, audio.data(), static_cast<int>(audio.size()), sample_rate)) {
         LOG_ERROR("RCLI", "Failed to write TTS audio to %s", tmp_path.c_str());
         return -1;
     }
 
-    // Fork afplay so we get a PID we can kill for interruption
+    LOG_TRACE("RCLI", "[speak] forking afplay for %s ...", tmp_path.c_str());
     pid_t pid = fork();
     if (pid == 0) {
-        // Child: exec afplay, it will exit when done
         execl("/usr/bin/afplay", "afplay", tmp_path.c_str(), nullptr);
         _exit(127);
     } else if (pid > 0) {
         engine->tts_pid.store(pid, std::memory_order_release);
-        // Reaper thread: wait for afplay to finish, then clean up
+        LOG_TRACE("RCLI", "[speak] afplay pid=%d, returning 0", pid);
         std::thread([engine, pid, tmp_path]() {
             int status = 0;
             waitpid(pid, &status, 0);
             pid_t expected = pid;
             engine->tts_pid.compare_exchange_strong(expected, 0, std::memory_order_release);
             unlink(tmp_path.c_str());
+            LOG_TRACE("RCLI", "[speak-reaper] afplay pid=%d finished, status=%d", pid, status);
         }).detach();
+    } else {
+        LOG_TRACE("RCLI", "[speak] fork() failed, errno=%d", errno);
     }
 
     return 0;
+}
+
+// =============================================================================
+// Streaming TTS for pre-generated text (e.g. RAG responses)
+// =============================================================================
+
+int rcli_speak_streaming(RCLIHandle handle, const char* text,
+                         RCLIEventCallback callback, void* user_data) {
+    if (!handle || !text) return -1;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    if (!engine->initialized) return -1;
+
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    engine->streaming_cancelled.store(false, std::memory_order_release);
+
+    auto t_start = std::chrono::steady_clock::now();
+
+    auto* rb = engine->pipeline.playback_ring_buffer();
+    if (!rb) return rcli_speak(handle, text);  // fallback to afplay
+
+    // Ensure CoreAudio playback is running
+    if (!engine->pipeline.audio().is_running()) {
+        engine->pipeline.audio().start();
+    }
+    rb->clear();
+
+    // Split text into sentences and stream through TTS
+    std::mutex tts_queue_mutex;
+    std::condition_variable tts_queue_cv;
+    std::vector<std::string> tts_queue;
+    bool feeding_done = false;
+    bool first_audio_fired = false;
+    double total_tts_ms = 0;
+    int sentence_count = 0;
+
+    // TTS worker thread
+    std::thread tts_worker([&]() {
+        pthread_setname_np("rcli.tts.speak");
+        while (true) {
+            std::string sentence;
+            {
+                std::unique_lock<std::mutex> lk(tts_queue_mutex);
+                tts_queue_cv.wait(lk, [&]() {
+                    return !tts_queue.empty() || feeding_done;
+                });
+                if (tts_queue.empty() && feeding_done) break;
+                if (tts_queue.empty()) continue;
+                sentence = std::move(tts_queue.front());
+                tts_queue.erase(tts_queue.begin());
+            }
+
+            if (engine->streaming_cancelled.load(std::memory_order_acquire)) break;
+
+            if (!first_audio_fired) {
+                first_audio_fired = true;
+                if (callback) {
+                    auto now = std::chrono::steady_clock::now();
+                    double ttfa_ms = std::chrono::duration<double, std::milli>(now - t_start).count();
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.1f", ttfa_ms);
+                    callback("first_audio", buf, user_data);
+                }
+            }
+
+            std::vector<float> samples;
+            if (engine->pipeline.using_metalrt_tts()) {
+                samples = engine->pipeline.metalrt_tts().synthesize(sentence);
+                total_tts_ms += engine->pipeline.metalrt_tts().last_synthesis_ms();
+            } else {
+                samples = engine->pipeline.tts().synthesize(sentence);
+            }
+            // Write with backpressure
+            size_t offset = 0;
+            while (offset < samples.size() &&
+                   !engine->streaming_cancelled.load(std::memory_order_acquire)) {
+                size_t written = rb->write(samples.data() + offset, samples.size() - offset);
+                offset += written;
+                if (offset < samples.size()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
+            sentence_count++;
+        }
+    });
+
+    // Feed text through SentenceDetector
+    auto queue_sentence = [&](const std::string& sentence) {
+        std::string clean = rastack::sanitize_for_tts(sentence);
+        if (clean.empty()) return;
+        {
+            std::lock_guard<std::mutex> lk(tts_queue_mutex);
+            tts_queue.push_back(std::move(clean));
+        }
+        tts_queue_cv.notify_one();
+    };
+
+    rastack::SentenceDetector detector(queue_sentence, 8, 40, 0);
+    detector.feed(std::string(text));
+    detector.flush();
+
+    {
+        std::lock_guard<std::mutex> lk(tts_queue_mutex);
+        feeding_done = true;
+    }
+    tts_queue_cv.notify_one();
+    tts_worker.join();
+
+    // Wait for ring buffer to drain
+    while (rb->available_read() > 0 &&
+           !engine->streaming_cancelled.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    if (callback) {
+        auto t_end = std::chrono::steady_clock::now();
+        double total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "{\"total_ms\":%.1f,\"total_tts_ms\":%.1f,\"sentences\":%d}",
+            total_ms, total_tts_ms, sentence_count);
+        callback("complete", buf, user_data);
+    }
+    return 0;
+}
+
+// =============================================================================
+// Streaming LLM → TTS pipeline
+// =============================================================================
+
+const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
+                                    RCLIEventCallback callback, void* user_data) {
+    if (!handle || !text) return "";
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    if (!engine->initialized) return "";
+
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    engine->streaming_cancelled.store(false, std::memory_order_release);
+    std::string input(text);
+
+    auto t_start = std::chrono::steady_clock::now();
+
+    // --- TTS worker thread (sentence queue → ring buffer → CoreAudio) ---
+    std::mutex tts_queue_mutex;
+    std::condition_variable tts_queue_cv;
+    std::vector<std::string> tts_queue;
+    bool llm_done = false;
+    bool first_audio_fired = false;
+    double total_tts_ms = 0;
+    int sentence_count = 0;
+
+    auto* rb = engine->pipeline.playback_ring_buffer();
+    if (!rb) {
+        LOG_ERROR("RCLI", "No playback ring buffer — cannot stream TTS");
+        return "";
+    }
+
+    // Ensure CoreAudio playback is running (stop_capture_and_transcribe stops it)
+    if (!engine->pipeline.audio().is_running()) {
+        engine->pipeline.audio().start();
+    }
+    // Clear any stale audio data in the ring buffer
+    rb->clear();
+
+    std::thread tts_worker([&]() {
+        pthread_setname_np("rcli.tts.stream");
+        while (true) {
+            std::string sentence;
+            {
+                std::unique_lock<std::mutex> lk(tts_queue_mutex);
+                tts_queue_cv.wait(lk, [&]() {
+                    return !tts_queue.empty() || llm_done;
+                });
+                if (tts_queue.empty() && llm_done) break;
+                if (tts_queue.empty()) continue;
+                sentence = std::move(tts_queue.front());
+                tts_queue.erase(tts_queue.begin());
+            }
+
+            if (engine->streaming_cancelled.load(std::memory_order_acquire)) break;
+
+            // Fire "first_audio" on first sentence
+            if (!first_audio_fired) {
+                first_audio_fired = true;
+                if (callback) {
+                    auto now = std::chrono::steady_clock::now();
+                    double ttfa_ms = std::chrono::duration<double, std::milli>(now - t_start).count();
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.1f", ttfa_ms);
+                    callback("first_audio", buf, user_data);
+                }
+            }
+
+            LOG_DEBUG("TTS", "Streaming sentence: \"%s\"", sentence.c_str());
+            std::vector<float> samples;
+            if (engine->pipeline.using_metalrt_tts()) {
+                samples = engine->pipeline.metalrt_tts().synthesize(sentence);
+                total_tts_ms += engine->pipeline.metalrt_tts().last_synthesis_ms();
+            } else {
+                samples = engine->pipeline.tts().synthesize(sentence);
+            }
+            // Write with backpressure — wait for ring buffer space instead of dropping
+            size_t offset = 0;
+            while (offset < samples.size() &&
+                   !engine->streaming_cancelled.load(std::memory_order_acquire)) {
+                size_t written = rb->write(samples.data() + offset, samples.size() - offset);
+                offset += written;
+                if (offset < samples.size()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
+            sentence_count++;
+
+            // Fire per-sentence stats
+            if (callback) {
+                char stats[256];
+                snprintf(stats, sizeof(stats),
+                    "{\"sentence\":\"%d\",\"text_len\":%zu}",
+                    sentence_count, sentence.size());
+                callback("tts_stats", stats, user_data);
+            }
+        }
+    });
+
+    // --- Sentence queue lambda ---
+    auto queue_sentence = [&](const std::string& sentence) {
+        std::string clean = sanitize_for_tts(sentence);
+        if (clean.empty()) return;
+        {
+            std::lock_guard<std::mutex> lk(tts_queue_mutex);
+            tts_queue.push_back(std::move(clean));
+        }
+        tts_queue_cv.notify_one();
+    };
+
+    // --- LLM generation with streaming token callback ---
+    std::string response;
+
+    if (engine->pipeline.using_metalrt()) {
+        auto& mrt = engine->pipeline.metalrt_llm();
+        const auto& profile = mrt.profile();
+
+        std::string base_prompt = rastack::apply_personality(
+            rastack::RCLI_SYSTEM_PROMPT, engine->personality_key);
+        std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
+        std::string system_prompt = profile.build_tool_system_prompt(
+            base_prompt, tool_defs);
+
+        std::string hint = engine->pipeline.tools().build_tool_hint(input);
+        std::string hinted_input = hint.empty() ? input : (hint + "\n" + input);
+
+        {
+            int sys_tok = mrt.count_tokens(system_prompt);
+            int usr_tok = mrt.count_tokens(hinted_input);
+            int ctx_sz = mrt.context_size();
+            if (ctx_sz <= 0) ctx_sz = 4096;
+            if (maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok)) {
+                engine->metalrt_kv_continuation_len = 0;
+            }
+        }
+
+        const std::string& tc_start = profile.tool_call_start;
+        std::string token_buffer;
+        bool detected_tool_call = false;
+        int tokens_buffered = 0;
+        constexpr int SPECULATIVE_TOKENS = 15;
+        SentenceDetector detector(queue_sentence, 8, 40, 0);
+
+        auto streaming_cb = [&](const TokenOutput& tok) {
+            if (detected_tool_call) return;
+            tokens_buffered++;
+            if (tokens_buffered <= SPECULATIVE_TOKENS) {
+                token_buffer += tok.text;
+                if (token_buffer.find(tc_start) != std::string::npos) {
+                    detected_tool_call = true;
+                }
+            } else {
+                if (!token_buffer.empty()) {
+                    detector.feed(token_buffer);
+                    token_buffer.clear();
+                }
+                detector.feed(tok.text);
+            }
+        };
+
+        auto trimmed = get_trimmed_history_metalrt(engine, mrt, system_prompt, hinted_input);
+        std::string full_prompt = profile.build_chat_prompt(
+            system_prompt, trimmed, hinted_input);
+
+        if (trimmed.size() < engine->conversation_history.size()) {
+            engine->metalrt_kv_continuation_len = 0;
+        }
+
+        const auto& cached = mrt.cached_prompt();
+        if (mrt.has_prompt_cache() && !cached.empty() &&
+            full_prompt.size() > cached.size() &&
+            full_prompt.compare(0, cached.size(), cached) == 0) {
+            std::string full_continuation = full_prompt.substr(cached.size());
+
+            if (engine->metalrt_kv_continuation_len > 0 &&
+                engine->metalrt_kv_continuation_len < full_continuation.size()) {
+                std::string new_part = full_continuation.substr(engine->metalrt_kv_continuation_len);
+                LOG_TRACE("RCLI", "[speak] incremental continue "
+                        "(new=%zu chars, skip=%zu already in KV)",
+                        new_part.size(), engine->metalrt_kv_continuation_len);
+                response = mrt.generate_raw_continue(new_part, streaming_cb, false);
+            } else {
+                LOG_TRACE("RCLI", "[speak] full continue "
+                        "(continuation=%zu chars)", full_continuation.size());
+                response = mrt.generate_raw_continue(full_continuation, streaming_cb, true);
+            }
+            engine->metalrt_kv_continuation_len = full_continuation.size();
+        } else {
+            response = mrt.generate_raw(full_prompt, streaming_cb);
+            engine->metalrt_kv_continuation_len = 0;
+        }
+        engine->ctx_main_prompt_tokens = mrt.count_tokens(full_prompt);
+
+        if (detected_tool_call) {
+            auto tool_calls = profile.parse_tool_calls(response);
+            if (tool_calls.empty() && profile.family == rastack::ModelFamily::LFM2)
+                tool_calls = try_parse_bare_tool_calls(engine, response);
+
+            if (!tool_calls.empty()) {
+                std::string combined;
+                for (auto& call : tool_calls) {
+                    if (engine->tool_trace_cb) {
+                        engine->tool_trace_cb("detected", call.name.c_str(),
+                            call.arguments_json.c_str(), 0, engine->tool_trace_ud);
+                    }
+                    const auto* def = engine->actions.get_def(call.name);
+                    if (def && engine->actions.is_enabled(call.name)) {
+                        auto result = engine->actions.execute(call.name, call.arguments_json);
+                        if (engine->tool_trace_cb) {
+                            engine->tool_trace_cb("result", call.name.c_str(),
+                                result.raw_json.c_str(), result.success ? 1 : 0, engine->tool_trace_ud);
+                        }
+                        if (result.success) combined += result.output;
+                    } else if (engine->pipeline.tools().has_tool(call.name)) {
+                        auto result = engine->pipeline.tools().execute(call);
+                        if (engine->tool_trace_cb) {
+                            engine->tool_trace_cb("result", call.name.c_str(),
+                                result.result_json.c_str(), result.success ? 1 : 0, engine->tool_trace_ud);
+                        }
+                        combined += result.success ? result.result_json : ("Error: " + result.result_json);
+                    }
+                }
+                if (!combined.empty()) {
+                    std::string sum_sys = brief_system_prompt(engine)
+                        + " Do NOT output JSON. Do NOT use <think> tags.";
+                    std::string sum_msg = "Tool results: " + combined + "\nSummarize briefly.";
+                    std::string sum_prompt = profile.build_chat_prompt(sum_sys, {}, sum_msg);
+                    response = profile.clean_output(mrt.generate_raw(sum_prompt));
+                    engine->metalrt_kv_continuation_len = 0;
+                    SentenceDetector det2(queue_sentence, 8, 40, 0);
+                    det2.feed(response);
+                    det2.flush();
+                } else {
+                    response = profile.clean_output(response);
+                    detector.feed(response);
+                    detector.flush();
+                }
+            } else {
+                response = profile.clean_output(response);
+                if (response.empty()) {
+                    std::string retry_prompt = profile.build_chat_prompt(
+                        brief_system_prompt(engine), {}, input + " Answer directly.");
+                    response = profile.clean_output(mrt.generate_raw(retry_prompt));
+                    engine->metalrt_kv_continuation_len = 0;
+                }
+                if (!response.empty()) {
+                    detector.feed(response);
+                    detector.flush();
+                }
+            }
+        } else {
+            // No tool call — flush buffered tokens through detector
+            if (!token_buffer.empty()) detector.feed(token_buffer);
+            detector.flush();
+            response = profile.clean_output(response);
+        }
+    } else {
+        // --- llama.cpp path ---
+        const auto& profile = engine->pipeline.llm().profile();
+        std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
+        std::string system_prompt = profile.build_tool_system_prompt(
+            std::string(rastack::RCLI_SYSTEM_PROMPT), tool_defs);
+        {
+            auto* pinfo = rastack::find_personality(engine->personality_key);
+            if (pinfo && pinfo->prompt[0] != '\0')
+                system_prompt += "\n" + std::string(pinfo->prompt);
+        }
+
+        {
+            int ctx_sz = engine->pipeline.llm().context_size();
+            int sys_tok = engine->pipeline.llm().count_tokens(system_prompt);
+            int usr_tok = engine->pipeline.llm().count_tokens(input);
+            maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok);
+        }
+
+        auto history = get_trimmed_history(engine, system_prompt, input);
+        std::string hint = engine->pipeline.tools().build_tool_hint(input);
+        std::string hinted_input = hint.empty() ? input : (hint + "\n" + input);
+
+        const std::string& tc_start = profile.tool_call_start;
+        std::string token_buffer;
+        bool detected_tool_call = false;
+        int tokens_buffered = 0;
+        constexpr int SPECULATIVE_TOKENS = 15;
+        SentenceDetector detector(queue_sentence, 8, 40, 0);
+
+        auto streaming_cb = [&](const TokenOutput& tok) {
+            if (detected_tool_call) return;
+            tokens_buffered++;
+            if (tokens_buffered <= SPECULATIVE_TOKENS) {
+                token_buffer += tok.text;
+                if (token_buffer.find(tc_start) != std::string::npos) {
+                    detected_tool_call = true;
+                }
+            } else {
+                if (!token_buffer.empty()) {
+                    detector.feed(token_buffer);
+                    token_buffer.clear();
+                }
+                detector.feed(tok.text);
+            }
+        };
+
+        std::string full_chat_prompt = engine->pipeline.llm().build_chat_prompt(
+            system_prompt, history, hinted_input);
+        std::string raw = engine->pipeline.llm().generate(full_chat_prompt, streaming_cb);
+        engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(full_chat_prompt);
+
+        if (detected_tool_call) {
+            auto tool_calls = profile.parse_tool_calls(raw);
+            if (tool_calls.empty() && profile.family == rastack::ModelFamily::LFM2)
+                tool_calls = try_parse_bare_tool_calls(engine, raw);
+
+            if (!tool_calls.empty()) {
+                std::string combined;
+                for (auto& call : tool_calls) {
+                    if (engine->tool_trace_cb) {
+                        engine->tool_trace_cb("detected", call.name.c_str(),
+                            call.arguments_json.c_str(), 0, engine->tool_trace_ud);
+                    }
+                    const auto* def = engine->actions.get_def(call.name);
+                    if (def && engine->actions.is_enabled(call.name)) {
+                        auto result = engine->actions.execute(call.name, call.arguments_json);
+                        if (engine->tool_trace_cb) {
+                            engine->tool_trace_cb("result", call.name.c_str(),
+                                result.raw_json.c_str(), result.success ? 1 : 0, engine->tool_trace_ud);
+                        }
+                        if (result.success) combined += result.output;
+                    } else if (engine->pipeline.tools().has_tool(call.name)) {
+                        auto result = engine->pipeline.tools().execute(call);
+                        if (engine->tool_trace_cb) {
+                            engine->tool_trace_cb("result", call.name.c_str(),
+                                result.result_json.c_str(), result.success ? 1 : 0, engine->tool_trace_ud);
+                        }
+                        combined += result.success ? result.result_json : ("Error: " + result.result_json);
+                    }
+                }
+                if (!combined.empty()) {
+                    engine->pipeline.llm().clear_kv_cache();
+                    std::string cont_prompt = engine->pipeline.llm().build_chat_prompt(
+                        brief_system_prompt(engine) + " Summarize the result briefly.",
+                        {}, "Tool results: " + combined);
+                    response = engine->pipeline.llm().generate(cont_prompt, nullptr);
+                    response = clean_llm_output(engine, response);
+                    SentenceDetector det2(queue_sentence, 8, 40, 0);
+                    det2.feed(response);
+                    det2.flush();
+                } else {
+                    response = clean_llm_output(engine, raw);
+                    detector.feed(response);
+                    detector.flush();
+                }
+            } else {
+                // Tool call detected but parsing failed — fall back to conversational
+                response = clean_llm_output(engine, raw);
+                if (response.empty()) {
+                    engine->pipeline.llm().clear_kv_cache();
+                    std::string retry = engine->pipeline.llm().generate(
+                        engine->pipeline.llm().build_chat_prompt(
+                            brief_system_prompt(engine), {}, input + " Answer directly."),
+                        nullptr);
+                    response = clean_llm_output(engine, retry);
+                }
+                if (!response.empty()) {
+                    detector.feed(response);
+                    detector.flush();
+                }
+            }
+        } else {
+            if (!token_buffer.empty()) detector.feed(token_buffer);
+            detector.flush();
+            response = clean_llm_output(engine, raw);
+        }
+    }
+
+    // Fire "response" callback with full LLM text
+    if (callback && !response.empty()) {
+        callback("response", response.c_str(), user_data);
+    }
+
+    // Signal TTS worker done and wait for it
+    {
+        std::lock_guard<std::mutex> lk(tts_queue_mutex);
+        llm_done = true;
+    }
+    tts_queue_cv.notify_one();
+    tts_worker.join();
+
+    // Wait for ring buffer to drain (all audio played)
+    while (rb->available_read() > 0 &&
+           !engine->streaming_cancelled.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    // Fire "complete" callback
+    if (callback) {
+        auto t_end = std::chrono::steady_clock::now();
+        double total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "{\"total_ms\":%.1f,\"total_tts_ms\":%.1f,\"sentences\":%d}",
+            total_ms, total_tts_ms, sentence_count);
+        callback("complete", buf, user_data);
+    }
+
+    // Update conversation history
+    if (!response.empty()) {
+        engine->last_response = response;
+        engine->conversation_history.emplace_back("user", input);
+        engine->conversation_history.emplace_back("assistant", response);
+        cap_history(engine->conversation_history);
+    }
+
+    return engine->last_response.c_str();
 }
 
 void rcli_stop_speaking(RCLIHandle handle) {
@@ -717,7 +1755,15 @@ void rcli_stop_processing(RCLIHandle handle) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (engine->initialized) {
         engine->pipeline.llm().cancel();
+        if (engine->pipeline.using_metalrt())
+            engine->pipeline.metalrt_llm().cancel();
     }
+    // Cancel streaming TTS pipeline
+    engine->streaming_cancelled.store(true, std::memory_order_release);
+    // Clear ring buffer to stop audio immediately
+    auto* rb = engine->pipeline.playback_ring_buffer();
+    if (rb) rb->clear();
+
     rcli_stop_speaking(handle);
     rcli_stop_listening(handle);
 }
@@ -727,12 +1773,105 @@ void rcli_clear_history(RCLIHandle handle) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     std::lock_guard<std::mutex> lock(engine->mutex);
     engine->conversation_history.clear();
+    engine->conversation_summary.clear();
+    engine->metalrt_kv_continuation_len = 0;
+    engine->ctx_main_prompt_tokens = 0;
+    if (engine->initialized) {
+        if (engine->pipeline.using_metalrt()) {
+            engine->pipeline.metalrt_llm().reset_conversation();
+        } else {
+            engine->pipeline.llm().clear_kv_cache();
+        }
+    }
+}
+
+const char* rcli_get_personality(RCLIHandle handle) {
+    if (!handle) return "default";
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    return engine->personality_key.c_str();
+}
+
+int rcli_set_personality(RCLIHandle handle, const char* personality_key) {
+    if (!handle || !personality_key) return -1;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    std::string key(personality_key);
+
+    // Validate
+    if (!rastack::find_personality(key)) return -1;
+
+    engine->personality_key = key;
+    rcli::write_personality_preference(key);
+
+    // Update the pipeline system prompt so it takes effect immediately
+    if (engine->initialized) {
+        std::string new_prompt = rastack::apply_personality(
+            rastack::RCLI_SYSTEM_PROMPT, key);
+        engine->pipeline.set_system_prompt(new_prompt);
+        engine->pipeline.recache_system_prompt();
+
+        engine->conversation_history.clear();
+        engine->conversation_summary.clear();
+        engine->metalrt_kv_continuation_len = 0;
+        engine->ctx_main_prompt_tokens = 0;
+        if (engine->pipeline.using_metalrt()) {
+            engine->pipeline.metalrt_llm().reset_conversation();
+        }
+
+        // Switch TTS voice to match personality
+        auto* info = rastack::find_personality(key);
+        if (info && info->voice[0] != '\0') {
+            engine->pipeline.set_tts_voice(info->voice);
+        }
+    }
+
+    LOG_DEBUG("RCLI", "Personality set to: %s", key.c_str());
+    return 0;
 }
 
 const char* rcli_get_transcript(RCLIHandle handle) {
     if (!handle) return "";
     auto* engine = static_cast<RCLIEngine*>(handle);
     return engine->last_transcript.c_str();
+}
+
+// =============================================================================
+// Barge-In & Voice Mode
+// =============================================================================
+
+void rcli_set_barge_in_enabled(RCLIHandle handle, int enabled) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    engine->pipeline.set_barge_in_enabled(enabled != 0);
+    LOG_DEBUG("RCLI", "Barge-in %s", enabled ? "enabled" : "disabled");
+}
+
+int rcli_is_barge_in_enabled(RCLIHandle handle) {
+    if (!handle) return 0;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    return engine->pipeline.barge_in_enabled() ? 1 : 0;
+}
+
+int rcli_start_voice_mode(RCLIHandle handle, const char* wake_phrase) {
+    if (!handle) return -1;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    if (!engine->initialized) return -1;
+    std::string phrase = wake_phrase ? wake_phrase : "jarvis";
+    return engine->pipeline.start_voice_mode(phrase) ? 0 : -1;
+}
+
+void rcli_stop_voice_mode(RCLIHandle handle) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    engine->pipeline.stop_voice_mode();
+}
+
+const char* rcli_get_interrupted_response(RCLIHandle handle) {
+    if (!handle) return "";
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    // Store in a thread-local buffer so the pointer survives the call
+    static thread_local std::string buf;
+    buf = engine->pipeline.interrupted_response();
+    return buf.c_str();
 }
 
 // =============================================================================
@@ -1023,6 +2162,7 @@ int rcli_run_full_benchmark(RCLIHandle handle, const char* suite_str,
     if (suite_requested(suite, "stt")) {
         fprintf(stderr, "\n  \033[1m\033[36m── STT Benchmark ──\033[0m\n");
         bench.bench_stt(primary_wav);
+        bench.bench_metalrt_stt(primary_wav);
 
         fprintf(stderr, "\n  \033[1m\033[36m── STT Accuracy (WER) ──\033[0m\n");
         for (auto& s : samples) {
@@ -1030,8 +2170,14 @@ int rcli_run_full_benchmark(RCLIHandle handle, const char* suite_str,
             auto audio = AudioIO::load_wav_to_vec(wav_path, 16000);
             if (audio.empty()) continue;
 
-            std::string hyp = engine->pipeline.offline_stt().transcribe(
-                audio.data(), (int)audio.size());
+            std::string hyp;
+            if (engine->pipeline.using_metalrt_stt()) {
+                hyp = engine->pipeline.metalrt_stt().transcribe(
+                    audio.data(), (int)audio.size(), 16000);
+            } else {
+                hyp = engine->pipeline.offline_stt().transcribe(
+                    audio.data(), (int)audio.size());
+            }
 
             int wer = word_error_rate_percent(s.transcript, hyp);
             fprintf(stderr, "    %-18s WER: %3d%%  \"%s\"\n",
@@ -1050,6 +2196,7 @@ int rcli_run_full_benchmark(RCLIHandle handle, const char* suite_str,
     if (suite_requested(suite, "tts")) {
         fprintf(stderr, "\n  \033[1m\033[36m── TTS Benchmark ──\033[0m\n");
         bench.bench_tts();
+        bench.bench_metalrt_tts();
     }
 
     // ── E2E ────────────────────────────────────────────────
@@ -1304,30 +2451,59 @@ const char* rcli_rag_query(RCLIHandle handle, const char* query) {
         context += "[" + std::to_string(i + 1) + "] " + std::string(results[i].text) + "\n\n";
     }
 
-    // Generate answer using LLM with retrieved context
+    // Generate answer using LLM with retrieved context.
+    // The system prompt enforces speech-friendly output since responses are
+    // streamed to TTS — no bullets, numbered lists, markdown, or citations.
+    std::string rag_system = rastack::apply_personality(
+        "You are RCLI, a voice assistant that answers questions using provided documents. "
+        "Your response will be spoken aloud by a text-to-speech engine, so you MUST follow these rules:\n"
+        "- Answer in plain, natural conversational sentences only.\n"
+        "- NEVER use bullet points, numbered lists, markdown, or any formatting.\n"
+        "- NEVER include citations like [1], [2], or source references.\n"
+        "- NEVER use parentheses for asides or abbreviations.\n"
+        "- Do NOT use <think> tags or internal reasoning.\n"
+        "- Keep your answer concise — 2 to 4 sentences maximum.\n"
+        "- If the answer is not in the context, say so briefly.",
+        engine->personality_key);
+
     std::string rag_prompt =
-        "Based on the following context, answer the question. "
-        "Only use information from the context. If the answer isn't in the context, say so.\n\n"
         "Context:\n" + context + "\n"
         "Question: " + std::string(query);
 
-    std::string answer = engine->pipeline.llm().generate(
-        engine->pipeline.llm().build_chat_prompt(
-            "You are a helpful assistant answering questions based on provided documents. "
-            "Do NOT use <think> tags or internal reasoning. Answer directly.",
-            {}, rag_prompt),
-        nullptr);
+    std::string answer;
+    if (engine->pipeline.using_metalrt()) {
+        auto& mrt = engine->pipeline.metalrt_llm();
+        std::string rag_full = mrt.profile().build_chat_prompt(rag_system, {}, rag_prompt);
+        answer = mrt.generate_raw(rag_full, nullptr);
+        engine->metalrt_kv_continuation_len = 0;
+    } else {
+        answer = engine->pipeline.llm().generate(
+            engine->pipeline.llm().build_chat_prompt(rag_system, {}, rag_prompt),
+            nullptr);
+    }
 
     engine->last_rag_result = clean_llm_output(engine, answer);
 
     // Retry once if output cleaned to empty (some models produce only think tokens)
     if (engine->last_rag_result.empty()) {
-        std::string retry = engine->pipeline.llm().generate(
-            engine->pipeline.llm().build_chat_prompt(
-                "Answer questions using the context provided. Be direct and concise.",
-                {}, "Context:\n" + context + "\nQuestion: " + std::string(query) + "\nAnswer directly:"),
-            nullptr);
+        std::string retry_prompt = "Context:\n" + context +
+            "\nQuestion: " + std::string(query) + "\nAnswer in plain spoken sentences:";
+        std::string retry;
+        if (engine->pipeline.using_metalrt()) {
+            retry = engine->pipeline.metalrt_llm().generate(retry_prompt, nullptr);
+        } else {
+            retry = engine->pipeline.llm().generate(
+                engine->pipeline.llm().build_chat_prompt(
+                    "Answer questions using the context provided. Respond in plain spoken sentences only. No lists or formatting.",
+                    {}, retry_prompt),
+                nullptr);
+        }
         engine->last_rag_result = clean_llm_output(engine, retry);
+    }
+
+    // Restore MetalRT system prompt to the normal tool-aware one
+    if (engine->pipeline.using_metalrt()) {
+        engine->pipeline.recache_system_prompt();
     }
     return engine->last_rag_result.c_str();
 }
@@ -1493,6 +2669,19 @@ void rcli_set_tool_trace_callback(RCLIHandle handle, RCLIToolTraceCallback cb, v
     engine->tool_trace_ud = user_data;
 }
 
+void rcli_set_response_callback(RCLIHandle handle, RCLIResponseCallback cb, void* user_data) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    if (cb) {
+        auto* ud = user_data;
+        engine->pipeline.set_response_callback([cb, ud](const std::string& response) {
+            cb(response.c_str(), ud);
+        });
+    } else {
+        engine->pipeline.set_response_callback(nullptr);
+    }
+}
+
 // =============================================================================
 // State / Info
 // =============================================================================
@@ -1538,6 +2727,13 @@ const char* rcli_get_llm_model(RCLIHandle handle) {
     return engine->llm_model_name.c_str();
 }
 
+const char* rcli_get_active_engine(RCLIHandle handle) {
+    if (!handle) return "llama.cpp";
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    if (!engine->initialized) return "llama.cpp";
+    return engine->pipeline.using_metalrt() ? "MetalRT" : "llama.cpp";
+}
+
 const char* rcli_get_tts_model(RCLIHandle handle) {
     if (!handle) return "unknown";
     auto* engine = static_cast<RCLIEngine*>(handle);
@@ -1558,19 +2754,56 @@ void rcli_get_last_llm_perf(RCLIHandle handle,
     if (!handle) return;
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->initialized) return;
-    auto& s = engine->pipeline.llm().last_stats();
+    const auto& s = engine->pipeline.using_metalrt()
+        ? engine->pipeline.metalrt_llm().last_stats()
+        : engine->pipeline.llm().last_stats();
     if (out_tokens)      *out_tokens = static_cast<int>(s.generated_tokens);
     if (out_tok_per_sec) *out_tok_per_sec = s.gen_tps();
     if (out_ttft_ms)     *out_ttft_ms = s.first_token_us / 1000.0;
     if (out_total_ms)    *out_total_ms = s.generation_us / 1000.0;
 }
 
+void rcli_get_last_llm_perf_extended(RCLIHandle handle,
+                                     double* out_prefill_tok_per_sec,
+                                     double* out_decode_tok_per_sec,
+                                     double* out_prefill_ms,
+                                     double* out_decode_ms,
+                                     int* out_prompt_tokens,
+                                     const char** out_engine_name) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    if (!engine->initialized) return;
+    bool mrt = engine->pipeline.using_metalrt();
+    const auto& s = mrt
+        ? engine->pipeline.metalrt_llm().last_stats()
+        : engine->pipeline.llm().last_stats();
+    if (out_prefill_tok_per_sec) *out_prefill_tok_per_sec = s.prompt_tps();
+    if (out_decode_tok_per_sec)  *out_decode_tok_per_sec  = s.gen_tps();
+    if (out_prefill_ms)          *out_prefill_ms          = s.prompt_eval_us / 1000.0;
+    if (out_decode_ms)           *out_decode_ms           = s.generation_us / 1000.0;
+    if (out_prompt_tokens)       *out_prompt_tokens       = static_cast<int>(s.prompt_tokens);
+    if (out_engine_name)         *out_engine_name         = mrt ? "MetalRT" : "llama.cpp";
+}
+
 void rcli_get_context_info(RCLIHandle handle, int* out_prompt_tokens, int* out_ctx_size) {
     if (!handle) return;
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->initialized) return;
-    if (out_prompt_tokens) *out_prompt_tokens = static_cast<int>(engine->pipeline.llm().last_stats().prompt_tokens);
-    if (out_ctx_size)      *out_ctx_size      = engine->pipeline.llm().context_size();
+
+    if (out_prompt_tokens) *out_prompt_tokens = engine->ctx_main_prompt_tokens;
+
+    if (out_ctx_size) {
+        if (engine->pipeline.using_metalrt()) {
+            int mrt_ctx = engine->pipeline.metalrt_llm().context_size();
+            if (mrt_ctx <= 0) {
+                int llm_ctx = engine->pipeline.llm().context_size();
+                mrt_ctx = llm_ctx > 0 ? llm_ctx : 4096;
+            }
+            *out_ctx_size = mrt_ctx;
+        } else {
+            *out_ctx_size = engine->pipeline.llm().context_size();
+        }
+    }
 }
 
 void rcli_get_last_tts_perf(RCLIHandle handle,
@@ -1580,10 +2813,25 @@ void rcli_get_last_tts_perf(RCLIHandle handle,
     if (!handle) return;
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->initialized) return;
-    auto& s = engine->pipeline.tts().last_stats();
-    if (out_samples)      *out_samples = static_cast<int>(s.num_samples);
-    if (out_synthesis_ms) *out_synthesis_ms = s.synthesis_us / 1000.0;
-    if (out_rtf)          *out_rtf = s.real_time_factor();
+
+    if (engine->pipeline.using_metalrt_tts()) {
+        auto& mrt_tts = engine->pipeline.metalrt_tts();
+        int num_samples = mrt_tts.last_num_samples();
+        double synth_ms = mrt_tts.last_synthesis_ms();
+        double audio_ms = (mrt_tts.sample_rate() > 0 && num_samples > 0)
+            ? (double)num_samples * 1000.0 / mrt_tts.sample_rate()
+            : 0.0;
+        double rtf = (audio_ms > 0) ? (synth_ms / audio_ms) : 0.0;
+
+        if (out_samples)      *out_samples = num_samples;
+        if (out_synthesis_ms) *out_synthesis_ms = synth_ms;
+        if (out_rtf)          *out_rtf = rtf;
+    } else {
+        auto& s = engine->pipeline.tts().last_stats();
+        if (out_samples)      *out_samples = static_cast<int>(s.num_samples);
+        if (out_synthesis_ms) *out_synthesis_ms = s.synthesis_us / 1000.0;
+        if (out_rtf)          *out_rtf = s.real_time_factor();
+    }
 }
 
 void rcli_get_last_stt_perf(RCLIHandle handle,

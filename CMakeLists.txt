@@ -5,7 +5,7 @@ if(POLICY CMP0177)
 endif()
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 
-project(rcli VERSION 0.1.5 LANGUAGES C CXX)
+project(rcli VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -95,6 +95,10 @@ add_library(rcli STATIC
     src/engines/model_profile.cpp
     src/engines/tts_engine.cpp
     src/engines/vad_engine.cpp
+    src/engines/metalrt_loader.cpp
+    src/engines/metalrt_engine.cpp
+    src/engines/metalrt_stt_engine.cpp
+    src/engines/metalrt_tts_engine.cpp
     src/audio/audio_io.cpp
     src/audio/mic_permission.mm
     src/pipeline/orchestrator.cpp
@@ -214,7 +218,7 @@ install(DIRECTORY ${CMAKE_BINARY_DIR}/lib/ DESTINATION ${CMAKE_INSTALL_LIBDIR}
     FILES_MATCHING PATTERN "*.dylib")
 
 # =============================================================================
-# CPack (produces rcli-0.1.0-Darwin.tar.gz)
+# CPack (produces rcli-<version>-Darwin.tar.gz)
 # =============================================================================
 set(CPACK_GENERATOR "TGZ")
 set(CPACK_PACKAGE_NAME "rcli")

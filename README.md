@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="assets/rcli_waveform.gif" alt="RCLI Waveform" width="700" />
+  <img src="assets/terminal.png" alt="RCLI" width="700" />
+  <br><br>
+  <a href="https://github.com/RunanywhereAI/runanywhere-sdks"><img src="https://img.shields.io/badge/RunAnywhere_Command_Line_Interface-FF4500?style=for-the-badge&labelColor=1a1a2e" alt="RunAnywhere Command Line Interface"></a>
   <br>
   <strong>Talk to your Mac, query your docs, no cloud required.</strong>
   <br><br>
@@ -243,6 +245,8 @@ Models are stored in `~/Library/RCLI/models/`. Active model selection persists a
 
 All measurements on Apple M3 Max (14-core CPU, 30-core GPU, 36 GB unified memory).
 
+### llama.cpp + sherpa-onnx (Open Source)
+
 | Component | Metric | Value |
 |-----------|--------|-------|
 | **STT** | Avg latency | 43.7 ms |
@@ -252,6 +256,19 @@ All measurements on Apple M3 Max (14-core CPU, 30-core GPU, 36 GB unified memory
 | **TTS** | Avg latency | 150.6 ms |
 | **RAG** | Hybrid retrieval | 3.82 ms |
 | **E2E** | Voice-in to audio-out | **131 ms** |
+
+### MetalRT (GPU Accelerated)
+
+| Component | Model | Metric | Value |
+|-----------|-------|--------|-------|
+| **LLM** | Qwen3 0.6B | Throughput | **550 tok/s** |
+| **LLM** | Qwen3 0.6B | TTFT | 8.9 ms |
+| **LLM** | Qwen3 4B | Throughput | **180 tok/s** |
+| **LLM** | LFM2.5 1.2B | Throughput | **486 tok/s** |
+| **STT** | Whisper Tiny | Latency (1.2s audio) | 46 ms |
+| **STT** | Whisper Medium | Latency (1.2s audio) | 233 ms |
+| **TTS** | Kokoro 82M | Latency | 265 ms |
+| **TTS** | Kokoro 82M | RTF | 0.10x |
 
 ```bash
 rcli bench                          # run all benchmarks
@@ -312,7 +329,58 @@ scripts/       setup.sh, download_models.sh, package.sh
 Formula/       Homebrew formula (self-hosted tap)
 ```
 
-## Build from Source
+## MetalRT GPU Engine
+
+MetalRT is a high-performance GPU inference engine built for Apple Silicon. It provides significant speedups over CPU inference for LLM, STT, and TTS.
+
+### MetalRT Benchmarks (Apple M3 Max)
+
+| Component | Metric | MetalRT | llama.cpp (CPU) |
+|-----------|--------|---------|-----------------|
+| **LLM** (Qwen3 0.6B) | Throughput | **550 tok/s** | ~250 tok/s |
+| **LLM** (Qwen3 0.6B) | TTFT | **8.9 ms** | ~22 ms |
+| **STT** (Whisper Tiny) | Latency (1.2s audio) | **46 ms** | ~44 ms |
+| **TTS** (Kokoro 82M) | Latency | **265 ms** | N/A |
+| **E2E** | Voice-in to audio-out | **~320 ms** | ~520 ms |
+
+### Install MetalRT
+
+MetalRT is automatically installed during `rcli setup`:
+
+```bash
+rcli setup          # choose "MetalRT" or "Both" engines
+```
+
+Or install separately:
+
+```bash
+rcli metalrt install    # download and install MetalRT engine
+rcli metalrt status     # verify installation
+```
+
+The MetalRT binary is downloaded from [metalrt-binaries](https://github.com/RunanywhereAI/metalrt-binaries/releases).
+
+### Supported MetalRT Models
+
+| Type | Models |
+|------|--------|
+| **LLM** | Qwen3 0.6B, Qwen3 4B, Llama 3.2 3B, LFM2.5 1.2B Instruct |
+| **STT** | Whisper Tiny, Whisper Small, Whisper Medium (MLX 4-bit) |
+| **TTS** | Kokoro 82M (bf16, 28 voices) |
+
+### Troubleshooting
+
+- **Gatekeeper warning** — The MetalRT binary is ad-hoc signed. If macOS blocks it: `sudo xattr -rd com.apple.quarantine ~/Library/RCLI/engines/libmetalrt.dylib`
+- **Code signature errors** — Re-sign: `codesign --force --sign - ~/Library/RCLI/engines/libmetalrt.dylib`
+- **MetalRT not found** — Run `rcli metalrt install` to download the latest release
+
+MetalRT is developed by [RunAnywhere, Inc.](https://runanywhere.ai) and distributed under a [proprietary license](https://github.com/RunanywhereAI/metalrt-binaries/blob/main/LICENSE). For licensing inquiries: founder@runanywhere.ai
+
+---
+
+## Build from Source (CPU-only, no MetalRT)
+
+For a CPU-only build using llama.cpp + sherpa-onnx (no MetalRT GPU engine):
 
 ```bash
 git clone https://github.com/RunanywhereAI/RCLI.git && cd RCLI
@@ -381,7 +449,9 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build inst
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+RCLI is open source under the [MIT License](LICENSE).
+
+MetalRT (the GPU inference engine) is proprietary software developed by RunAnywhere, Inc. The pre-built binary is distributed under a separate [proprietary license](https://github.com/RunanywhereAI/metalrt-binaries/blob/main/LICENSE). For commercial licensing or integration: founder@runanywhere.ai
 
 <p align="center">
   Powered by <a href="https://www.runanywhere.ai">RunAnywhere, Inc.</a>

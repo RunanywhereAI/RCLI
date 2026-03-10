@@ -1,6 +1,8 @@
 #include "pipeline/orchestrator.h"
 #include "pipeline/text_sanitizer.h"
+#include "pipeline/wake_word_detector.h"
 #include "core/base64.h"
+#include "core/personality.h"
 #include "core/log.h"
 #include <cstdio>
 #include <cmath>
@@ -78,6 +80,66 @@ bool Orchestrator::init(const PipelineConfig& config) {
         config.system_prompt, tools_.get_tool_definitions_json());
     llm_.cache_system_prompt(tool_system);
 
+    // --- MetalRT backend (optional) ---
+    if (config.llm_backend == LlmBackend::METALRT ||
+        config.llm_backend == LlmBackend::AUTO) {
+        if (!config.metalrt.model_dir.empty()) {
+            if (metalrt_.init(config.metalrt)) {
+                LOG_INFO("Pipeline", "MetalRT engine ready: %s on %s",
+                         metalrt_.model_name().c_str(), metalrt_.device_name().c_str());
+                // Cache system prompt + tool definitions into MetalRT KV cache.
+                // Subsequent generate_raw_continue calls skip re-prefilling this.
+                std::string mrt_system = metalrt_.profile().build_tool_system_prompt(
+                    config.system_prompt, tools_.get_tool_definitions_json());
+                std::string mrt_prefix = metalrt_.profile().build_system_prefix(mrt_system);
+                metalrt_.cache_system_prompt(mrt_prefix);
+                metalrt_.set_system_prompt(mrt_system);
+                if (config.llm_backend == LlmBackend::METALRT) {
+                    active_backend_ = LlmBackend::METALRT;
+                    LOG_INFO("Pipeline", "Active LLM backend: MetalRT");
+                }
+            } else if (config.llm_backend == LlmBackend::METALRT) {
+                LOG_ERROR("Pipeline", "MetalRT LLM init FAILED — refusing to fall back to CPU. "
+                          "Check that libmetalrt.dylib is installed and MetalRT models are present.");
+                return false;
+            }
+        }
+    }
+
+    // --- MetalRT STT (Whisper) and TTS (Kokoro) — required when MetalRT is active ---
+    if (active_backend_ == LlmBackend::METALRT) {
+        if (config.metalrt_stt.model_dir.empty()) {
+            LOG_ERROR("Pipeline", "MetalRT is active but Whisper STT model not installed. "
+                      "Install with: rcli setup --metalrt");
+            return false;
+        }
+        if (metalrt_stt_.init(config.metalrt_stt)) {
+            metalrt_stt_initialized_ = true;
+            LOG_INFO("Pipeline", "MetalRT Whisper STT ready");
+        } else {
+            LOG_ERROR("Pipeline", "MetalRT Whisper STT init FAILED — refusing to fall back to CPU. "
+                      "Check that Whisper model is installed at: %s",
+                      config.metalrt_stt.model_dir.c_str());
+            return false;
+        }
+
+        if (config.metalrt_tts.model_dir.empty()) {
+            LOG_ERROR("Pipeline", "MetalRT is active but Kokoro TTS model not installed. "
+                      "Install with: rcli setup --metalrt");
+            return false;
+        }
+        if (metalrt_tts_.init(config.metalrt_tts)) {
+            metalrt_tts_initialized_ = true;
+            LOG_INFO("Pipeline", "MetalRT Kokoro TTS ready (sample_rate=%d)",
+                     metalrt_tts_.sample_rate());
+        } else {
+            LOG_ERROR("Pipeline", "MetalRT Kokoro TTS init FAILED — refusing to fall back to CPU. "
+                      "Check that Kokoro model + voices are installed at: %s",
+                      config.metalrt_tts.model_dir.c_str());
+            return false;
+        }
+    }
+
     LOG_INFO("Pipeline", "Ready");
     LOG_DEBUG("Pool", "Final usage: %.1fMB / %.1fMB (%.1f%%)",
             pool_->used_bytes() / (1024.0*1024.0),
@@ -123,11 +185,13 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
     int64_t t_stt_start = now_us();
     std::string stt_text;
 
-    if (offline_stt_.is_initialized()) {
+    if (using_metalrt_stt()) {
+        stt_text = metalrt_stt_.transcribe(stt_audio, stt_audio_len);
+        timings_.stt_latency_us = metalrt_stt_.last_latency_us();
+    } else if (offline_stt_.is_initialized()) {
         stt_text = offline_stt_.transcribe(stt_audio, stt_audio_len);
         timings_.stt_latency_us = offline_stt_.last_latency_us();
     } else {
-        // Fallback: streaming Zipformer
         stt_.set_callback([&](const TextSegment& seg) {
             if (seg.is_final || !seg.text.empty()) {
                 stt_text = seg.text;
@@ -189,7 +253,9 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
                 sentence = std::move(tts_queue.front());
                 tts_queue.erase(tts_queue.begin());
             }
-            auto audio = tts_.synthesize(sentence);
+            auto audio = using_metalrt_tts()
+                ? metalrt_tts_.synthesize(sentence)
+                : tts_.synthesize(sentence);
             std::lock_guard<std::mutex> lock(tts_queue_mutex);
             all_tts_audio.insert(all_tts_audio.end(), audio.begin(), audio.end());
         }
@@ -210,33 +276,18 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
     };
 
     std::string llm_response;
-    fprintf(stderr, "[Pipeline] LLM-driven routing (query: \"%s\")\n", stt_text.c_str());
+    fprintf(stderr, "[Pipeline] LLM-driven routing (query: \"%s\") [%s]\n",
+            stt_text.c_str(), using_metalrt() ? "MetalRT" : "llama.cpp");
 
     // Speculative first-token detection: buffer initial tokens to detect tool calls.
-    // Adaptive: extends the window if the buffer ends with a partial tool call tag prefix.
+    const auto& active_profile = using_metalrt() ? metalrt_.profile() : llm_.profile();
+    const std::string& tc_start = active_profile.tool_call_start;
+
     std::string token_buffer;
     bool detected_tool_call = false;
-    constexpr int SPECULATIVE_TOKENS = 15;
+    constexpr int SPECULATIVE_TOKENS = 30;
     int tokens_buffered = 0;
-    SentenceDetector detector(queue_sentence, 3, 25, 7);
-
-    // Partial prefixes of known tool_call_start tags that could still become a full match
-    const std::string& tc_start = llm_.profile().tool_call_start;
-
-    // Inject tool focus hint into user turn to steer model without invalidating KV cache
-    std::string tool_hint = tools_.build_tool_hint(stt_text);
-    std::string hinted_text = tool_hint.empty() ? stt_text : (tool_hint + "\n" + stt_text);
-
-    std::string prompt;
-    if (llm_.has_prompt_cache()) {
-        prompt = llm_.profile().build_user_turn(hinted_text);
-    } else {
-        // Build tool-aware system prompt only when KV cache isn't active
-        std::string tool_defs = tools_.get_tool_definitions_json();
-        std::string tool_system = llm_.profile().build_tool_system_prompt(
-            config_.system_prompt, tool_defs);
-        prompt = llm_.build_chat_prompt(tool_system, {}, hinted_text);
-    }
+    SentenceDetector detector(queue_sentence, 6, 35, 20);
 
     auto speculative_callback = [&](const TokenOutput& tok) {
         if (detected_tool_call) return;
@@ -247,8 +298,6 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
                 detected_tool_call = true;
             }
         } else if (!detected_tool_call) {
-            // Adaptive extension: if the buffer tail looks like the start of a tool tag,
-            // keep buffering instead of flushing (e.g. buffer ends with "<tool" or "<|tool")
             bool partial_match = false;
             if (!tc_start.empty()) {
                 for (size_t len = 1; len < tc_start.size() && len <= token_buffer.size(); len++) {
@@ -258,10 +307,7 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
                     }
                 }
             }
-            if (partial_match) {
-                return;
-            }
-            // No partial match -- flush buffer and stream to TTS
+            if (partial_match) return;
             detector.feed(token_buffer);
             token_buffer.clear();
         }
@@ -270,15 +316,43 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
         }
     };
 
-    if (llm_.has_prompt_cache()) {
-        llm_response = llm_.generate_with_cached_prompt(prompt, speculative_callback);
+    if (using_metalrt()) {
+        std::string hint = tools_.build_tool_hint(stt_text);
+        std::string hinted = hint.empty() ? stt_text : (hint + "\n" + stt_text);
+        if (metalrt_.has_prompt_cache()) {
+            std::string user_turn = metalrt_.profile().build_user_turn(hinted);
+            llm_response = metalrt_.generate_raw_continue(user_turn, speculative_callback);
+        } else {
+            std::string tool_defs = tools_.get_tool_definitions_json();
+            std::string tool_system = metalrt_.profile().build_tool_system_prompt(
+                config_.system_prompt, tool_defs);
+            std::string full_prompt = metalrt_.profile().build_chat_prompt(tool_system, {}, hinted);
+            llm_response = metalrt_.generate_raw(full_prompt, speculative_callback);
+        }
     } else {
-        llm_response = llm_.generate(prompt, speculative_callback);
+        std::string tool_hint = tools_.build_tool_hint(stt_text);
+        std::string hinted_text = tool_hint.empty() ? stt_text : (tool_hint + "\n" + stt_text);
+
+        std::string prompt;
+        if (llm_.has_prompt_cache()) {
+            prompt = llm_.profile().build_user_turn(hinted_text);
+        } else {
+            std::string tool_defs = tools_.get_tool_definitions_json();
+            std::string tool_system = llm_.profile().build_tool_system_prompt(
+                config_.system_prompt, tool_defs);
+            prompt = llm_.build_chat_prompt(tool_system, {}, hinted_text);
+        }
+
+        if (llm_.has_prompt_cache()) {
+            llm_response = llm_.generate_with_cached_prompt(prompt, speculative_callback);
+        } else {
+            llm_response = llm_.generate(prompt, speculative_callback);
+        }
     }
 
     if (detected_tool_call) {
-        // Tool mode: parse and execute tool calls
-        auto tool_calls = tools_.parse_tool_calls(llm_response);
+        auto tool_calls = active_profile.parse_tool_calls(llm_response);
+        if (tool_calls.empty()) tool_calls = tools_.parse_tool_calls(llm_response);
         if (!tool_calls.empty()) {
             fprintf(stderr, "[Pipeline] Detected %zu tool call(s), executing...\n", tool_calls.size());
             auto results = tools_.execute_all(tool_calls);
@@ -288,22 +362,28 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
             }
 
             std::string formatted_results = tools_.format_results(results);
-            std::string continuation = llm_.build_tool_continuation_prompt(
-                config_.system_prompt, stt_text, llm_response, formatted_results);
+            SentenceDetector detector2(queue_sentence, 6, 35, 20);
 
-            SentenceDetector detector2(queue_sentence, 3, 25, 7);
-            llm_response = llm_.generate(continuation, [&](const TokenOutput& tok) {
-                detector2.feed(tok.text);
-            });
+            if (using_metalrt()) {
+                std::string sum_sys = config_.system_prompt + " Do NOT output JSON.";
+                std::string sum_msg = "Tool results: " + formatted_results + "\nSummarize briefly.";
+                std::string sum_prompt = metalrt_.profile().build_chat_prompt(sum_sys, {}, sum_msg);
+                llm_response = metalrt_.generate_raw(sum_prompt,
+                    [&](const TokenOutput& tok) { detector2.feed(tok.text); });
+            } else {
+                std::string continuation = llm_.build_tool_continuation_prompt(
+                    config_.system_prompt, stt_text, llm_response, formatted_results);
+                llm_response = llm_.generate(continuation, [&](const TokenOutput& tok) {
+                    detector2.feed(tok.text);
+                });
+            }
             detector2.flush();
             fprintf(stderr, "[Pipeline] Second pass: \"%s\"\n", llm_response.c_str());
         } else {
-            // False positive: feed accumulated text to TTS
             detector.feed(sanitize_for_tts(llm_response));
             detector.flush();
         }
     } else {
-        // Stream mode: remaining tokens already fed via callback, just flush
         if (!token_buffer.empty()) {
             detector.feed(token_buffer);
         }
@@ -318,32 +398,11 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
     tts_queue_cv.notify_one();
     tts_worker.join();
 
-    timings_.llm_first_token_us = llm_.last_stats().first_token_us;
+    const auto& llm_stats = using_metalrt() ? metalrt_.last_stats() : llm_.last_stats();
+    timings_.llm_first_token_us = llm_stats.first_token_us;
     timings_.llm_total_us = now_us() - t_llm_start;
 
-    // Strip <think>...</think> from response for logging/parsing
-    std::string clean_response = llm_response;
-    {
-        size_t ts, te;
-        while ((ts = clean_response.find("<think>")) != std::string::npos) {
-            te = clean_response.find("</think>", ts);
-            if (te != std::string::npos) {
-                clean_response.erase(ts, te - ts + 8);
-            } else {
-                // Unclosed think block — remove everything from <think> onward
-                clean_response.erase(ts);
-                break;
-            }
-        }
-        // Trim leading/trailing whitespace
-        size_t f = clean_response.find_first_not_of(" \n\r\t");
-        size_t l = clean_response.find_last_not_of(" \n\r\t");
-        if (f != std::string::npos) {
-            clean_response = clean_response.substr(f, l - f + 1);
-        } else {
-            clean_response.clear();
-        }
-    }
+    std::string clean_response = active_profile.clean_output(llm_response);
 
     fprintf(stderr, "[Pipeline] LLM response: \"%s\"\n", clean_response.c_str());
     fprintf(stderr, "[Pipeline] LLM stats: first_token=%.1fms, total=%.1fms, %.1f tok/s\n",
@@ -355,17 +414,22 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
     set_state(PipelineState::SPEAKING);
 
     if (all_tts_audio.empty() && !clean_response.empty()) {
-        auto audio = tts_.synthesize(sanitize_for_tts(clean_response));
+        auto audio = using_metalrt_tts()
+            ? metalrt_tts_.synthesize(sanitize_for_tts(clean_response))
+            : tts_.synthesize(sanitize_for_tts(clean_response));
         all_tts_audio = std::move(audio);
     }
 
     timings_.tts_first_sentence_us = (first_sentence_time > 0) ?
         (first_sentence_time - t_llm_start) : 0;
 
+    int out_sample_rate = using_metalrt_tts()
+        ? metalrt_tts_.sample_rate() : tts_.sample_rate();
+
     // 5. Save output WAV
     if (!all_tts_audio.empty() && !output_wav.empty()) {
         AudioIO::save_wav(output_wav, all_tts_audio.data(),
-                         all_tts_audio.size(), tts_.sample_rate());
+                         all_tts_audio.size(), out_sample_rate);
     }
 
     timings_.total_us = now_us() - t_pipeline_start;
@@ -382,7 +446,7 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
     fprintf(stderr, "  TTS first sentence: %6.1f ms\n", timings_.tts_first_sentence_us / 1000.0);
     fprintf(stderr, "  E2E latency:        %6.1f ms\n", timings_.e2e_latency_us / 1000.0);
     fprintf(stderr, "  Total pipeline:     %6.1f ms\n", timings_.total_us / 1000.0);
-    fprintf(stderr, "  LLM throughput:     %6.1f tok/s\n", llm_.last_stats().gen_tps());
+    fprintf(stderr, "  LLM throughput:     %6.1f tok/s\n", llm_stats.gen_tps());
     fprintf(stderr, "  Memory pool:        %6.1f MB used\n", pool_->high_water_mark() / (1024.0*1024.0));
 
     return true;
@@ -427,7 +491,10 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
     int64_t t_stt_start = now_us();
     std::string stt_text;
 
-    if (offline_stt_.is_initialized()) {
+    if (using_metalrt_stt()) {
+        stt_text = metalrt_stt_.transcribe(stt_audio, stt_audio_len);
+        timings_.stt_latency_us = metalrt_stt_.last_latency_us();
+    } else if (offline_stt_.is_initialized()) {
         stt_text = offline_stt_.transcribe(stt_audio, stt_audio_len);
         timings_.stt_latency_us = offline_stt_.last_latency_us();
     } else {
@@ -497,7 +564,9 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
                 tts_queue.erase(tts_queue.begin());
             }
 
-            auto audio = tts_.synthesize(sentence);
+            auto audio = using_metalrt_tts()
+                ? metalrt_tts_.synthesize(sentence)
+                : tts_.synthesize(sentence);
             if (!audio.empty()) {
                 const uint8_t* raw = reinterpret_cast<const uint8_t*>(audio.data());
                 size_t raw_len = audio.size() * sizeof(float);
@@ -524,35 +593,23 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
     };
 
     std::string llm_response;
-    fprintf(stderr, "[Pipeline] LLM-driven routing\n");
+    fprintf(stderr, "[Pipeline] LLM-driven routing [%s]\n", using_metalrt() ? "MetalRT" : "llama.cpp");
 
-    // Speculative first-token detection
+    const auto& stream_profile = using_metalrt() ? metalrt_.profile() : llm_.profile();
+    const std::string& stream_tc_start = stream_profile.tool_call_start;
+
     std::string token_buffer;
     bool detected_tool_call = false;
-    constexpr int SPECULATIVE_TOKENS = 15;
+    constexpr int SPECULATIVE_TOKENS = 30;
     int tokens_buffered = 0;
-    SentenceDetector detector(queue_sentence, 3, 25, 7);
-
-    // Inject tool focus hint into user turn to steer model without invalidating KV cache
-    std::string stream_hint = tools_.build_tool_hint(stt_text);
-    std::string hinted_stream = stream_hint.empty() ? stt_text : (stream_hint + "\n" + stt_text);
-
-    std::string prompt;
-    if (llm_.has_prompt_cache()) {
-        prompt = llm_.profile().build_user_turn(hinted_stream);
-    } else {
-        std::string tool_defs = tools_.get_tool_definitions_json();
-        std::string tool_system = llm_.profile().build_tool_system_prompt(
-            config_.system_prompt, tool_defs);
-        prompt = llm_.build_chat_prompt(tool_system, {}, hinted_stream);
-    }
+    SentenceDetector detector(queue_sentence, 6, 35, 20);
 
     auto speculative_callback = [&](const TokenOutput& tok) {
         if (detected_tool_call) return;
         token_buffer += tok.text;
         tokens_buffered++;
         if (tokens_buffered <= SPECULATIVE_TOKENS) {
-            if (token_buffer.find(llm_.profile().tool_call_start) != std::string::npos) {
+            if (token_buffer.find(stream_tc_start) != std::string::npos) {
                 detected_tool_call = true;
             }
         } else if (!detected_tool_call) {
@@ -564,14 +621,43 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
         }
     };
 
-    if (llm_.has_prompt_cache()) {
-        llm_response = llm_.generate_with_cached_prompt(prompt, speculative_callback);
+    if (using_metalrt()) {
+        std::string s_hint = tools_.build_tool_hint(stt_text);
+        std::string s_hinted = s_hint.empty() ? stt_text : (s_hint + "\n" + stt_text);
+        if (metalrt_.has_prompt_cache()) {
+            std::string user_turn = metalrt_.profile().build_user_turn(s_hinted);
+            llm_response = metalrt_.generate_raw_continue(user_turn, speculative_callback);
+        } else {
+            std::string s_tool_defs = tools_.get_tool_definitions_json();
+            std::string s_tool_system = metalrt_.profile().build_tool_system_prompt(
+                config_.system_prompt, s_tool_defs);
+            std::string s_full = metalrt_.profile().build_chat_prompt(s_tool_system, {}, s_hinted);
+            llm_response = metalrt_.generate_raw(s_full, speculative_callback);
+        }
     } else {
-        llm_response = llm_.generate(prompt, speculative_callback);
+        std::string stream_hint = tools_.build_tool_hint(stt_text);
+        std::string hinted_stream = stream_hint.empty() ? stt_text : (stream_hint + "\n" + stt_text);
+
+        std::string prompt;
+        if (llm_.has_prompt_cache()) {
+            prompt = llm_.profile().build_user_turn(hinted_stream);
+        } else {
+            std::string tool_defs = tools_.get_tool_definitions_json();
+            std::string tool_system = llm_.profile().build_tool_system_prompt(
+                config_.system_prompt, tool_defs);
+            prompt = llm_.build_chat_prompt(tool_system, {}, hinted_stream);
+        }
+
+        if (llm_.has_prompt_cache()) {
+            llm_response = llm_.generate_with_cached_prompt(prompt, speculative_callback);
+        } else {
+            llm_response = llm_.generate(prompt, speculative_callback);
+        }
     }
 
     if (detected_tool_call) {
-        auto tool_calls = tools_.parse_tool_calls(llm_response);
+        auto tool_calls = stream_profile.parse_tool_calls(llm_response);
+        if (tool_calls.empty()) tool_calls = tools_.parse_tool_calls(llm_response);
         if (!tool_calls.empty()) {
             fprintf(stderr, "[Pipeline] Detected %zu tool call(s), executing...\n", tool_calls.size());
             auto results = tools_.execute_all(tool_calls);
@@ -584,15 +670,22 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
             }
 
             std::string formatted_results = tools_.format_results(results);
-            std::string continuation = llm_.build_tool_continuation_prompt(
-                config_.system_prompt, stt_text, llm_response, formatted_results);
+            SentenceDetector detector2(queue_sentence, 6, 35, 20);
 
-            llm_.clear_kv_cache();
-
-            SentenceDetector detector2(queue_sentence, 3, 25, 7);
-            llm_response = llm_.generate(continuation, [&](const TokenOutput& tok) {
-                detector2.feed(tok.text);
-            });
+            if (using_metalrt()) {
+                std::string s2_sys = config_.system_prompt + " Do NOT output JSON.";
+                std::string s2_msg = "Tool results: " + formatted_results + "\nSummarize briefly.";
+                std::string s2_prompt = metalrt_.profile().build_chat_prompt(s2_sys, {}, s2_msg);
+                llm_response = metalrt_.generate_raw(s2_prompt,
+                    [&](const TokenOutput& tok) { detector2.feed(tok.text); });
+            } else {
+                std::string continuation = llm_.build_tool_continuation_prompt(
+                    config_.system_prompt, stt_text, llm_response, formatted_results);
+                llm_.clear_kv_cache();
+                llm_response = llm_.generate(continuation, [&](const TokenOutput& tok) {
+                    detector2.feed(tok.text);
+                });
+            }
             detector2.flush();
         } else {
             detector.feed(sanitize_for_tts(llm_response));
@@ -613,34 +706,17 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
     tts_queue_cv.notify_one();
     tts_worker.join();
 
-    timings_.llm_first_token_us = llm_.last_stats().first_token_us;
+    const auto& stream_stats = using_metalrt() ? metalrt_.last_stats() : llm_.last_stats();
+    timings_.llm_first_token_us = stream_stats.first_token_us;
     timings_.llm_total_us = now_us() - t_llm_start;
 
-    // Strip <think> tags for clean response
-    std::string clean_response = llm_response;
-    {
-        size_t ts, te;
-        while ((ts = clean_response.find("<think>")) != std::string::npos) {
-            te = clean_response.find("</think>", ts);
-            if (te != std::string::npos) {
-                clean_response.erase(ts, te - ts + 8);
-            } else {
-                clean_response.erase(ts);
-                break;
-            }
-        }
-        size_t f = clean_response.find_first_not_of(" \n\r\t");
-        size_t l = clean_response.find_last_not_of(" \n\r\t");
-        if (f != std::string::npos) {
-            clean_response = clean_response.substr(f, l - f + 1);
-        } else {
-            clean_response.clear();
-        }
-    }
+    std::string clean_response = stream_profile.clean_output(llm_response);
 
     // If no audio was streamed but we have text, synthesize the clean response as fallback
     if (first_sentence_time == 0 && !clean_response.empty()) {
-        auto audio = tts_.synthesize(sanitize_for_tts(clean_response));
+        auto audio = using_metalrt_tts()
+            ? metalrt_tts_.synthesize(sanitize_for_tts(clean_response))
+            : tts_.synthesize(sanitize_for_tts(clean_response));
         if (!audio.empty()) {
             const uint8_t* raw = reinterpret_cast<const uint8_t*>(audio.data());
             size_t raw_len = audio.size() * sizeof(float);
@@ -668,7 +744,7 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
                 timings_.llm_total_us / 1000.0,
                 timings_.tts_first_sentence_us / 1000.0,
                 timings_.e2e_latency_us / 1000.0,
-                llm_.last_stats().gen_tps(),
+                stream_stats.gen_tps(),
                 timings_.total_us / 1000.0);
         fprintf(stdout, "STREAM_END\n");
     }
@@ -682,7 +758,7 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
     fprintf(stderr, "  TTS first sentence: %6.1f ms\n", timings_.tts_first_sentence_us / 1000.0);
     fprintf(stderr, "  E2E latency:        %6.1f ms\n", timings_.e2e_latency_us / 1000.0);
     fprintf(stderr, "  Total pipeline:     %6.1f ms\n", timings_.total_us / 1000.0);
-    fprintf(stderr, "  LLM throughput:     %6.1f tok/s\n", llm_.last_stats().gen_tps());
+    fprintf(stderr, "  LLM throughput:     %6.1f tok/s\n", stream_stats.gen_tps());
 
     return true;
 }
@@ -748,7 +824,9 @@ std::string Orchestrator::stop_capture_and_transcribe() {
     set_state(PipelineState::PROCESSING);
     int64_t t_stt_start = now_us();
     std::string text;
-    if (offline_stt_.is_initialized()) {
+    if (using_metalrt_stt()) {
+        text = metalrt_stt_.transcribe(audio_buf.data(), static_cast<int>(audio_buf.size()));
+    } else if (offline_stt_.is_initialized()) {
         text = offline_stt_.transcribe(audio_buf.data(), static_cast<int>(audio_buf.size()));
     } else {
         stt_.reset();
@@ -769,6 +847,55 @@ std::string Orchestrator::stop_capture_and_transcribe() {
     return text.substr(first, last - first + 1);
 }
 
+void Orchestrator::check_barge_in(const float* audio, int num_samples) {
+    if (!barge_in_enabled_.load(std::memory_order_relaxed)) return;
+
+    auto cur_state = state_.load(std::memory_order_relaxed);
+    if (cur_state != PipelineState::SPEAKING) return;
+
+    // Compute mic RMS
+    float sum_sq = 0.0f;
+    for (int i = 0; i < num_samples; ++i) sum_sq += audio[i] * audio[i];
+    float mic_rms = std::sqrtf(sum_sq / (float)num_samples);
+
+    // Get playback RMS for comparison
+    float pb_rms = audio_.playback_rms();
+
+    // Barge-in requires:
+    // 1. VAD detects speech (with normal threshold — audio energy gating handles echo)
+    // 2. Mic energy significantly exceeds playback energy (not just hearing ourselves)
+    // 3. Absolute mic energy above a floor (prevents triggering on silence)
+    constexpr float BARGE_IN_ENERGY_FLOOR = 0.02f;   // higher than normal 0.005
+    constexpr float BARGE_IN_ENERGY_RATIO = 2.5f;     // mic must be 2.5x louder than speaker
+
+    bool vad_speech = vad_.is_initialized() && vad_.is_speech();
+    bool strong_mic = (mic_rms > BARGE_IN_ENERGY_FLOOR);
+    bool louder_than_speaker = (pb_rms < 0.001f) || (mic_rms > pb_rms * BARGE_IN_ENERGY_RATIO);
+
+    if (vad_speech && strong_mic && louder_than_speaker) {
+        LOG_DEBUG("BargeIn", "TRIGGERED: mic_rms=%.4f, pb_rms=%.4f, ratio=%.1f",
+                  mic_rms, pb_rms, pb_rms > 0 ? mic_rms / pb_rms : 999.0f);
+
+        // Signal barge-in
+        barge_in_triggered_.store(true, std::memory_order_release);
+        tts_cancel_flag_.store(true, std::memory_order_release);
+
+        // Clear playback buffer to stop TTS audio immediately
+        playback_rb_->clear();
+
+        // Cancel in-flight LLM generation
+        if (using_metalrt()) metalrt_.cancel();
+        else llm_.cancel();
+
+        set_state(PipelineState::BARGE_IN);
+
+        if (barge_in_cb_) {
+            std::lock_guard<std::mutex> lock(barge_in_mutex_);
+            barge_in_cb_(interrupted_response_, interrupted_chars_spoken_);
+        }
+    }
+}
+
 void Orchestrator::stt_thread_fn() {
     pthread_setname_np("rastack.stt");
 
@@ -777,7 +904,126 @@ void Orchestrator::stt_thread_fn() {
 
     constexpr float ENERGY_FLOOR = 0.005f;
 
+    // Barge-in: consecutive speech frames counter (debounce)
+    int barge_in_speech_frames = 0;
+    constexpr int BARGE_IN_DEBOUNCE = 3; // need 3 consecutive speech frames (~30ms)
+
+    // Wake word detector for voice mode
+    WakeWordDetector wake_detector;
+    if (voice_mode_active_ && !wake_phrase_.empty()) {
+        wake_detector.set_phrase(wake_phrase_);
+        LOG_INFO("VoiceMode", "Wake word detector initialized: \"%s\"", wake_phrase_.c_str());
+    }
+
+    // (LISTENING is now fixed-duration, no timeout needed)
+
+    // --- Voice mode: periodic Whisper wake word detection ---
+    // Accumulate audio, run Whisper every ~1.5s, check for "friday". No VAD gate.
+    std::vector<float> voice_audio_window;
+    constexpr size_t VOICE_WINDOW_MAX = 16000 * 3;      // 3 seconds at 16kHz
+    constexpr size_t VOICE_CHECK_INTERVAL = 16000 * 1.5; // run Whisper every 1.5s
+    size_t voice_samples_since_last_check = 0;
+
+    FILE* vdbg = nullptr;
+#ifdef RCLI_DEBUG
+    if (voice_mode_active_) {
+        vdbg = fopen("/tmp/rcli_voice_debug.log", "w");
+        if (vdbg) {
+            fprintf(vdbg, "=== Voice mode started (Whisper wake word), phrase=\"%s\" ===\n",
+                    wake_phrase_.c_str());
+            fprintf(vdbg, "offline_stt_init=%d, metalrt_stt_init=%d, vad_init=%d\n",
+                    offline_stt_.is_initialized() ? 1 : 0,
+                    metalrt_stt_initialized_ ? 1 : 0,
+                    vad_.is_initialized() ? 1 : 0);
+            fflush(vdbg);
+        }
+    }
+#endif
+    if (voice_mode_active_) {
+        voice_audio_window.reserve(VOICE_WINDOW_MAX);
+    }
+
+    int debug_tick_count = 0;
+    int debug_feed_count = 0;
+    int debug_result_count = 0;
+
+    // Voice mode LISTENING: record until silence or max duration
+    std::vector<float> voice_command_buf;
+    if (voice_mode_active_) {
+        voice_command_buf.reserve(16000 * 10);
+    }
+    constexpr size_t VOICE_CMD_MIN = 16000 * 2;   // minimum 2s before checking silence
+    constexpr size_t VOICE_CMD_MAX = 16000 * 8;   // hard max 8s
+    constexpr float  VOICE_CMD_SILENCE_RMS = 0.015f; // silence threshold (above ambient)
+    int voice_cmd_silence_chunks = 0;              // consecutive quiet chunks
+    constexpr int VOICE_CMD_SILENCE_NEEDED = 15;   // 15 chunks × 10ms = 150ms × 10 = 1.5s of quiet
+
     while (live_running_.load(std::memory_order_relaxed)) {
+        auto cur_state = state_.load(std::memory_order_relaxed);
+
+        // --- Voice mode LISTENING: transcribe when silence detected or max reached ---
+        if (voice_mode_active_ && cur_state == PipelineState::LISTENING) {
+            bool should_transcribe = false;
+
+            // Hard max: always transcribe at 8s
+            if (voice_command_buf.size() >= VOICE_CMD_MAX) {
+                should_transcribe = true;
+                if (vdbg) { fprintf(vdbg, "[cmd] Max 8s reached\n"); fflush(vdbg); }
+            }
+            // After minimum 2s, check for silence (1.5s of quiet chunks)
+            else if (voice_command_buf.size() >= VOICE_CMD_MIN &&
+                     voice_cmd_silence_chunks >= VOICE_CMD_SILENCE_NEEDED) {
+                should_transcribe = true;
+                if (vdbg) { fprintf(vdbg, "[cmd] Silence detected after %.1fs\n",
+                        voice_command_buf.size() / 16000.0f); fflush(vdbg); }
+            }
+
+            if (should_transcribe) {
+                if (vdbg) {
+                    fprintf(vdbg, "[cmd] Transcribing %zu samples (%.1fs)...\n",
+                            voice_command_buf.size(), voice_command_buf.size() / 16000.0f);
+                    fflush(vdbg);
+                }
+
+                std::string command;
+                if (metalrt_stt_initialized_) {
+                    command = metalrt_stt_.transcribe(
+                        voice_command_buf.data(),
+                        (int)voice_command_buf.size(), 16000);
+                } else if (offline_stt_.is_initialized()) {
+                    command = offline_stt_.transcribe(
+                        voice_command_buf.data(),
+                        (int)voice_command_buf.size());
+                }
+
+                if (vdbg) {
+                    fprintf(vdbg, "[cmd] Result: \"%s\"\n", command.c_str());
+                    fflush(vdbg);
+                }
+
+                voice_command_buf.clear();
+                voice_cmd_silence_chunks = 0;
+
+                // Strip wake word if user repeated it
+                if (!command.empty() && wake_detector.check(command))
+                    command = wake_detector.strip_wake_word(command);
+
+                if (!command.empty()) {
+                    set_state(PipelineState::PROCESSING);
+                    {
+                        std::lock_guard<std::mutex> lock(text_mutex_);
+                        pending_text_ = command;
+                        text_ready_ = true;
+                    }
+                    text_cv_.notify_one();
+                } else {
+                    if (vdbg) { fprintf(vdbg, "[cmd] Empty, back to VOICE_IDLE\n"); fflush(vdbg); }
+                    set_state(PipelineState::VOICE_IDLE);
+                }
+                continue;
+            }
+        }
+
         size_t avail = capture_rb_->available_read();
         size_t to_read = std::min(avail, (size_t)1600);
         if (to_read > 0) {
@@ -793,39 +1039,279 @@ void Orchestrator::stt_thread_fn() {
                 vad_.feed_audio(chunk_buf.data(), (int)to_read);
             }
 
-            // Only feed audio to STT when there's actual energy above the
-            // noise floor.  This prevents background noise from producing
-            // phantom transcripts while still allowing push-to-talk speech
-            // through (real speech easily exceeds the floor).
-            bool has_energy = (rms > ENERGY_FLOOR);
             bool vad_speech = vad_.is_initialized() && vad_.is_speech();
-            if (has_energy || vad_speech) {
-                stt_.feed_audio(chunk_buf.data(), (int)to_read);
+
+            // --- VOICE_IDLE: periodic Whisper wake word detection (no VAD gate) ---
+            if (cur_state == PipelineState::VOICE_IDLE) {
+                debug_feed_count++;
+
+                // Accumulate audio
+                voice_audio_window.insert(voice_audio_window.end(),
+                    chunk_buf.data(), chunk_buf.data() + to_read);
+                voice_samples_since_last_check += to_read;
+
+                // Trim to max 3s (keep most recent)
+                if (voice_audio_window.size() > VOICE_WINDOW_MAX) {
+                    size_t excess = voice_audio_window.size() - VOICE_WINDOW_MAX;
+                    voice_audio_window.erase(voice_audio_window.begin(),
+                        voice_audio_window.begin() + excess);
+                }
+
+                // Run Whisper every 1.5s — but only if window has real speech energy
+                if (voice_samples_since_last_check >= VOICE_CHECK_INTERVAL) {
+                    voice_samples_since_last_check = 0;
+
+                    // Compute RMS energy of the window to skip silence/ambient noise
+                    float win_sum_sq = 0.0f;
+                    for (size_t i = 0; i < voice_audio_window.size(); ++i)
+                        win_sum_sq += voice_audio_window[i] * voice_audio_window[i];
+                    float win_rms = std::sqrtf(win_sum_sq / (float)voice_audio_window.size());
+
+                    // Skip Whisper if window is just ambient noise (< 0.01 RMS)
+                    constexpr float WAKE_ENERGY_THRESHOLD = 0.01f;
+                    if (win_rms < WAKE_ENERGY_THRESHOLD) {
+                        if (vdbg && (debug_tick_count % 200) < 15) {
+                            fprintf(vdbg, "[wake] skip (rms=%.4f < %.3f)\n", win_rms, WAKE_ENERGY_THRESHOLD);
+                            fflush(vdbg);
+                        }
+                    } else {
+                        std::string transcript;
+                        if (metalrt_stt_initialized_) {
+                            transcript = metalrt_stt_.transcribe(
+                                voice_audio_window.data(),
+                                (int)voice_audio_window.size(), 16000);
+                        } else if (offline_stt_.is_initialized()) {
+                            transcript = offline_stt_.transcribe(
+                                voice_audio_window.data(),
+                                (int)voice_audio_window.size());
+                        }
+
+                        debug_result_count++;
+
+                        // Filter out Whisper hallucinations: parenthesized noise descriptions
+                        // like "(soft music)", "(fart)", "(scribbling)", "[BLANK_AUDIO]"
+                        if (!transcript.empty()) {
+                            // Trim leading whitespace
+                            auto start = transcript.find_first_not_of(" \t");
+                            if (start != std::string::npos)
+                                transcript = transcript.substr(start);
+                            // Drop if it starts with ( or [ — these are hallucinations
+                            if (!transcript.empty() && (transcript[0] == '(' || transcript[0] == '['))
+                                transcript.clear();
+                        }
+
+                        if (vdbg) {
+                            fprintf(vdbg, "[wake] rms=%.4f samples=%zu transcript=\"%s\"\n",
+                                    win_rms, voice_audio_window.size(), transcript.c_str());
+                            fflush(vdbg);
+                        }
+
+                        if (!transcript.empty() && wake_detector.check(transcript)) {
+                            std::string command = wake_detector.strip_wake_word(transcript);
+
+                            // Filter punctuation-only commands ("!", "?", etc.)
+                            bool has_alpha = false;
+                            for (char c : command) {
+                                if (std::isalpha(static_cast<unsigned char>(c))) {
+                                    has_alpha = true;
+                                    break;
+                                }
+                            }
+                            if (!has_alpha) command.clear();
+
+                            if (vdbg) {
+                                fprintf(vdbg, "[wake] DETECTED! command=\"%s\"\n", command.c_str());
+                                fflush(vdbg);
+                            }
+
+                            voice_audio_window.clear();
+                            voice_samples_since_last_check = 0;
+
+                            if (!command.empty()) {
+                                set_state(PipelineState::PROCESSING);
+                                {
+                                    std::lock_guard<std::mutex> lock(text_mutex_);
+                                    pending_text_ = command;
+                                    text_ready_ = true;
+                                }
+                                text_cv_.notify_one();
+                            } else {
+                                voice_command_buf.clear();
+                                voice_cmd_silence_chunks = 0;
+                                set_state(PipelineState::LISTENING);
+                            }
+                        }
+                    }
+                }
+
+                goto skip_stt_feed;
+            }
+
+            // --- VOICE LISTENING: accumulate audio + track silence ---
+            if (voice_mode_active_ && cur_state == PipelineState::LISTENING) {
+                voice_command_buf.insert(voice_command_buf.end(),
+                    chunk_buf.data(), chunk_buf.data() + to_read);
+                // Track consecutive quiet chunks for silence detection
+                if (rms < VOICE_CMD_SILENCE_RMS) {
+                    voice_cmd_silence_chunks++;
+                } else {
+                    voice_cmd_silence_chunks = 0;
+                }
+                goto skip_stt_feed;
+            }
+
+            // --- Voice mode: wake word interruption during SPEAKING/PROCESSING ---
+            if (voice_mode_active_ &&
+                (cur_state == PipelineState::SPEAKING || cur_state == PipelineState::PROCESSING)) {
+                // Accumulate audio for wake word detection while speaking
+                voice_audio_window.insert(voice_audio_window.end(),
+                    chunk_buf.data(), chunk_buf.data() + to_read);
+                voice_samples_since_last_check += to_read;
+
+                if (voice_audio_window.size() > VOICE_WINDOW_MAX) {
+                    size_t excess = voice_audio_window.size() - VOICE_WINDOW_MAX;
+                    voice_audio_window.erase(voice_audio_window.begin(),
+                        voice_audio_window.begin() + excess);
+                }
+
+                // Check for wake word every 1.5s with high energy threshold
+                // (needs to be louder than TTS playback to trigger)
+                if (voice_samples_since_last_check >= VOICE_CHECK_INTERVAL) {
+                    voice_samples_since_last_check = 0;
+
+                    float win_sum_sq = 0.0f;
+                    for (size_t i = 0; i < voice_audio_window.size(); ++i)
+                        win_sum_sq += voice_audio_window[i] * voice_audio_window[i];
+                    float win_rms = std::sqrtf(win_sum_sq / (float)voice_audio_window.size());
+
+                    // Higher threshold during speaking (voice must be louder than TTS)
+                    if (win_rms > 0.02f) {
+                        std::string transcript;
+                        if (metalrt_stt_initialized_) {
+                            transcript = metalrt_stt_.transcribe(
+                                voice_audio_window.data(),
+                                (int)voice_audio_window.size(), 16000);
+                        } else if (offline_stt_.is_initialized()) {
+                            transcript = offline_stt_.transcribe(
+                                voice_audio_window.data(),
+                                (int)voice_audio_window.size());
+                        }
+
+                        // Filter hallucinations
+                        if (!transcript.empty()) {
+                            auto start = transcript.find_first_not_of(" \t");
+                            if (start != std::string::npos) transcript = transcript.substr(start);
+                            if (!transcript.empty() && (transcript[0] == '(' || transcript[0] == '['))
+                                transcript.clear();
+                        }
+
+                        if (vdbg) {
+                            fprintf(vdbg, "[interrupt] rms=%.4f transcript=\"%s\"\n",
+                                    win_rms, transcript.c_str());
+                            fflush(vdbg);
+                        }
+
+                        if (!transcript.empty() && wake_detector.check(transcript)) {
+                            if (vdbg) {
+                                fprintf(vdbg, "[interrupt] WAKE WORD — interrupting!\n");
+                                fflush(vdbg);
+                            }
+                            // Trigger barge-in
+                            tts_cancel_flag_.store(true, std::memory_order_release);
+                            barge_in_triggered_.store(true, std::memory_order_release);
+                            playback_rb_->clear();
+                            if (using_metalrt()) metalrt_.cancel();
+                            else llm_.cancel();
+
+                            voice_audio_window.clear();
+                            voice_samples_since_last_check = 0;
+                            voice_command_buf.clear();
+                            voice_cmd_silence_chunks = 0;
+
+                            // Go to LISTENING for the new command
+                            set_state(PipelineState::LISTENING);
+                        }
+                    }
+                }
+
+                goto skip_stt_feed;
+            }
+
+            // --- Non-voice barge-in detection during SPEAKING ---
+            if (!voice_mode_active_ && cur_state == PipelineState::SPEAKING &&
+                barge_in_enabled_.load(std::memory_order_relaxed)) {
+                check_barge_in(chunk_buf.data(), (int)to_read);
+
+                if (barge_in_triggered_.load(std::memory_order_relaxed)) {
+                    stt_.reset();
+                    barge_in_speech_frames = 0;
+                    goto skip_stt_feed;
+                }
+
+                goto skip_stt_feed;
+            }
+
+            // --- Normal STT feeding (non-voice-mode LISTENING / BARGE_IN states) ---
+            {
+                bool has_energy = (rms > ENERGY_FLOOR);
+                if (has_energy || vad_speech) {
+                    stt_.feed_audio(chunk_buf.data(), (int)to_read);
+                }
             }
         }
 
-        stt_.process_tick();
+        skip_stt_feed:
 
-        auto result = stt_.get_result();
-        if (!result.text.empty()) {
-            if (result.text != last_partial) {
-                last_partial = result.text;
-                if (transcript_cb_) {
+        // Periodic debug trace (every ~2 seconds = 200 ticks at 10ms)
+        debug_tick_count++;
+        if (vdbg && (debug_tick_count % 200) == 0) {
+            auto cs = state_.load(std::memory_order_relaxed);
+            fprintf(vdbg, "[%ds] tick=%d feeds=%d whisper_runs=%d state=%s window=%zu\n",
+                    debug_tick_count / 100, debug_tick_count, debug_feed_count,
+                    debug_result_count, pipeline_state_str(cs),
+                    voice_audio_window.size());
+            fflush(vdbg);
+        }
+
+        // --- Non-voice-mode: streaming Zipformer processing ---
+        if (!voice_mode_active_) {
+            stt_.process_tick();
+
+            auto result = stt_.get_result();
+            if (!result.text.empty()) {
+                bool text_changed = (result.text != last_partial);
+                if (text_changed) {
+                    last_partial = result.text;
+                }
+
+                if (text_changed && transcript_cb_) {
                     transcript_cb_(result.text, result.is_final);
                 }
-            }
 
-            if (result.is_final) {
-                LOG_DEBUG("STT", "\"%s\"", result.text.c_str());
-                {
-                    std::lock_guard<std::mutex> lock(text_mutex_);
-                    pending_text_ = result.text;
-                    text_ready_ = true;
+                if (result.is_final) {
+                    LOG_DEBUG("STT", "Final: \"%s\"", result.text.c_str());
+                    {
+                        std::lock_guard<std::mutex> lock(text_mutex_);
+                        pending_text_ = result.text;
+                        text_ready_ = true;
+                    }
+                    text_cv_.notify_one();
+                    stt_.reset();
+                    last_partial.clear();
+
+                    // Clear barge-in trigger so LLM thread knows it's fresh input
+                    barge_in_triggered_.store(false, std::memory_order_release);
                 }
-                text_cv_.notify_one();
-                stt_.reset();
-                last_partial.clear();
             }
+        }
+
+        // Voice mode: return to VOICE_IDLE after PROCESSING/SPEAKING/BARGE_IN completes
+        if (voice_mode_active_ &&
+            (cur_state == PipelineState::IDLE || cur_state == PipelineState::BARGE_IN)) {
+            voice_audio_window.clear();
+            voice_samples_since_last_check = 0;
+            voice_command_buf.clear();
+            set_state(PipelineState::VOICE_IDLE);
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -837,6 +1323,12 @@ void Orchestrator::stt_thread_fn() {
         if (transcript_cb_) {
             transcript_cb_(last_partial, true);
         }
+    }
+
+    if (vdbg) {
+        fprintf(vdbg, "=== Voice mode ended. ticks=%d feeds=%d whisper_runs=%d ===\n",
+                debug_tick_count, debug_feed_count, debug_result_count);
+        fclose(vdbg);
     }
 }
 
@@ -858,35 +1350,271 @@ void Orchestrator::llm_thread_fn() {
 
         if (user_text.empty()) continue;
 
+        // --- Continuation detection: check if user wants to resume interrupted response ---
+        bool is_continuation = false;
+        {
+            std::string lower;
+            lower.reserve(user_text.size());
+            for (char c : user_text) lower += std::tolower(static_cast<unsigned char>(c));
+
+            // Check for continuation phrases
+            static const char* cont_phrases[] = {
+                "continue", "go on", "keep going", "carry on", "go ahead",
+                "yes continue", "yes go on", "yeah continue", "yeah go on",
+                "please continue", "keep talking"
+            };
+
+            std::lock_guard<std::mutex> lock(barge_in_mutex_);
+            if (!interrupted_response_.empty()) {
+                for (auto& phrase : cont_phrases) {
+                    if (lower.find(phrase) != std::string::npos) {
+                        is_continuation = true;
+                        break;
+                    }
+                }
+                // Expire interrupted context after 60 seconds
+                if (interrupted_at_us_ > 0 && (now_us() - interrupted_at_us_) > 60'000'000) {
+                    interrupted_response_.clear();
+                    interrupted_query_.clear();
+                    interrupted_chars_spoken_ = 0;
+                    is_continuation = false;
+                }
+            }
+        }
+
+        // Reset barge-in flags for this turn
+        barge_in_triggered_.store(false, std::memory_order_release);
+        tts_cancel_flag_.store(false, std::memory_order_release);
+
+        // Clear stale audio from previous turn before new TTS output
+        playback_rb_->clear();
+
         set_state(PipelineState::PROCESSING);
 
-        // --- Async TTS worker (same pattern as file/stream pipeline) ---
+        // --- Pre-LLM action matching (Tier 1 keyword match) ---
+        // Try to match common voice commands directly without going through LLM.
+        // This handles "open X", "play music", "set volume", etc.
+        {
+            std::string lower_text;
+            lower_text.reserve(user_text.size());
+            for (char c : user_text) lower_text += std::tolower(static_cast<unsigned char>(c));
+
+            // "open X" → open_app action
+            std::string action_name, args_json;
+            if (lower_text.find("open ") != std::string::npos) {
+                auto pos = lower_text.find("open ");
+                std::string app = user_text.substr(pos + 5);
+                // Trim trailing punctuation/whitespace
+                while (!app.empty() && (app.back() == '.' || app.back() == '!' ||
+                       app.back() == '?' || app.back() == ' ')) app.pop_back();
+                // Trim "please", "for me" etc from the app name
+                for (const char* suffix : {" please", " for me", " from there"}) {
+                    std::string ls;
+                    for (char c : app) ls += std::tolower(static_cast<unsigned char>(c));
+                    auto sp = ls.rfind(suffix);
+                    if (sp != std::string::npos && sp + std::strlen(suffix) == ls.size()) {
+                        app = app.substr(0, sp);
+                        while (!app.empty() && app.back() == ' ') app.pop_back();
+                    }
+                }
+                if (!app.empty()) {
+                    action_name = "open_app";
+                    args_json = "{\"app\": \"" + app + "\"}";
+                }
+            }
+            // "play/pause music" → play_pause_music
+            else if (lower_text.find("play music") != std::string::npos ||
+                     lower_text.find("pause music") != std::string::npos ||
+                     lower_text == "play" || lower_text == "pause") {
+                action_name = "play_pause_music";
+                args_json = "{}";
+            }
+            // "next song/track" → next_track
+            else if (lower_text.find("next song") != std::string::npos ||
+                     lower_text.find("next track") != std::string::npos ||
+                     lower_text.find("skip") != std::string::npos) {
+                action_name = "next_track";
+                args_json = "{}";
+            }
+            // "search (for) X" / "google X" / "look up X" → search_web
+            else if (lower_text.find("search") != std::string::npos ||
+                     lower_text.find("google") != std::string::npos ||
+                     lower_text.find("look up") != std::string::npos) {
+                // Extract query: everything after "search (for)", "google", "look up"
+                std::string query;
+                for (const char* prefix : {"search for ", "search ", "google ", "look up "}) {
+                    auto pos = lower_text.find(prefix);
+                    if (pos != std::string::npos) {
+                        query = user_text.substr(pos + std::strlen(prefix));
+                        break;
+                    }
+                }
+                // Trim filler from query
+                for (const char* filler : {"on the browser", "on browser", "on google",
+                        "on the web", "please", "for me"}) {
+                    std::string lq;
+                    for (char c : query) lq += std::tolower(static_cast<unsigned char>(c));
+                    auto fp = lq.find(filler);
+                    if (fp != std::string::npos) {
+                        query.erase(fp, std::strlen(filler));
+                    }
+                }
+                // Trim whitespace/punctuation
+                while (!query.empty() && (query.back() == ' ' || query.back() == '.' ||
+                       query.back() == '!' || query.back() == '?')) query.pop_back();
+                while (!query.empty() && query.front() == ' ') query.erase(query.begin());
+                if (!query.empty()) {
+                    action_name = "search_web";
+                    std::string escaped;
+                    for (char c : query) {
+                        if (c == '"') escaped += "\\\"";
+                        else escaped += c;
+                    }
+                    args_json = "{\"query\": \"" + escaped + "\"}";
+                }
+            }
+            // "make a note" / "create a note" → create_note
+            else if (lower_text.find("make a note") != std::string::npos ||
+                     lower_text.find("create a note") != std::string::npos ||
+                     lower_text.find("write a note") != std::string::npos) {
+                std::string content;
+                for (const char* prefix : {"make a note that ", "make a note ", "create a note that ",
+                        "create a note ", "write a note that ", "write a note "}) {
+                    auto pos = lower_text.find(prefix);
+                    if (pos != std::string::npos) {
+                        content = user_text.substr(pos + std::strlen(prefix));
+                        break;
+                    }
+                }
+                while (!content.empty() && (content.back() == '.' || content.back() == ' ')) content.pop_back();
+                if (!content.empty() && tools_.has_tool("create_note")) {
+                    action_name = "create_note";
+                    std::string escaped;
+                    for (char c : content) {
+                        if (c == '"') escaped += "\\\"";
+                        else escaped += c;
+                    }
+                    args_json = "{\"title\": \"Note\", \"text\": \"" + escaped + "\"}";
+                }
+            }
+
+            if (!action_name.empty() && tools_.has_tool(action_name)) {
+                LOG_DEBUG("VoiceCmd", "Tier 1 match: %s %s", action_name.c_str(), args_json.c_str());
+                ToolCall call{action_name, args_json};
+                auto result = tools_.execute(call);
+
+                std::string reply = result.success
+                    ? result.result_json
+                    : "Sorry, that didn't work.";
+                // Use the friendly display text if available
+                if (result.success && !result.result_json.empty()) {
+                    // Try to get a nicer message — result_json has the structured data
+                    reply = "Done! " + action_name;
+                    if (action_name == "open_app") {
+                        auto ap = args_json.find("\"app\": \"");
+                        if (ap != std::string::npos) {
+                            auto ae = args_json.find('"', ap + 8);
+                            reply = "Opened " + args_json.substr(ap + 8, ae - ap - 8) + " for you.";
+                        }
+                    }
+                }
+
+                if (response_cb_) response_cb_(reply);
+                live_history_.emplace_back("user", user_text);
+                live_history_.emplace_back("assistant", reply);
+
+                // Speak the response
+                std::vector<float> samples;
+                if (using_metalrt_tts())
+                    samples = metalrt_tts_.synthesize(reply);
+                else
+                    samples = tts_.synthesize(reply);
+
+                set_state(PipelineState::SPEAKING);
+                size_t offset = 0;
+                while (offset < samples.size()) {
+                    size_t written = playback_rb_->write(
+                        samples.data() + offset, samples.size() - offset);
+                    offset += written;
+                    if (offset < samples.size())
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+
+                // Wait for playback
+                while (playback_rb_->available_read() > 0 &&
+                       live_running_.load(std::memory_order_relaxed)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+
+                if (voice_mode_active_)
+                    set_state(PipelineState::VOICE_IDLE);
+                else
+                    set_state(PipelineState::IDLE);
+                continue;
+            }
+        }
+
+        // --- Async TTS worker with barge-in cancel support ---
         std::mutex tts_queue_mutex;
         std::condition_variable tts_queue_cv;
         std::vector<std::string> tts_queue;
         bool llm_done = false;
+        std::atomic<int> chars_spoken{0};  // track how many chars of response were spoken
 
         std::thread tts_worker([&]() {
             pthread_setname_np("rastack.tts.live");
             while (true) {
+                // Check cancel flag before waiting
+                if (tts_cancel_flag_.load(std::memory_order_relaxed)) break;
+
                 std::string sentence;
                 {
                     std::unique_lock<std::mutex> lock(tts_queue_mutex);
                     tts_queue_cv.wait(lock, [&]() {
-                        return !tts_queue.empty() || llm_done;
+                        return !tts_queue.empty() || llm_done ||
+                               tts_cancel_flag_.load(std::memory_order_relaxed);
                     });
+                    if (tts_cancel_flag_.load(std::memory_order_relaxed)) break;
                     if (tts_queue.empty() && llm_done) break;
                     if (tts_queue.empty()) continue;
                     sentence = std::move(tts_queue.front());
                     tts_queue.erase(tts_queue.begin());
                 }
+
+                // Check cancel again before synthesis
+                if (tts_cancel_flag_.load(std::memory_order_relaxed)) break;
+
                 LOG_DEBUG("TTS", "Synthesizing: \"%s\"", sentence.c_str());
                 set_state(PipelineState::SPEAKING);
-                tts_.synthesize_to_ring_buffer(sentence, *playback_rb_);
+
+                // Synthesize to samples, then write with backpressure
+                std::vector<float> samples;
+                if (using_metalrt_tts())
+                    samples = metalrt_tts_.synthesize(sentence);
+                else
+                    samples = tts_.synthesize(sentence);
+
+                // Write with backpressure (like rcli_speak_streaming)
+                size_t offset = 0;
+                while (offset < samples.size() &&
+                       !tts_cancel_flag_.load(std::memory_order_relaxed)) {
+                    size_t written = playback_rb_->write(
+                        samples.data() + offset, samples.size() - offset);
+                    offset += written;
+                    if (offset < samples.size()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    }
+                }
+
+                // Track spoken chars (if not cancelled mid-synthesis)
+                if (!tts_cancel_flag_.load(std::memory_order_relaxed)) {
+                    chars_spoken.fetch_add(static_cast<int>(sentence.size()), std::memory_order_relaxed);
+                }
             }
         });
 
         auto queue_sentence = [&](const std::string& sentence) {
+            if (tts_cancel_flag_.load(std::memory_order_relaxed)) return;
             std::string clean = sanitize_for_tts(sentence);
             if (clean.empty()) return;
             {
@@ -896,96 +1624,173 @@ void Orchestrator::llm_thread_fn() {
             tts_queue_cv.notify_one();
         };
 
-        // Build tool-aware system prompt (always includes tool definitions)
-        std::string tool_defs = tools_.get_tool_definitions_json();
-        std::string tool_system = llm_.profile().build_tool_system_prompt(
-            config_.system_prompt, tool_defs);
+        const auto& live_profile = using_metalrt() ? metalrt_.profile() : llm_.profile();
+        const std::string& live_tc_start = live_profile.tool_call_start;
         std::string response;
 
-        // Compute history budget for this turn
-        int ctx_size = llm_.context_size();
-        int system_tokens = llm_.count_tokens(tool_system);
-        int user_tokens = llm_.count_tokens(user_text);
-        int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
-
-        std::vector<std::pair<std::string, std::string>> trimmed;
-        if (!live_history_.empty() && history_budget > 0) {
-            int total = 0;
-            for (int i = static_cast<int>(live_history_.size()) - 1; i >= 0; i--) {
-                int entry_tokens = llm_.count_tokens(
-                    live_history_[i].first + ": " + live_history_[i].second);
-                if (total + entry_tokens > history_budget) break;
-                total += entry_tokens;
-                trimmed.insert(trimmed.begin(), live_history_[i]);
-            }
-        }
-
-        // Speculative first-token detection
-        std::string token_buffer;
-        bool detected_tool_call = false;
-        constexpr int SPECULATIVE_TOKENS = 15;
-        int tokens_buffered = 0;
-        SentenceDetector detector(queue_sentence, 3, 25, 7);
-
-        auto speculative_callback = [&](const TokenOutput& tok) {
-            if (detected_tool_call) return;
-            token_buffer += tok.text;
-            tokens_buffered++;
-            if (tokens_buffered <= SPECULATIVE_TOKENS) {
-                if (token_buffer.find(llm_.profile().tool_call_start) != std::string::npos) {
-                    detected_tool_call = true;
+        // --- Handle continuation: resume from where we left off ---
+        if (is_continuation) {
+            std::string remaining;
+            {
+                std::lock_guard<std::mutex> lock(barge_in_mutex_);
+                if (interrupted_chars_spoken_ < (int)interrupted_response_.size()) {
+                    remaining = interrupted_response_.substr(interrupted_chars_spoken_);
                 }
-            } else if (!detected_tool_call) {
-                detector.feed(token_buffer);
-                token_buffer.clear();
+                // Clear interrupted state
+                interrupted_response_.clear();
+                interrupted_query_.clear();
+                interrupted_chars_spoken_ = 0;
             }
-            if (tokens_buffered > SPECULATIVE_TOKENS && !detected_tool_call) {
-                detector.feed(tok.text);
+
+            if (!remaining.empty()) {
+                LOG_DEBUG("LLM", "Resuming interrupted response (%zu chars remaining)", remaining.size());
+                // Feed remaining text directly to TTS
+                SentenceDetector cont_detector(queue_sentence, 6, 35, 20);
+                cont_detector.feed(remaining);
+                cont_detector.flush();
+                response = remaining;
             }
-        };
-
-        // Inject tool focus hint to steer model without invalidating KV cache
-        std::string live_hint = tools_.build_tool_hint(user_text);
-        std::string hinted_user = live_hint.empty() ? user_text : (live_hint + "\n" + user_text);
-
-        if (llm_.has_prompt_cache() && trimmed.empty()) {
-            std::string user_portion = llm_.profile().build_user_turn(hinted_user);
-            response = llm_.generate_with_cached_prompt(user_portion, speculative_callback);
         } else {
-            std::string prompt = llm_.build_chat_prompt(tool_system, trimmed, hinted_user);
-            response = llm_.generate(prompt, speculative_callback);
-        }
+            // --- Normal LLM generation ---
+            // Speculative first-token detection
+            std::string token_buffer;
+            bool detected_tool_call = false;
+            constexpr int SPECULATIVE_TOKENS = 30;
+            int tokens_buffered = 0;
+            SentenceDetector detector(queue_sentence, 6, 35, 20);
 
-        if (detected_tool_call) {
-            auto tool_calls = tools_.parse_tool_calls(response);
-            if (!tool_calls.empty()) {
-                LOG_DEBUG("Pipeline", "Tool calls detected, executing...");
-                auto results = tools_.execute_all(tool_calls);
-                for (auto& r : results) {
-                    LOG_DEBUG("Pipeline", "Tool '%s': %s -> %s",
-                            r.name.c_str(), r.success ? "OK" : "FAIL", r.result_json.c_str());
+            auto speculative_callback = [&](const TokenOutput& tok) {
+                // Abort early if barge-in triggered during generation
+                if (barge_in_triggered_.load(std::memory_order_relaxed)) return;
+                if (detected_tool_call) return;
+                token_buffer += tok.text;
+                tokens_buffered++;
+                if (tokens_buffered <= SPECULATIVE_TOKENS) {
+                    // Still in speculative window — check for tool call markers
+                    if (token_buffer.find(live_tc_start) != std::string::npos) {
+                        detected_tool_call = true;
+                    }
+                } else if (!detected_tool_call) {
+                    // Past speculative window — flush entire buffer to TTS
+                    // (token_buffer already includes tok.text from above)
+                    detector.feed(token_buffer);
+                    token_buffer.clear();
+                }
+            };
+
+            if (using_metalrt()) {
+                std::string l_tool_defs = tools_.get_tool_definitions_json();
+                std::string l_tool_system = metalrt_.profile().build_tool_system_prompt(
+                    config_.system_prompt, l_tool_defs);
+
+                std::vector<std::pair<std::string, std::string>> l_trimmed;
+                int l_ctx = metalrt_.context_size();
+                if (l_ctx > 0) {
+                    int l_sys_tok = metalrt_.count_tokens(l_tool_system);
+                    int l_usr_tok = metalrt_.count_tokens(user_text);
+                    int l_budget = l_ctx - 512 - l_sys_tok - l_usr_tok - 50;
+
+                    if (!live_history_.empty() && l_budget > 0) {
+                        int total = 0;
+                        for (int i = static_cast<int>(live_history_.size()) - 1; i >= 0; i--) {
+                            int entry_tok = metalrt_.count_tokens(
+                                live_history_[i].first + ": " + live_history_[i].second);
+                            if (total + entry_tok > l_budget) break;
+                            total += entry_tok;
+                            l_trimmed.insert(l_trimmed.begin(), live_history_[i]);
+                        }
+                    }
                 }
 
-                std::string formatted = tools_.format_results(results);
-                std::string continuation = llm_.build_tool_continuation_prompt(
-                    config_.system_prompt, user_text, response, formatted);
+                std::string l_hint = tools_.build_tool_hint(user_text);
+                std::string l_hinted = l_hint.empty() ? user_text : (l_hint + "\n" + user_text);
 
-                llm_.clear_kv_cache();
-
-                SentenceDetector detector2(queue_sentence, 3, 25, 7);
-                response = llm_.generate(continuation, [&](const TokenOutput& tok) {
-                    detector2.feed(tok.text);
-                });
-                detector2.flush();
+                if (metalrt_.has_prompt_cache() && l_trimmed.empty()) {
+                    std::string user_turn = metalrt_.profile().build_user_turn(l_hinted);
+                    response = metalrt_.generate_raw_continue(user_turn, speculative_callback);
+                } else {
+                    std::string l_full = metalrt_.profile().build_chat_prompt(
+                        l_tool_system, l_trimmed, l_hinted);
+                    response = metalrt_.generate_raw(l_full, speculative_callback);
+                }
             } else {
-                detector.feed(sanitize_for_tts(response));
-                detector.flush();
+                std::string tool_defs = tools_.get_tool_definitions_json();
+                std::string tool_system = llm_.profile().build_tool_system_prompt(
+                    config_.system_prompt, tool_defs);
+
+                int ctx_size = llm_.context_size();
+                int system_tokens = llm_.count_tokens(tool_system);
+                int user_tokens = llm_.count_tokens(user_text);
+                int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
+
+                std::vector<std::pair<std::string, std::string>> trimmed;
+                if (!live_history_.empty() && history_budget > 0) {
+                    int total = 0;
+                    for (int i = static_cast<int>(live_history_.size()) - 1; i >= 0; i--) {
+                        int entry_tokens = llm_.count_tokens(
+                            live_history_[i].first + ": " + live_history_[i].second);
+                        if (total + entry_tokens > history_budget) break;
+                        total += entry_tokens;
+                        trimmed.insert(trimmed.begin(), live_history_[i]);
+                    }
+                }
+
+                std::string live_hint = tools_.build_tool_hint(user_text);
+                std::string hinted_user = live_hint.empty() ? user_text : (live_hint + "\n" + user_text);
+
+                if (llm_.has_prompt_cache() && trimmed.empty()) {
+                    std::string user_portion = llm_.profile().build_user_turn(hinted_user);
+                    response = llm_.generate_with_cached_prompt(user_portion, speculative_callback);
+                } else {
+                    std::string prompt = llm_.build_chat_prompt(tool_system, trimmed, hinted_user);
+                    response = llm_.generate(prompt, speculative_callback);
+                }
             }
-        } else {
-            if (!token_buffer.empty()) {
-                detector.feed(token_buffer);
+
+            // If barge-in happened during generation, skip tool handling / flush
+            if (!barge_in_triggered_.load(std::memory_order_relaxed)) {
+                if (detected_tool_call) {
+                    auto tool_calls = live_profile.parse_tool_calls(response);
+                    if (tool_calls.empty()) tool_calls = tools_.parse_tool_calls(response);
+                    if (!tool_calls.empty()) {
+                        LOG_DEBUG("Pipeline", "Tool calls detected, executing...");
+                        auto results = tools_.execute_all(tool_calls);
+                        for (auto& r : results) {
+                            LOG_DEBUG("Pipeline", "Tool '%s': %s -> %s",
+                                    r.name.c_str(), r.success ? "OK" : "FAIL", r.result_json.c_str());
+                        }
+
+                        std::string formatted = tools_.format_results(results);
+                        SentenceDetector detector2(queue_sentence, 6, 35, 20);
+
+                        if (using_metalrt()) {
+                            std::string l2_sys = config_.system_prompt + " Do NOT output JSON.";
+                            std::string l2_msg = "Tool results: " + formatted + "\nSummarize briefly.";
+                            std::string l2_prompt = metalrt_.profile().build_chat_prompt(l2_sys, {}, l2_msg);
+                            response = metalrt_.generate_raw(l2_prompt,
+                                [&](const TokenOutput& tok) { detector2.feed(tok.text); });
+                        } else {
+                            std::string tool_system_for_cont = llm_.profile().build_tool_system_prompt(
+                                config_.system_prompt, tools_.get_tool_definitions_json());
+                            std::string continuation = llm_.build_tool_continuation_prompt(
+                                config_.system_prompt, user_text, response, formatted);
+                            llm_.clear_kv_cache();
+                            response = llm_.generate(continuation, [&](const TokenOutput& tok) {
+                                detector2.feed(tok.text);
+                            });
+                        }
+                        detector2.flush();
+                    } else {
+                        detector.feed(sanitize_for_tts(response));
+                        detector.flush();
+                    }
+                } else {
+                    if (!token_buffer.empty()) {
+                        detector.feed(token_buffer);
+                    }
+                    detector.flush();
+                }
             }
-            detector.flush();
         }
 
         // Signal TTS worker done and wait for it
@@ -998,9 +1803,23 @@ void Orchestrator::llm_thread_fn() {
 
         LOG_DEBUG("LLM", "Response: \"%s\"", response.c_str());
 
-        // Record turn in live conversation history
-        std::string clean_response = llm_.profile().clean_output(response);
+        std::string clean_response = live_profile.clean_output(response);
+
+        // --- Store interrupted state if barge-in happened ---
+        if (barge_in_triggered_.load(std::memory_order_relaxed) && !clean_response.empty()) {
+            std::lock_guard<std::mutex> lock(barge_in_mutex_);
+            interrupted_response_ = clean_response;
+            interrupted_query_ = user_text;
+            interrupted_chars_spoken_ = chars_spoken.load(std::memory_order_relaxed);
+            interrupted_at_us_ = now_us();
+            LOG_DEBUG("BargeIn", "Stored interrupted response (%d/%zu chars spoken)",
+                      interrupted_chars_spoken_, clean_response.size());
+        }
+
         if (!clean_response.empty()) {
+            // Fire response callback so TUI/consumers can display the response
+            if (response_cb_) response_cb_(clean_response);
+
             live_history_.emplace_back("user", user_text);
             live_history_.emplace_back("assistant", clean_response);
             // Cap at 20 entries (10 turns)
@@ -1010,21 +1829,78 @@ void Orchestrator::llm_thread_fn() {
             }
         }
 
-        // Wait for playback to finish, then go back to listening
+        // Wait for playback to finish, with barge-in awareness
         while (playback_rb_->available_read() > 0 &&
-               live_running_.load(std::memory_order_relaxed)) {
+               live_running_.load(std::memory_order_relaxed) &&
+               !barge_in_triggered_.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
-        set_state(PipelineState::LISTENING);
+        // If barge-in triggered, stay in BARGE_IN state (stt_thread handles transition)
+        // Otherwise go back to listening (or VOICE_IDLE if in voice mode)
+        if (!barge_in_triggered_.load(std::memory_order_relaxed)) {
+            if (voice_mode_active_) {
+                set_state(PipelineState::VOICE_IDLE);
+            } else {
+                set_state(PipelineState::LISTENING);
+            }
+        }
     }
 }
 
 void Orchestrator::recache_system_prompt() {
+    std::string tool_defs = tools_.get_tool_definitions_json();
     std::string tool_system = llm_.profile().build_tool_system_prompt(
-        config_.system_prompt, tools_.get_tool_definitions_json());
+        config_.system_prompt, tool_defs);
     llm_.cache_system_prompt(tool_system);
+
+    if (metalrt_.is_initialized()) {
+        std::string mrt_system = metalrt_.profile().build_tool_system_prompt(
+            config_.system_prompt, tool_defs);
+        std::string mrt_prefix = metalrt_.profile().build_system_prefix(mrt_system);
+        metalrt_.cache_system_prompt(mrt_prefix);
+        metalrt_.set_system_prompt(mrt_system);
+    }
+
     LOG_DEBUG("Pipeline", "Re-cached system prompt with updated tool defs");
+}
+
+void Orchestrator::set_tts_voice(const std::string& voice_name) {
+    if (voice_name.empty()) return;
+
+    if (metalrt_tts_initialized_ && metalrt_tts_.is_initialized()) {
+        metalrt_tts_.set_voice(voice_name);
+        LOG_DEBUG("Pipeline", "MetalRT TTS voice changed to: %s", voice_name.c_str());
+    }
+
+    // For sherpa-onnx Kokoro fallback, map voice name to speaker_id
+    if (tts_.is_initialized() && config_.tts.architecture == "kokoro") {
+        int sid = kokoro_voice_to_speaker_id(voice_name);
+        tts_.set_speaker_id(sid);
+        LOG_DEBUG("Pipeline", "Sherpa-onnx TTS speaker_id changed to: %d (%s)", sid, voice_name.c_str());
+    }
+}
+
+bool Orchestrator::switch_backend(LlmBackend backend) {
+    auto cur = state_.load(std::memory_order_acquire);
+    if (cur != PipelineState::IDLE) {
+        LOG_ERROR("Pipeline", "Cannot switch backend while pipeline is %s",
+                  pipeline_state_str(cur));
+        return false;
+    }
+
+    if (backend == LlmBackend::METALRT) {
+        if (!metalrt_.is_initialized()) {
+            LOG_ERROR("Pipeline", "MetalRT engine not initialized");
+            return false;
+        }
+        active_backend_ = LlmBackend::METALRT;
+        LOG_INFO("Pipeline", "Switched to MetalRT backend");
+    } else {
+        active_backend_ = LlmBackend::LLAMACPP;
+        LOG_INFO("Pipeline", "Switched to llama.cpp backend");
+    }
+    return true;
 }
 
 bool Orchestrator::reload_llm(const LlmConfig& new_config) {
@@ -1048,6 +1924,44 @@ bool Orchestrator::reload_llm(const LlmConfig& new_config) {
     recache_system_prompt();
     LOG_INFO("Pipeline", "LLM hot-swap complete (%s profile)", llm_.profile().family_name.c_str());
     return true;
+}
+
+bool Orchestrator::start_voice_mode(const std::string& wake_phrase) {
+    if (live_running_.load()) {
+        LOG_ERROR("Pipeline", "Cannot start voice mode while live mode is running");
+        return false;
+    }
+
+    wake_phrase_ = wake_phrase;
+    voice_mode_active_ = true;
+    barge_in_enabled_.store(true, std::memory_order_release);
+
+    live_running_.store(true, std::memory_order_release);
+    live_history_.clear();
+
+    // Drain stale audio and reset STT state
+    capture_rb_->clear();
+    stt_.reset();
+
+    // Start audio
+    audio_.start();
+    set_state(PipelineState::VOICE_IDLE);
+
+    // STT thread (handles wake word detection in VOICE_IDLE state)
+    stt_thread_ = std::thread([this]() { stt_thread_fn(); });
+
+    // LLM+TTS thread
+    llm_thread_ = std::thread([this]() { llm_thread_fn(); });
+
+    LOG_INFO("Pipeline", "Voice mode started (wake phrase: \"%s\")", wake_phrase.c_str());
+    return true;
+}
+
+void Orchestrator::stop_voice_mode() {
+    voice_mode_active_ = false;
+    barge_in_enabled_.store(false, std::memory_order_release);
+    stop_live();
+    LOG_INFO("Pipeline", "Voice mode stopped");
 }
 
 void Orchestrator::set_state(PipelineState new_state) {

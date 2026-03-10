@@ -1,25 +1,33 @@
 # Build output
 build/
+build-*/
 cmake-build-*/
 dist/
 
-# Dependencies (cloned by scripts/setup.sh)
-deps/llama.cpp/
-deps/sherpa-onnx/
+# Dependencies (cloned by scripts/setup.sh, or symlinked for local dev)
+deps/
 
 # Models (large binary files, download via scripts/download_models.sh)
 # Use /models/ (root-level only) to avoid ignoring src/models/ headers
 /models/
 *.gguf
 *.onnx
+*.safetensors
 
 # IDE / editor caches
 .cache/
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
+
+# AI assistant config (developer-only)
+CLAUDE.md
+
+# Release artifacts
+*.tar.gz
 
 # macOS
 .DS_Store

@@ -5,7 +5,7 @@
 
 namespace rastack {
 
-enum class LogLevel : int { SILENT = 0, ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4 };
+enum class LogLevel : int { SILENT = 0, ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4, TRACE = 5 };
 
 inline std::atomic<int>& log_level_ref() {
     static std::atomic<int> level{static_cast<int>(LogLevel::DEBUG)};
@@ -32,3 +32,4 @@ inline LogLevel get_log_level() {
 #define LOG_WARN(tag, fmt, ...)  RASTACK_LOG(rastack::LogLevel::WARN,  tag, fmt __VA_OPT__(,) __VA_ARGS__)
 #define LOG_INFO(tag, fmt, ...)  RASTACK_LOG(rastack::LogLevel::INFO,  tag, fmt __VA_OPT__(,) __VA_ARGS__)
 #define LOG_DEBUG(tag, fmt, ...) RASTACK_LOG(rastack::LogLevel::DEBUG, tag, fmt __VA_OPT__(,) __VA_ARGS__)
+#define LOG_TRACE(tag, fmt, ...) RASTACK_LOG(rastack::LogLevel::TRACE, tag, fmt __VA_OPT__(,) __VA_ARGS__)

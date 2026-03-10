@@ -12,6 +12,7 @@
 #include "models/model_registry.h"
 #include "models/tts_model_registry.h"
 #include "models/stt_model_registry.h"
+#include "engines/metalrt_loader.h"
 
 // =============================================================================
 // Shared picker helpers — DRY across LLM / STT / TTS
@@ -56,27 +57,33 @@ inline int pick_llm(const std::string& models_dir) {
         fprintf(stderr, "  (auto-detect)");
     fprintf(stderr, "\n\n");
 
-    fprintf(stderr, "    %s#  %-28s  %-7s  %-10s  %-12s  %s%s\n",
-            color::bold, "Model", "Size", "Speed", "Tool Call", "Status", color::reset);
-    fprintf(stderr, "    %s──  %-28s  %-7s  %-10s  %-12s  %s%s\n",
-            color::dim, "────────────────────────────", "───────", "──────────", "────────────", "──────────", color::reset);
+    fprintf(stderr, "    %s#  %-28s  %-7s  %-10s  %-12s  %-13s  %s%s\n",
+            color::bold, "Model", "Size", "Speed", "Tool Call", "Engine", "Status", color::reset);
+    fprintf(stderr, "    %s──  %-28s  %-7s  %-10s  %-12s  %-13s  %s%s\n",
+            color::dim, "────────────────────────────", "───────", "──────────", "────────────", "─────────────", "──────────", color::reset);
 
     for (size_t i = 0; i < all.size(); i++) {
         auto& m = all[i];
         std::string path = models_dir + "/" + m.filename;
         bool installed = (access(path.c_str(), R_OK) == 0);
+        bool mrt_installed = rcli::is_metalrt_model_installed(m);
         bool is_active = active && active->id == m.id;
         std::string status;
         if (is_active)       status = "\033[32m* active\033[0m";
-        else if (installed)  status = "installed";
+        else if (installed || mrt_installed) status = "installed";
         else                 status = "\033[2mnot installed\033[0m";
         std::string label = m.name;
         if (m.is_default) label += " (default)";
         if (m.is_recommended) label += " *";
-        fprintf(stderr, "    %s%-2zu%s %-28s  %-7s  %-10s  %-12s  %s\n",
+
+        std::string eng_col = rcli::engine_label(m);
+        std::string speed = m.metalrt_supported && !m.metalrt_speed_est.empty()
+            ? m.metalrt_speed_est : m.speed_est;
+
+        fprintf(stderr, "    %s%-2zu%s %-28s  %-7s  %-10s  %-12s  %-13s  %s\n",
                 is_active ? "\033[32m" : "", i + 1, is_active ? "\033[0m" : "",
                 label.c_str(), rcli::format_size(m.size_mb).c_str(),
-                m.speed_est.c_str(), m.tool_calling.c_str(), status.c_str());
+                speed.c_str(), m.tool_calling.c_str(), eng_col.c_str(), status.c_str());
     }
     fprintf(stderr, "\n  %sCommands:%s  [1-%zu] select  |  a auto-detect  |  q cancel\n  Choice: ",
             color::bold, color::reset, all.size());
@@ -317,6 +324,90 @@ inline int pick_tts(const std::string& models_dir) {
 }
 
 // =============================================================================
+// MetalRT Whisper STT picker
+// =============================================================================
+
+inline int pick_metalrt_stt() {
+    auto comps = rcli::metalrt_component_models();
+    std::string current = rcli::read_selected_metalrt_stt_id();
+
+    std::vector<const rcli::MetalRTComponentModel*> stt_models;
+    for (auto& cm : comps) {
+        if (cm.component == "stt") stt_models.push_back(&cm);
+    }
+
+    fprintf(stderr, "\n  %s%s  MetalRT Whisper STT Models%s", color::bold, color::orange, color::reset);
+    if (!current.empty())
+        fprintf(stderr, "  (selected: %s)", current.c_str());
+    else
+        fprintf(stderr, "  (auto — picks first installed)");
+    fprintf(stderr, "\n\n");
+
+    fprintf(stderr, "    %s#  %-30s  %-7s  %-40s  %s%s\n",
+            color::bold, "Model", "Size", "Description", "Status", color::reset);
+    fprintf(stderr, "    %s──  %-30s  %-7s  %-40s  %s%s\n",
+            color::dim, "──────────────────────────────", "───────",
+            "────────────────────────────────────────", "──────────", color::reset);
+
+    bool found_active = false;
+    for (size_t i = 0; i < stt_models.size(); i++) {
+        auto& m = *stt_models[i];
+        bool installed = rcli::is_metalrt_component_installed(m);
+        bool is_active = false;
+        if (!current.empty()) {
+            is_active = (m.id == current && installed);
+        } else if (installed && !found_active) {
+            is_active = true;  // Auto mode: first installed wins
+            found_active = true;
+        }
+        std::string status;
+        if (is_active && installed) status = "\033[32m* active\033[0m";
+        else if (installed)         status = "installed";
+        else                        status = "\033[2mnot installed\033[0m";
+
+        char size_str[16];
+        if (m.size_mb >= 1000)
+            snprintf(size_str, sizeof(size_str), "%.1fG", m.size_mb / 1000.0);
+        else
+            snprintf(size_str, sizeof(size_str), "%dM", m.size_mb);
+
+        fprintf(stderr, "    %s%-2zu%s %-30s  %-7s  %-40s  %s\n",
+                is_active ? "\033[32m" : "", i + 1, is_active ? "\033[0m" : "",
+                m.name.c_str(), size_str, m.description.c_str(), status.c_str());
+    }
+
+    fprintf(stderr, "\n  %sCommands:%s  [1-%zu] select  |  a auto-detect  |  q cancel\n  Choice: ",
+            color::bold, color::reset, stt_models.size());
+    fflush(stderr);
+
+    int choice = read_picker_choice();
+    if (choice == 0)  { picker_no_changes(); return 0; }
+    if (choice == -1) { picker_cancelled(); return 0; }
+    if (choice == -2) {
+        rcli::write_selected_metalrt_stt_id("");
+        fprintf(stderr, "\n  %s%sReverted to auto-detect.%s\n  Restart RCLI to apply.\n\n",
+                color::bold, color::green, color::reset);
+        return 0;
+    }
+    if (choice < 1 || choice > (int)stt_models.size()) {
+        fprintf(stderr, "\n  Invalid choice.\n\n");
+        return 1;
+    }
+
+    auto& sel = *stt_models[choice - 1];
+    if (!rcli::is_metalrt_component_installed(sel)) {
+        fprintf(stderr, "\n  %s%s%s%s is not installed. Install with: rcli setup --metalrt%s\n\n",
+                color::bold, color::yellow, sel.name.c_str(), color::reset, "");
+        return 1;
+    }
+
+    rcli::write_selected_metalrt_stt_id(sel.id);
+    fprintf(stderr, "\n  %s%sSelected: %s%s\n  Restart RCLI to apply.\n\n",
+            color::bold, color::green, sel.name.c_str(), color::reset);
+    return 0;
+}
+
+// =============================================================================
 // Unified models dashboard
 // =============================================================================
 
@@ -326,6 +417,7 @@ inline int cmd_models(const Args& args) {
     if (args.arg1 == "llm") return pick_llm(models_dir);
     if (args.arg1 == "stt") return pick_stt(models_dir);
     if (args.arg1 == "tts") return pick_tts(models_dir);
+    if (args.arg1 == "metalrt-stt" || args.arg1 == "whisper") return pick_metalrt_stt();
 
     if (args.help) {
         fprintf(stderr,
@@ -391,6 +483,26 @@ inline int cmd_models(const Args& args) {
             color::green, tts_name.c_str(), color::reset,
             tts_inst, tts_all.size());
 
+    // MetalRT Whisper row
+    auto mrt_comps = rcli::metalrt_component_models();
+    std::string mrt_stt_pref = rcli::read_selected_metalrt_stt_id();
+    std::string mrt_stt_name = "auto";
+    int mrt_stt_inst = 0;
+    int mrt_stt_total = 0;
+    for (auto& cm : mrt_comps) {
+        if (cm.component != "stt") continue;
+        mrt_stt_total++;
+        if (rcli::is_metalrt_component_installed(cm)) {
+            mrt_stt_inst++;
+            if (cm.id == mrt_stt_pref) mrt_stt_name = cm.name;
+        }
+    }
+    if (mrt_stt_pref.empty() && mrt_stt_inst > 0) mrt_stt_name = "auto (first installed)";
+    fprintf(stderr, "    %s4%s  %sMetalRT STT%s    %s%-28s%s  %d / %d\n",
+            color::green, color::reset, color::bold, color::reset,
+            color::green, mrt_stt_name.c_str(), color::reset,
+            mrt_stt_inst, mrt_stt_total);
+
     // Show recommendation notes from the registries
     fprintf(stderr, "\n");
     for (auto& m : llm_all) {
@@ -409,7 +521,7 @@ inline int cmd_models(const Args& args) {
     }
     fprintf(stderr, "  %sNote: STT streaming (Zipformer) is always active for live mic.%s\n\n",
             color::dim, color::reset);
-    fprintf(stderr, "  %sSelect modality:%s  1 LLM  |  2 STT  |  3 TTS  |  q cancel\n  Choice: ",
+    fprintf(stderr, "  %sSelect modality:%s  1 LLM  |  2 STT  |  3 TTS  |  4 MetalRT STT  |  q cancel\n  Choice: ",
             color::bold, color::reset);
     fflush(stderr);
 
@@ -418,6 +530,7 @@ inline int cmd_models(const Args& args) {
     if (choice == 1 || choice == -2) return pick_llm(models_dir); // -2 (a) → LLM as first
     if (choice == 2) return pick_stt(models_dir);
     if (choice == 3) return pick_tts(models_dir);
+    if (choice == 4) return pick_metalrt_stt();
 
     fprintf(stderr, "\n  Invalid choice.\n\n");
     return 1;
@@ -475,9 +588,17 @@ inline int cmd_info() {
     std::string stt_info = "Zipformer (streaming) + " +
         (active_stt ? (active_stt->name + " (offline)") : std::string("Whisper base.en (offline)"));
 
+    std::string engine_pref = rcli::read_engine_preference();
+    bool mrt_available = rastack::MetalRTLoader::instance().is_available();
+    bool use_metalrt = (engine_pref == "metalrt" && mrt_available)
+                    || ((engine_pref == "auto" || engine_pref.empty()) && mrt_available);
+    std::string engine_info = use_metalrt
+        ? "MetalRT (Metal GPU — LLM, STT, TTS on-device)"
+        : "llama.cpp + sherpa-onnx (ONNX Runtime)";
+
     fprintf(stdout,
         "\n%s%s  RCLI%s %s%s%s\n\n"
-        "  %sEngine:%s       llama.cpp + sherpa-onnx (ONNX Runtime)\n"
+        "  %sEngine:%s       %s\n"
         "  %sLLM:%s          %s\n"
         "  %sSTT:%s          %s\n"
         "  %sTTS:%s          %s\n"
@@ -488,7 +609,7 @@ inline int cmd_info() {
         "  %sModels:%s       %s%s%s (%s)\n\n",
         color::bold, color::orange, color::reset,
         color::dim, RA_VERSION, color::reset,
-        color::bold, color::reset,
+        color::bold, color::reset, engine_info.c_str(),
         color::bold, color::reset, llm_info.c_str(),
         color::bold, color::reset, stt_info.c_str(),
         color::bold, color::reset, tts_info.c_str(),

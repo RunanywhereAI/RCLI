@@ -73,8 +73,25 @@ int rcli_start_capture(RCLIHandle handle);
 // Returns the transcript text. Caller must NOT free the returned pointer.
 const char* rcli_stop_capture_and_transcribe(RCLIHandle handle);
 
-// Speak text via TTS
+// Speak text via TTS (non-streaming, uses afplay)
 int rcli_speak(RCLIHandle handle, const char* text);
+
+// Speak text via TTS with sentence-level streaming through CoreAudio ring buffer.
+// Splits text into sentences, synthesizes each, and streams to audio output.
+// callback fires "first_audio" and "complete" events. Blocks until audio finishes.
+int rcli_speak_streaming(RCLIHandle handle, const char* text,
+                         RCLIEventCallback callback, void* user_data);
+
+// Streaming LLM → TTS: generates LLM response with sentence-level TTS streaming.
+// Audio plays via CoreAudio ring buffer as sentences complete, not after the full
+// response. The callback fires events:
+//   "first_audio"  — first TTS sentence queued (data = TTFA ms as string)
+//   "response"     — full LLM response text (data = complete response string)
+//   "tts_stats"    — per-sentence TTS stats (data = JSON: text, synth_ms, rtf)
+//   "complete"     — pipeline finished (data = JSON: total_tts_ms, sentences, ttfa_ms)
+// Returns the full response text. Caller must NOT free.
+const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
+                                    RCLIEventCallback callback, void* user_data);
 
 // Stop TTS playback immediately (interrupt current speech)
 void rcli_stop_speaking(RCLIHandle handle);
@@ -88,6 +105,15 @@ void rcli_stop_processing(RCLIHandle handle);
 
 // Clear conversation history (start a fresh conversation within the session)
 void rcli_clear_history(RCLIHandle handle);
+
+// --- Personality ---
+
+// Get the current personality key (e.g. "default", "quirky", "cynical", "nerdy", "professional")
+const char* rcli_get_personality(RCLIHandle handle);
+
+// Set personality and persist to config. Takes effect on next LLM call.
+// Returns 0 on success, -1 if key is invalid.
+int rcli_set_personality(RCLIHandle handle, const char* personality_key);
 
 // Get the last transcript from STT
 const char* rcli_get_transcript(RCLIHandle handle);
@@ -176,6 +202,26 @@ int rcli_save_action_preferences(RCLIHandle handle);
 // Returns 0 on success, -1 on failure.
 int rcli_switch_llm(RCLIHandle handle, const char* model_id);
 
+// --- Barge-In & Voice Mode ---
+
+// Enable/disable voice barge-in (user can interrupt TTS mid-speech)
+void rcli_set_barge_in_enabled(RCLIHandle handle, int enabled);
+
+// Check if barge-in is enabled
+int rcli_is_barge_in_enabled(RCLIHandle handle);
+
+// Start pure voice mode (always-listening with wake word detection)
+// wake_phrase: trigger phrase (e.g. "jarvis"). NULL defaults to "jarvis".
+// Returns 0 on success, -1 on failure.
+int rcli_start_voice_mode(RCLIHandle handle, const char* wake_phrase);
+
+// Stop voice mode and return to idle
+void rcli_stop_voice_mode(RCLIHandle handle);
+
+// Get the interrupted response text (for "continue" feature after barge-in)
+// Returns empty string if no interrupted response. Caller must NOT free.
+const char* rcli_get_interrupted_response(RCLIHandle handle);
+
 // --- Callbacks ---
 
 // Set callback for real-time transcript updates
@@ -183,6 +229,10 @@ void rcli_set_transcript_callback(RCLIHandle handle, RCLITranscriptCallback cb, 
 
 // Set callback for pipeline state changes
 void rcli_set_state_callback(RCLIHandle handle, RCLIStateCallback cb, void* user_data);
+
+// Set callback for LLM responses in live/voice mode
+typedef void (*RCLIResponseCallback)(const char* response, void* user_data);
+void rcli_set_response_callback(RCLIHandle handle, RCLIResponseCallback cb, void* user_data);
 
 // Set callback for action results
 void rcli_set_action_callback(RCLIHandle handle, RCLIActionCallback cb, void* user_data);
@@ -207,6 +257,9 @@ int rcli_is_using_parakeet(RCLIHandle handle);
 // Get the name of the active LLM model. Caller must NOT free.
 const char* rcli_get_llm_model(RCLIHandle handle);
 
+// Returns the runtime LLM engine: "MetalRT" or "llama.cpp". Caller must NOT free.
+const char* rcli_get_active_engine(RCLIHandle handle);
+
 // Get the name of the active TTS voice. Caller must NOT free.
 const char* rcli_get_tts_model(RCLIHandle handle);
 
@@ -223,6 +276,21 @@ void rcli_get_last_llm_perf(RCLIHandle handle,
                                   double* out_tok_per_sec,
                                   double* out_ttft_ms,
                                   double* out_total_ms);
+
+// Extended LLM performance with prefill/decode breakdown.
+// out_prefill_tok_per_sec: prompt evaluation speed (tok/s).
+// out_decode_tok_per_sec: generation/decode speed (tok/s).
+// out_prefill_ms: time spent evaluating prompt (ms).
+// out_decode_ms: time spent decoding tokens (ms).
+// out_prompt_tokens: number of prompt tokens evaluated.
+// out_engine_name: "MetalRT" or "llama.cpp" — caller must NOT free.
+void rcli_get_last_llm_perf_extended(RCLIHandle handle,
+                                     double* out_prefill_tok_per_sec,
+                                     double* out_decode_tok_per_sec,
+                                     double* out_prefill_ms,
+                                     double* out_decode_ms,
+                                     int* out_prompt_tokens,
+                                     const char** out_engine_name);
 
 // Context window usage from last LLM call.
 // out_prompt_tokens: total tokens consumed by the last prompt (history + system + user).

@@ -50,7 +50,7 @@ void register_web_actions(ActionRegistry& registry) {
     registry.register_action(
         {"search_youtube", "Search YouTube for videos",
          "{\"query\": \"search query\"}",
-         false,
+         true,
          "web",
          "Search YouTube for guitar tutorials",
          "rcli action search_youtube '{\"query\": \"guitar tutorials\"}'"},

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <sstream>
 #include <fstream>
+#include <unordered_set>
 
 namespace rcli {
 
@@ -47,7 +48,15 @@ std::string ActionRegistry::get_definitions_json() const {
 std::string ActionRegistry::get_filtered_definitions_json(
     const std::string& query, int max_tools) const
 {
-    // Tokenize query into lowercase words
+    static const std::unordered_set<std::string> stopwords = {
+        "a", "an", "the", "my", "me", "is", "it", "in", "on", "at", "to",
+        "do", "can", "you", "please", "hey", "hi", "and", "or", "of", "for",
+        "with", "get", "need", "want", "would", "should", "could", "just",
+        "some", "any", "like", "about", "have", "has", "had", "be", "been",
+        "was", "were", "are", "am", "so", "but", "not", "no", "yes", "if",
+        "up", "im", "its", "ive", "id", "ill", "let", "go", "us",
+    };
+
     std::vector<std::string> query_words;
     {
         std::string word;
@@ -55,21 +64,39 @@ std::string ActionRegistry::get_filtered_definitions_json(
             if (std::isalnum(static_cast<unsigned char>(c))) {
                 word += std::tolower(static_cast<unsigned char>(c));
             } else if (!word.empty()) {
-                if (word.size() > 1) query_words.push_back(word);
+                if (word.size() > 1 && stopwords.find(word) == stopwords.end())
+                    query_words.push_back(word);
                 word.clear();
             }
         }
-        if (word.size() > 1) query_words.push_back(word);
+        if (word.size() > 1 && stopwords.find(word) == stopwords.end())
+            query_words.push_back(word);
     }
 
-    // Score each enabled action by keyword overlap with name + description
     struct ScoredAction {
         std::string name;
         std::string description;
         std::string parameters_json;
         int score;
     };
+
+    auto score_haystack = [&](const std::string& haystack) -> int {
+        int s = 0;
+        for (auto& w : query_words)
+            if (haystack.find(w) != std::string::npos) s++;
+        return s;
+    };
+
     std::vector<ScoredAction> scored;
+
+    // Score built-in tools the same way as macOS actions
+    scored.push_back({"get_current_time",
+                      "Get the current date and time", "{}",
+                      score_haystack("get_current_time get the current date and time")});
+    scored.push_back({"calculate",
+                      "Evaluate a math expression",
+                      "{\"expression\": \"math expression like 2 + 2\"}",
+                      score_haystack("calculate evaluate a math expression")});
 
     for (auto& [name, entry] : actions_) {
         if (enabled_.count(name) == 0) continue;
@@ -84,39 +111,36 @@ std::string ActionRegistry::get_filtered_definitions_json(
         for (char c : entry.def.category)
             haystack += std::tolower(static_cast<unsigned char>(c));
 
-        int score = 0;
-        for (auto& w : query_words) {
-            if (haystack.find(w) != std::string::npos) score++;
-        }
-
         scored.push_back({entry.def.name, entry.def.description,
-                          entry.def.parameters_json, score});
+                          entry.def.parameters_json, score_haystack(haystack)});
     }
 
     // Sort by score descending
     std::sort(scored.begin(), scored.end(),
               [](const ScoredAction& a, const ScoredAction& b) { return a.score > b.score; });
 
-    // If fewer than max_tools actions are enabled, just return all of them
-    if ((int)scored.size() <= max_tools) {
-        return get_definitions_json();
+    // If ANY tool scored > 0, include the full tool set so the model
+    // stays in "tool calling mode" — partial lists confuse small models.
+    // If NO tool is relevant (pure chat like "hi"), return empty.
+    bool any_relevant = false;
+    for (auto& sa : scored) {
+        if (sa.score > 0) { any_relevant = true; break; }
     }
 
-    // Take top-k scoring actions (always include those with score > 0)
+    if (!any_relevant) return "";
+
+    // Return full set: built-in tools are already in `scored`, plus
+    // top-k macOS actions (all of them if there are fewer than max_tools).
     std::ostringstream oss;
     oss << "[\n";
-
-    // Always include built-in tools
-    oss << "  {\"name\": \"get_current_time\", \"description\": \"Get the current date and time\", \"parameters\": {}}";
-    oss << ",\n  {\"name\": \"calculate\", \"description\": \"Evaluate a math expression\", \"parameters\": {\"expression\": \"math expression like 2 + 2\"}}";
-
     int included = 0;
     for (auto& sa : scored) {
-        if (included >= max_tools) break;
-        oss << ",\n  {\"name\": \"" << sa.name
+        if (included > 0) oss << ",\n";
+        oss << "  {\"name\": \"" << sa.name
             << "\", \"description\": \"" << sa.description
             << "\", \"parameters\": " << sa.parameters_json << "}";
         included++;
+        if (included >= max_tools + 2) break; // +2 for built-in tools
     }
     oss << "\n]";
     return oss.str();

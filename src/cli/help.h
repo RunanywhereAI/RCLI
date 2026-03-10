@@ -13,7 +13,7 @@ inline void print_usage(const char* argv0) {
         "    %s <command> [options]\n\n"
         "%s  COMMANDS%s\n"
         "    %s(no command)%s      Interactive mode (push-to-talk + text input)\n"
-        "    %slisten%s             Continuous voice mode — always listening\n"
+        "    %slisten%s             Voice mode — push-to-talk with SPACE\n"
         "    %sask%s <text>         One-shot text command\n"
         "    %sactions%s [name]     List all actions, or show detail for one\n"
         "    %saction%s <n> [json]  Execute a named action directly\n"
@@ -25,6 +25,7 @@ inline void print_usage(const char* argv0) {
         "    %sstt%s                Manage STT models (alias: models stt)\n"
         "    %supgrade-stt%s        Upgrade to Parakeet TDT (better accuracy, +640MB)\n"
         "    %supgrade-llm%s        Upgrade LLM (Qwen3.5, LFM2, and more)\n"
+        "    %spersonality%s        Change assistant personality (quirky, cynical, nerdy, ...)\n"
         "    %scleanup%s            Remove unused models to free disk space\n"
         "    %sbench%s              Run benchmarks (STT, LLM, TTS, E2E, RAG)\n"
         "    %sinfo%s               Show engine info\n\n"
@@ -63,26 +64,27 @@ inline void print_usage(const char* argv0) {
         color::green, color::reset,
         color::green, color::reset,
         color::green, color::reset,
+        color::green, color::reset,
         color::dim, color::reset,
         color::dim, color::reset);
 }
 
 inline void print_help_listen() {
     fprintf(stderr,
-        "\n%s%s  RCLI listen%s  —  Continuous voice mode\n\n"
-        "  Listens for your voice, transcribes, classifies intent,\n"
-        "  executes actions or answers questions, and speaks the result.\n\n"
+        "\n%s%s  RCLI listen%s  —  Push-to-talk voice mode\n\n"
+        "  Press SPACE to start talking, SPACE again to stop.\n"
+        "  RCLI transcribes, executes actions, and speaks the result.\n\n"
         "%s  OPTIONS%s\n"
         "    --models <dir>      Models directory\n"
         "    --gpu-layers <n>    GPU layers (default: 99)\n"
         "    --no-speak          Don't speak responses\n\n"
         "%s  HOW IT WORKS%s\n"
-        "    1. Listens for your voice via microphone\n"
-        "    2. Transcribes speech to text\n"
-        "    3. Classifies intent — action, conversation, or question\n"
-        "    4. Executes actions or generates a response\n"
+        "    1. Press SPACE — microphone starts recording\n"
+        "    2. Speak your command\n"
+        "    3. Press SPACE — recording stops, speech is transcribed\n"
+        "    4. RCLI processes your request (action or conversation)\n"
         "    5. Speaks the result back to you\n\n"
-        "  Press Ctrl+C to stop.\n\n",
+        "  Press Ctrl+C to quit.\n\n",
         color::bold, color::orange, color::reset,
         color::bold, color::reset,
         color::bold, color::reset);

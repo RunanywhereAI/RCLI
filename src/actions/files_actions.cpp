@@ -20,7 +20,7 @@ void register_files_actions(ActionRegistry& registry) {
     registry.register_action(
         {"search_files", "Search for files using Spotlight",
          "{\"query\": \"search term\"}",
-         false,
+         true,
          "system",
          "Find files about project plan",
          "rcli action search_files '{\"query\": \"project plan\"}'"},

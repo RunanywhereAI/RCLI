@@ -1,0 +1,68 @@
+name: Release Beta
+
+on:
+  push:
+    tags:
+      - 'v*-beta*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feature/metalrt
+
+      - name: Setup dependencies
+        run: bash scripts/setup.sh
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      - name: Build
+        run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Package
+        id: package
+        run: |
+          bash scripts/package.sh
+          TARBALL=$(ls dist/*.tar.gz)
+          SHA256=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "SHA256: $SHA256"
+
+      - name: Create GitHub Pre-Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            ## Beta Release — MetalRT Integration
+
+            This is a **pre-release** for testing MetalRT support.
+            Install alongside your stable `rcli`:
+
+            ```bash
+            brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
+            brew install rcli-beta
+            rcli-beta setup       # choose engine
+            rcli-beta metalrt install
+            ```
+
+            Your stable `rcli` is NOT affected.
+
+            ### SHA256
+            ```
+            ${{ steps.package.outputs.sha256 }}
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -76,46 +76,138 @@ void Benchmark::bench_stt(const std::string& wav_path) {
     add_result("STT Real-Time Factor", "stt", rtf, "x");
 }
 
-void Benchmark::bench_llm() {
-    fprintf(stderr, "\n--- LLM Benchmark ---\n");
-
-    std::vector<std::string> prompts = {
-        "What is the capital of France?",
-        "Explain quantum computing in one sentence.",
-        "Write a haiku about programming."
-    };
-
-    std::vector<double> first_token_latencies;
-    std::vector<double> throughputs;
-
-    for (auto& prompt : prompts) {
-        pipeline_.llm().clear_kv_cache();
-
-        std::string full_prompt = pipeline_.llm().build_chat_prompt(
-            "You are a helpful assistant. Keep responses brief.", {}, prompt
-        );
-
-        std::string response = pipeline_.llm().generate(full_prompt);
-
-        auto& stats = pipeline_.llm().last_stats();
-        first_token_latencies.push_back(stats.first_token_us / 1000.0);
-        throughputs.push_back(stats.gen_tps());
-
-        fprintf(stderr, "  Prompt: \"%s\"\n", prompt.c_str());
-        fprintf(stderr, "  Response: \"%s\"\n", response.substr(0, 100).c_str());
-        fprintf(stderr, "  First token: %.1fms, %.1f tok/s, %lld tokens\n\n",
-                stats.first_token_us / 1000.0, stats.gen_tps(), stats.generated_tokens);
+void Benchmark::bench_metalrt_stt(const std::string& wav_path) {
+    if (!pipeline_.using_metalrt_stt()) {
+        fprintf(stderr, "--- MetalRT STT Benchmark --- (SKIPPED: not active)\n");
+        return;
     }
 
-    double avg_ftl = std::accumulate(first_token_latencies.begin(),
-                                      first_token_latencies.end(), 0.0) / first_token_latencies.size();
-    double avg_tps = std::accumulate(throughputs.begin(),
-                                      throughputs.end(), 0.0) / throughputs.size();
+    fprintf(stderr, "\n--- MetalRT STT Benchmark [Whisper Medium] ---\n");
 
-    add_result("LLM First Token (avg)", "llm", avg_ftl, "ms");
-    add_result("LLM Throughput (avg)", "llm", avg_tps, "tok/s");
-    add_result("LLM Prompt Eval", "llm",
-               pipeline_.llm().last_stats().prompt_tps(), "tok/s");
+    auto audio = AudioIO::load_wav_to_vec(wav_path, 16000);
+    if (audio.empty()) {
+        fprintf(stderr, "[Bench] No test audio available, skipping\n");
+        return;
+    }
+
+    double audio_duration_ms = audio.size() * 1000.0 / 16000.0;
+    constexpr int num_runs = 5;
+
+    // Warmup
+    pipeline_.metalrt_stt().transcribe(audio.data(), (int)audio.size(), 16000);
+
+    double best_ms = 1e9;
+    std::vector<double> latencies;
+    std::string best_text;
+
+    for (int run = 0; run < num_runs; run++) {
+        int64_t t0 = now_us();
+        std::string text = pipeline_.metalrt_stt().transcribe(audio.data(), (int)audio.size(), 16000);
+        int64_t t1 = now_us();
+
+        double ms = (t1 - t0) / 1000.0;
+        double encode_ms = pipeline_.metalrt_stt().last_encode_ms();
+        double decode_ms = pipeline_.metalrt_stt().last_decode_ms();
+        latencies.push_back(ms);
+        if (ms < best_ms) { best_ms = ms; best_text = text; }
+
+        fprintf(stderr, "  Run %d: %.1fms (enc=%.1fms, dec=%.1fms) \"%s\"\n",
+                run + 1, ms, encode_ms, decode_ms,
+                text.substr(0, 60).c_str());
+    }
+
+    double avg = std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();
+    double best_rtf = best_ms / audio_duration_ms;
+    double avg_rtf = avg / audio_duration_ms;
+
+    fprintf(stderr, "\n  Best:  %.1fms (RTF %.4f)\n", best_ms, best_rtf);
+    fprintf(stderr, "  Avg:   %.1fms (RTF %.4f)\n", avg, avg_rtf);
+    fprintf(stderr, "  Audio: %.1fms\n", audio_duration_ms);
+
+    add_result("MetalRT STT Latency (best)", "stt", best_ms, "ms");
+    add_result("MetalRT STT Latency (avg)", "stt", avg, "ms");
+    add_result("MetalRT STT RTF (best)", "stt", best_rtf, "x");
+    add_result("MetalRT STT Audio Duration", "stt", audio_duration_ms, "ms");
+}
+
+void Benchmark::bench_llm() {
+    bool use_mrt = pipeline_.using_metalrt();
+    const char* engine_name = use_mrt ? "MetalRT" : "llama.cpp";
+    fprintf(stderr, "\n--- LLM Benchmark [%s] ---\n", engine_name);
+
+    std::string bench_prompt = "Write a short introduction to a large language model.";
+    std::string sys_prompt = "You are a helpful assistant.";
+    constexpr int bench_max_tokens = 256;
+    constexpr int num_runs = 5;
+
+    if (use_mrt) {
+        pipeline_.metalrt_llm().set_max_tokens(bench_max_tokens);
+        pipeline_.metalrt_llm().set_ignore_eos(true);
+    }
+
+    double best_decode_tps = 0;
+    double best_prefill_tps = 0;
+    double best_ttft = 1e9;
+    std::vector<double> decode_runs;
+    std::vector<double> prefill_runs;
+    std::vector<double> ttft_runs;
+
+    for (int run = 0; run < num_runs; run++) {
+        std::string response;
+        const LlmStats* stats = nullptr;
+
+        if (use_mrt) {
+            auto& mrt = pipeline_.metalrt_llm();
+            mrt.clear_kv();
+            std::string full_prompt = mrt.profile().build_chat_prompt(sys_prompt, {}, bench_prompt);
+            response = mrt.generate_raw(full_prompt);
+            stats = &mrt.last_stats();
+        } else {
+            auto& llm = pipeline_.llm();
+            llm.clear_kv_cache();
+            std::string full_prompt = llm.build_chat_prompt(sys_prompt, {}, bench_prompt);
+            response = llm.generate(full_prompt);
+            stats = &llm.last_stats();
+        }
+
+        double decode_tps = stats->gen_tps();
+        double prefill_tok_s = stats->prompt_tps();
+        double ttft = stats->first_token_us / 1000.0;
+
+        decode_runs.push_back(decode_tps);
+        prefill_runs.push_back(prefill_tok_s);
+        ttft_runs.push_back(ttft);
+
+        if (decode_tps > best_decode_tps) best_decode_tps = decode_tps;
+        if (prefill_tok_s > best_prefill_tps) best_prefill_tps = prefill_tok_s;
+        if (ttft < best_ttft) best_ttft = ttft;
+
+        fprintf(stderr, "  Run %d: %lld tok, %.1f tok/s decode, %.1f tok/s prefill, TTFT %.1fms\n",
+                run + 1, stats->generated_tokens, decode_tps, prefill_tok_s, ttft);
+        if (run == 0)
+            fprintf(stderr, "    \"%s\"\n\n", response.substr(0, 120).c_str());
+    }
+
+    double avg_decode = std::accumulate(decode_runs.begin(), decode_runs.end(), 0.0) / decode_runs.size();
+    double avg_prefill = std::accumulate(prefill_runs.begin(), prefill_runs.end(), 0.0) / prefill_runs.size();
+    double avg_ttft = std::accumulate(ttft_runs.begin(), ttft_runs.end(), 0.0) / ttft_runs.size();
+
+    fprintf(stderr, "\n  Best:  %.1f tok/s decode, %.1f tok/s prefill, %.1fms TTFT\n",
+            best_decode_tps, best_prefill_tps, best_ttft);
+    fprintf(stderr, "  Avg:   %.1f tok/s decode, %.1f tok/s prefill, %.1fms TTFT\n",
+            avg_decode, avg_prefill, avg_ttft);
+
+    std::string label = std::string("LLM [") + engine_name + "]";
+    add_result(label + " Decode (best)", "llm", best_decode_tps, "tok/s");
+    add_result(label + " Decode (avg)", "llm", avg_decode, "tok/s");
+    add_result(label + " Prefill (best)", "llm", best_prefill_tps, "tok/s");
+    add_result(label + " TTFT (best)", "llm", best_ttft, "ms");
+    add_result(label + " TTFT (avg)", "llm", avg_ttft, "ms");
+
+    if (use_mrt) {
+        pipeline_.metalrt_llm().set_max_tokens(2048);
+        pipeline_.metalrt_llm().set_ignore_eos(false);
+    }
 }
 
 void Benchmark::bench_llm_cached() {
@@ -352,6 +444,59 @@ void Benchmark::bench_tts() {
 
     add_result("TTS Latency (avg)", "tts", avg_lat, "ms");
     add_result("TTS Real-Time Factor (avg)", "tts", avg_rtf, "x");
+}
+
+void Benchmark::bench_metalrt_tts() {
+    if (!pipeline_.using_metalrt_tts()) {
+        fprintf(stderr, "\n--- MetalRT TTS Benchmark --- (SKIPPED: not active)\n");
+        return;
+    }
+
+    fprintf(stderr, "\n--- MetalRT TTS Benchmark [Kokoro 82M] ---\n");
+
+    struct TtsBenchCase {
+        const char* label;
+        std::string text;
+    };
+
+    std::vector<TtsBenchCase> cases = {
+        {"4w",  "Hello, I am your assistant."},
+        {"10w", "The weather today is partly cloudy with a high of twenty two degrees."},
+        {"20w", "Quantum computing leverages quantum mechanical phenomena such as superposition and entanglement to perform calculations that would be infeasible for classical computers."},
+        {"40w", "In a world where technology advances at an unprecedented pace, we must remember the importance of human connection and creativity. Artificial intelligence can augment our abilities, but it is our uniquely human qualities of empathy, imagination, and moral reasoning that will guide us through the challenges ahead."},
+    };
+
+    constexpr int num_runs = 5;
+
+    // Warmup
+    pipeline_.metalrt_tts().synthesize("Warmup sentence for the synthesizer.");
+
+    for (auto& tc : cases) {
+        fprintf(stderr, "\n  [%s] \"%s\"\n", tc.label, tc.text.substr(0, 50).c_str());
+
+        double best_ms = 1e9;
+        double best_audio_ms = 0;
+        std::vector<double> latencies;
+
+        for (int run = 0; run < num_runs; run++) {
+            auto audio = pipeline_.metalrt_tts().synthesize(tc.text);
+            double ms = pipeline_.metalrt_tts().last_synthesis_ms();
+            double audio_ms = audio.size() * 1000.0 / pipeline_.metalrt_tts().sample_rate();
+            latencies.push_back(ms);
+            if (ms < best_ms) { best_ms = ms; best_audio_ms = audio_ms; }
+        }
+
+        double avg = std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();
+        double rtf_best = (best_audio_ms > 0) ? (best_audio_ms / best_ms) : 0;
+        double rtf_avg = (best_audio_ms > 0) ? (best_audio_ms / avg) : 0;
+
+        fprintf(stderr, "    Best: %.1fms (%.1fx realtime), Avg: %.1fms (%.1fx realtime), Audio: %.1fms\n",
+                best_ms, rtf_best, avg, rtf_avg, best_audio_ms);
+
+        std::string label = std::string("MetalRT TTS ") + tc.label;
+        add_result(label + " (best)", "tts", best_ms, "ms");
+        add_result(label + " RTF", "tts", rtf_best, "x");
+    }
 }
 
 void Benchmark::bench_e2e(const std::string& wav_path) {

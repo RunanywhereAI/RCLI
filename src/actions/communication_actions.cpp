@@ -75,7 +75,7 @@ void register_communication_actions(ActionRegistry& registry) {
     registry.register_action(
         {"facetime_call", "Start a FaceTime video call",
          "{\"contact\": \"name, phone number, or email\"}",
-         false,
+         true,
          "communication",
          "FaceTime John",
          "rcli action facetime_call '{\"contact\": \"john@example.com\"}'"},
@@ -84,7 +84,7 @@ void register_communication_actions(ActionRegistry& registry) {
     registry.register_action(
         {"facetime_audio", "Start a FaceTime audio call (phone call)",
          "{\"contact\": \"name, phone number, or email\"}",
-         false,
+         true,
          "communication",
          "Call Mom",
          "rcli action facetime_audio '{\"contact\": \"+1234567890\"}'"},
@@ -93,7 +93,7 @@ void register_communication_actions(ActionRegistry& registry) {
     registry.register_action(
         {"run_shortcut", "Run an Apple Shortcut by name",
          "{\"name\": \"shortcut name\", \"input\": \"optional input text\"}",
-         false,
+         true,
          "productivity",
          "Run my Morning Routine shortcut",
          "rcli action run_shortcut '{\"name\": \"Morning Routine\"}'"},

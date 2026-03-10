@@ -7,6 +7,7 @@
 #include "models/model_registry.h"
 #include "models/tts_model_registry.h"
 #include "models/stt_model_registry.h"
+#include "engines/metalrt_loader.h"
 #include <dirent.h>
 
 inline int cmd_setup(const Args& args) {
@@ -33,6 +34,134 @@ inline int cmd_setup(const Args& args) {
         fprintf(stderr, "    rcli              # interactive mode\n");
         fprintf(stderr, "    rcli listen       # voice mode\n");
         fprintf(stderr, "    rcli actions      # see what's possible\n\n");
+        return 0;
+    }
+
+    // --- Engine choice ---
+    fprintf(stderr, "  Choose your inference engine:\n\n");
+    fprintf(stderr, "  %s1%s  %sOpen Source%s (llama.cpp + sherpa-onnx)              ~1 GB\n",
+            color::bold, color::reset, color::green, color::reset);
+    fprintf(stderr, "     Community-maintained, all models supported.\n");
+    fprintf(stderr, "     Speed: ~180 tok/s (LFM2 1.2B)\n\n");
+    fprintf(stderr, "  %s2%s  %sMetalRT%s (Apple Silicon GPU acceleration)           ~1.5 GB\n",
+            color::bold, color::reset, color::cyan, color::reset);
+    fprintf(stderr, "     Closed-source engine optimized for Metal GPU.\n");
+    fprintf(stderr, "     Speed: ~486 tok/s (Qwen3 0.6B), ~180 tok/s (Qwen3 4B)\n");
+    fprintf(stderr, "     Supports: Qwen3, Llama 3.2, LFM2.5\n\n");
+    fprintf(stderr, "  %s3%s  %sBoth%s (recommended)                                 ~2.5 GB\n",
+            color::bold, color::reset, color::orange, color::reset);
+    fprintf(stderr, "     Install both engines. Use MetalRT when available,\n");
+    fprintf(stderr, "     fall back to llama.cpp for unsupported models.\n\n");
+    fprintf(stderr, "  Enter choice [1-3]: ");
+    fflush(stderr);
+
+    char engine_buf[16] = {};
+    if (read(STDIN_FILENO, engine_buf, sizeof(engine_buf) - 1) <= 0) engine_buf[0] = '3';
+    if (engine_buf[0] == '\n') engine_buf[0] = '3';
+    int engine_choice = engine_buf[0] - '0';
+    if (engine_choice < 1 || engine_choice > 3) engine_choice = 3;
+
+    bool install_llamacpp = (engine_choice == 1 || engine_choice == 3);
+    bool install_metalrt  = (engine_choice == 2 || engine_choice == 3);
+
+    std::string engine_pref = "auto";
+    if (engine_choice == 1) engine_pref = "llamacpp";
+    if (engine_choice == 2) engine_pref = "metalrt";
+    rcli::write_engine_preference(engine_pref);
+
+    fprintf(stderr, "\n");
+
+    // Install MetalRT binary if requested
+    if (install_metalrt) {
+        fprintf(stderr, "  %sInstalling MetalRT engine...%s\n", color::dim, color::reset);
+        if (!rastack::MetalRTLoader::install()) {
+            fprintf(stderr, "  %s%sMetalRT installation failed.%s Continuing with llama.cpp...\n",
+                    color::bold, color::yellow, color::reset);
+            if (!install_llamacpp) {
+                install_llamacpp = true;
+                rcli::write_engine_preference("llamacpp");
+            }
+        } else {
+            fprintf(stderr, "  %s%sMetalRT installed!%s\n\n", color::bold, color::green, color::reset);
+
+            // Download default MetalRT LLM weights (Qwen3-0.6B)
+            auto all = rcli::all_models();
+            for (auto& m : all) {
+                if (m.metalrt_id == "metalrt-qwen3-0.6b") {
+                    std::string mrt_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
+                    fprintf(stderr, "  %sDownloading MetalRT LLM: %s...%s\n", color::dim, m.name.c_str(), color::reset);
+                    std::string config_url = m.metalrt_url;
+                    auto pos = config_url.rfind("model.safetensors");
+                    if (pos != std::string::npos) config_url.replace(pos, 17, "config.json");
+                    std::string dl_cmd = "bash -c '"
+                        "set -e; mkdir -p \"" + mrt_dir + "\"; "
+                        "curl -fL -# -o \"" + mrt_dir + "/model.safetensors\" \"" + m.metalrt_url + "\"; "
+                        "curl -fL -# -o \"" + mrt_dir + "/tokenizer.json\" \"" + m.metalrt_tokenizer_url + "\"; "
+                        "curl -fL -# -o \"" + mrt_dir + "/config.json\" \"" + config_url + "\"; "
+                        "'";
+                    if (system(dl_cmd.c_str()) != 0) {
+                        fprintf(stderr, "  %s%sMetalRT LLM download failed.%s\n",
+                                color::bold, color::yellow, color::reset);
+                    }
+                    break;
+                }
+            }
+
+            // Download MetalRT STT/TTS component models (Whisper + Kokoro)
+            auto comp = rcli::metalrt_component_models();
+            for (auto& cm : comp) {
+                std::string cm_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
+                if (rcli::is_metalrt_component_installed(cm)) continue;
+
+                std::string type_label = (cm.component == "stt") ? "STT" : "TTS";
+                fprintf(stderr, "  %sDownloading MetalRT %s: %s (~%s)...%s\n",
+                        color::dim, type_label.c_str(), cm.name.c_str(),
+                        rcli::format_size(cm.size_mb).c_str(), color::reset);
+
+                std::string hf_base = "https://huggingface.co/" + cm.hf_repo + "/resolve/main/";
+                std::string subdir = cm.hf_subdir.empty() ? "" : cm.hf_subdir + "/";
+
+                if (cm.component == "tts") {
+                    std::string dl_cmd = "bash -c '"
+                        "set -e; mkdir -p \"" + cm_dir + "/voices\"; "
+                        "echo \"  Fetching config.json...\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/config.json\" \"" + hf_base + subdir + "config.json\"; "
+                        "echo \"  Fetching model weights...\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/kokoro-v1_0.safetensors\" \"" + hf_base + subdir + "kokoro-v1_0.safetensors\"; "
+                        "echo \"  Fetching voice embeddings...\"; "
+                        "for v in af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky "
+                        "am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa "
+                        "bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis; do "
+                        "curl -fL -s -o \"" + cm_dir + "/voices/${v}.safetensors\" \"" + hf_base + subdir + "voices/${v}.safetensors\"; "
+                        "done; "
+                        "echo \"  Downloaded $(ls \"" + cm_dir + "/voices/\" | wc -l | tr -d \" \") voice files\"; "
+                        "'";
+                    if (system(dl_cmd.c_str()) != 0) {
+                        fprintf(stderr, "  %s%sMetalRT %s download failed.%s\n",
+                                color::bold, color::yellow, type_label.c_str(), color::reset);
+                    }
+                } else {
+                    std::string dl_cmd = "bash -c '"
+                        "set -e; mkdir -p \"" + cm_dir + "\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/config.json\" \"" + hf_base + subdir + "config.json\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/model.safetensors\" \"" + hf_base + subdir + "model.safetensors\"; "
+                        "curl -fL -# -o \"" + cm_dir + "/tokenizer.json\" \"" + hf_base + subdir + "tokenizer.json\"; "
+                        "'";
+                    if (system(dl_cmd.c_str()) != 0) {
+                        fprintf(stderr, "  %s%sMetalRT %s download failed.%s\n",
+                                color::bold, color::yellow, type_label.c_str(), color::reset);
+                    }
+                }
+            }
+        }
+    }
+
+    // Skip llama.cpp download if user only wants MetalRT and it succeeded
+    if (!install_llamacpp) {
+        fprintf(stderr, "\n  %s%sSetup complete!%s (MetalRT only)\n\n", color::bold, color::green, color::reset);
+        fprintf(stderr, "  Get started:\n");
+        fprintf(stderr, "    rcli              # interactive mode\n");
+        fprintf(stderr, "    rcli metalrt status  # check MetalRT\n\n");
         return 0;
     }
 
@@ -199,11 +328,105 @@ inline int cmd_upgrade_stt(const Args& args) {
 inline int cmd_upgrade_llm(const Args& args) {
     std::string models_dir = args.models_dir;
 
-    auto models = rcli::all_models();
+    std::string engine_pref = rcli::read_engine_preference();
+    bool is_metalrt = (engine_pref == "metalrt");
+
+    auto all = rcli::all_models();
+
+    if (is_metalrt) {
+        // MetalRT mode — show only MetalRT-supported models with MLX sizes/speeds
+        auto mrt = rcli::models_for_engine(rcli::LlmBackendType::METALRT);
+
+        fprintf(stderr, "\n%s%s  RCLI — Upgrade Language Model (MetalRT)%s\n\n", color::bold, color::orange, color::reset);
+        fprintf(stderr, "  Engine: %sMetalRT%s (Apple Silicon GPU)\n", color::cyan, color::reset);
+        fprintf(stderr, "  Models are MLX 4-bit safetensors from mlx-community.\n\n");
+
+        fprintf(stderr, "    %s#  %-28s  %-8s  %-12s  %-12s  %s%s\n",
+                color::bold, "Model", "Size", "Speed", "Tool Call", "Status", color::reset);
+        fprintf(stderr, "    %s──  %-28s  %-8s  %-12s  %-12s  %s%s\n",
+                color::dim, "────────────────────────────", "────────", "────────────", "────────────", "──────", color::reset);
+
+        for (size_t i = 0; i < mrt.size(); i++) {
+            auto& m = mrt[i];
+            bool installed = rcli::is_metalrt_model_installed(m);
+            std::string status;
+            if (installed) status = "\033[32minstalled\033[0m";
+
+            fprintf(stderr, "    %s%zu%s  %-28s  %-8s  %-12s  %-12s  %s\n",
+                    color::bold, i + 1, color::reset,
+                    m.name.c_str(),
+                    rcli::format_size(m.metalrt_size_mb).c_str(),
+                    m.metalrt_speed_est.c_str(),
+                    m.tool_calling.c_str(),
+                    status.c_str());
+        }
+
+        fprintf(stderr, "\n");
+        for (size_t i = 0; i < mrt.size(); i++) {
+            auto& m = mrt[i];
+            fprintf(stderr, "  %s%zu — %s%s\n",
+                    color::bold, i + 1, m.name.c_str(), color::reset);
+            fprintf(stderr, "       %s\n\n", m.description.c_str());
+        }
+
+        fprintf(stderr, "  Enter choice [1-%zu/q]: ", mrt.size());
+        fflush(stderr);
+
+        char buf[16] = {};
+        if (read(STDIN_FILENO, buf, sizeof(buf) - 1) <= 0 || buf[0] == '\n') {
+            fprintf(stderr, "\n  Cancelled.\n\n"); return 0;
+        }
+        if (buf[0] == 'q' || buf[0] == 'Q') {
+            fprintf(stderr, "\n  Cancelled.\n\n"); return 0;
+        }
+
+        int choice = atoi(buf);
+        if (choice < 1 || choice > (int)mrt.size()) {
+            fprintf(stderr, "\n  Invalid choice.\n\n"); return 1;
+        }
+
+        auto& sel = mrt[choice - 1];
+        if (rcli::is_metalrt_model_installed(sel)) {
+            fprintf(stderr, "\n  %s%s%s already installed!%s\n\n",
+                    color::bold, color::green, sel.name.c_str(), color::reset);
+            return 0;
+        }
+
+        std::string mrt_dir = rcli::metalrt_models_dir() + "/" + sel.metalrt_dir_name;
+        std::string size_str = rcli::format_size(sel.metalrt_size_mb);
+        fprintf(stderr, "\n  Downloading %s MLX (~%s)...\n\n", sel.name.c_str(), size_str.c_str());
+
+        std::string config_url = sel.metalrt_url;
+        auto pos = config_url.rfind("model.safetensors");
+        if (pos != std::string::npos) config_url.replace(pos, 17, "config.json");
+        std::string dl_cmd = "bash -c '"
+            "set -e; mkdir -p \"" + mrt_dir + "\"; "
+            "curl -fL -# -o \"" + mrt_dir + "/model.safetensors\" \"" + sel.metalrt_url + "\"; "
+            "curl -fL -# -o \"" + mrt_dir + "/tokenizer.json\" \"" + sel.metalrt_tokenizer_url + "\"; "
+            "curl -fL -# -o \"" + mrt_dir + "/config.json\" \"" + config_url + "\"; "
+            "'";
+
+        if (system(dl_cmd.c_str()) != 0) {
+            fprintf(stderr, "\n  %s%sDownload failed.%s Check your internet connection and try again.\n\n",
+                    color::bold, color::red, color::reset);
+            return 1;
+        }
+
+        fprintf(stderr, "\n  %s%s%s installed!%s\n", color::bold, color::green, sel.name.c_str(), color::reset);
+        fprintf(stderr, "  Location: %s\n\n", mrt_dir.c_str());
+        return 0;
+    }
+
+    // llama.cpp / auto mode — original behavior (GGUF models)
+    auto models = all;
     auto options = rcli::get_upgrade_options(models);
     const auto* current_best = rcli::find_best_installed(models_dir, models);
 
     fprintf(stderr, "\n%s%s  RCLI — Upgrade Language Model%s\n\n", color::bold, color::orange, color::reset);
+    if (engine_pref == "auto" || engine_pref.empty()) {
+        fprintf(stderr, "  Engine: auto (llama.cpp). Tip: switch to MetalRT with %srcli setup%s for GPU speed.\n\n",
+                color::bold, color::reset);
+    }
     fprintf(stderr, "  Choose a model to download for smarter voice commands.\n");
     fprintf(stderr, "  The highest-priority installed model is used automatically.\n\n");
 

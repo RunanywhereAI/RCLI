@@ -28,6 +28,7 @@ struct ModelProfile {
     std::string family_name;             // Human-readable: "Qwen3", "LFM2", etc.
 
     // Chat template tokens
+    std::string bos_token;               // prepended to prompt (e.g. "<|startoftext|>" for LFM2)
     std::string msg_start;               // e.g. "<|im_start|>" or "<|start_header_id|>"
     std::string msg_end;                 // e.g. "<|im_end|>" or "<|eot_id|>"
     std::string role_separator;          // usually "\n"

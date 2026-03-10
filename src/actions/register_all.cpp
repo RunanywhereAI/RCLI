@@ -1,7 +1,5 @@
 #include "actions/macos_actions.h"
 #include "actions/notes_actions.h"
-#include "actions/reminders_actions.h"
-#include "actions/messages_actions.h"
 #include "actions/app_control_actions.h"
 #include "actions/window_actions.h"
 #include "actions/files_actions.h"
@@ -17,8 +15,6 @@ namespace rcli {
 
 void register_macos_actions(ActionRegistry& registry) {
     register_notes_actions(registry);
-    register_reminders_actions(registry);
-    register_messages_actions(registry);
     register_app_control_actions(registry);
     register_window_actions(registry);
     register_files_actions(registry);

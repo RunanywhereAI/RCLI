@@ -160,7 +160,7 @@ void register_media_actions(ActionRegistry& registry) {
     registry.register_action(
         {"previous_track", "Go to the previous track",
          "{}",
-         false,
+         true,
          "media",
          "Play the previous song",
          "rcli action previous_track '{}'"},
@@ -187,7 +187,7 @@ void register_media_actions(ActionRegistry& registry) {
     registry.register_action(
         {"play_apple_music", "Play a song on Apple Music by name",
          "{\"query\": \"song or artist name\"}",
-         false,
+         true,
          "media",
          "Play Beatles on Apple Music",
          "rcli action play_apple_music '{\"query\": \"Beatles\"}'"},

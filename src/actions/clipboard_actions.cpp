@@ -23,7 +23,7 @@ void register_clipboard_actions(ActionRegistry& registry) {
     registry.register_action(
         {"clipboard_read", "Read text from clipboard",
          "{}",
-         false,
+         true,
          "system",
          "What's on my clipboard?",
          "rcli action clipboard_read '{}'"},
@@ -32,7 +32,7 @@ void register_clipboard_actions(ActionRegistry& registry) {
     registry.register_action(
         {"clipboard_write", "Copy text to clipboard",
          "{\"text\": \"text to copy\"}",
-         false,
+         true,
          "system",
          "Copy 'Hello World' to my clipboard",
          "rcli action clipboard_write '{\"text\": \"Hello World\"}'"},

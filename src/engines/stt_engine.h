@@ -70,6 +70,11 @@ private:
     int64_t      last_latency_us_ = 0;
     int64_t      last_feed_time_us_ = 0;
     std::atomic<bool> has_new_result_{false};
+
+    // Buffered endpoint result: process_tick() stores final text here
+    // before resetting the stream, so get_result() can retrieve it.
+    std::string  pending_final_text_;
+    bool         pending_final_ = false;
 };
 
 // --- Offline STT (Whisper or Parakeet) ---

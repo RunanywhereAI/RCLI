@@ -9,7 +9,7 @@
 # Usage: ./download_models.sh [target_dir]
 #
 
-set -e
+set -euo pipefail
 
 MODELS_DIR="${1:-$HOME/Library/RCLI/models}"
 mkdir -p "$MODELS_DIR"

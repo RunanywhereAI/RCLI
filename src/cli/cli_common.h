@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <atomic>
 #include <map>
 #include <vector>
@@ -335,17 +336,31 @@ inline RCLIHandle create_and_init_engine(const Args& args) {
     return engine;
 }
 
-// Print a dim one-liner with LLM perf stats after a response.
-// Shows: tokens · tok/s · TTFT
+// Print a one-liner with LLM perf stats after a response.
+// Shows: engine · tokens · decode tok/s · TTFT · prefill ms · decode ms
 inline void print_llm_perf(RCLIHandle engine) {
     int tokens = 0;
     double tps = 0, ttft = 0, total = 0;
     rcli_get_last_llm_perf(engine, &tokens, &tps, &ttft, &total);
-    if (tokens > 0 && tps > 0) {
-        fflush(stdout);
-        fprintf(stderr, "  %s> %d tok \xc2\xb7 %.1f tok/s \xc2\xb7 TTFT %.0fms \xc2\xb7 %.0fms total%s\n",
-                color::dim, tokens, tps, ttft, total, color::reset);
-    }
+    if (tokens <= 0 || tps <= 0) return;
+
+    double pfill_tps = 0, dec_tps = 0, pfill_ms = 0, dec_ms = 0;
+    const char* eng_name = nullptr;
+    rcli_get_last_llm_perf_extended(engine,
+        &pfill_tps, &dec_tps, &pfill_ms, &dec_ms, nullptr, &eng_name);
+
+    fflush(stdout);
+    bool is_metalrt = (eng_name && std::string(eng_name) == "MetalRT");
+    const char* eng_color = is_metalrt ? color::green : color::dim;
+
+    fprintf(stderr, "  %s> %s%s%s \xc2\xb7 %d tok \xc2\xb7 %.0f tok/s \xc2\xb7 TTFT %.0fms",
+            color::dim, eng_color, eng_name ? eng_name : "LLM", color::dim,
+            tokens, tps, ttft);
+    if (pfill_ms > 0)
+        fprintf(stderr, " \xc2\xb7 prefill %.0fms", pfill_ms);
+    if (dec_ms > 0)
+        fprintf(stderr, " \xc2\xb7 decode %.0fms", dec_ms);
+    fprintf(stderr, "%s\n", color::reset);
 }
 
 // Print TTS perf after speaking.

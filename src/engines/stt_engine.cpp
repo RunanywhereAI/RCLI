@@ -94,16 +94,26 @@ TextSegment SttEngine::get_result() {
         return seg;
     }
 
+    // Return buffered endpoint result if process_tick() detected one.
+    // The stream is already reset at this point, so we can't read from it.
+    if (pending_final_) {
+        seg.text = pending_final_text_;
+        seg.is_final = true;
+        seg.confidence = 1.0f;
+        pending_final_ = false;
+        pending_final_text_.clear();
+        if (last_feed_time_us_ > 0) {
+            last_latency_us_ = now_us() - last_feed_time_us_;
+        }
+        return seg;
+    }
+
     const SherpaOnnxOnlineRecognizerResult* r =
         SherpaOnnxGetOnlineStreamResult(recognizer_, stream_);
     if (r && r->text && r->text[0] != '\0') {
         seg.text = r->text;
-        seg.is_final = SherpaOnnxOnlineStreamIsEndpoint(recognizer_, stream_);
-        seg.confidence = 1.0f; // Zipformer doesn't expose confidence directly
-
-        if (seg.is_final && last_feed_time_us_ > 0) {
-            last_latency_us_ = now_us() - last_feed_time_us_;
-        }
+        seg.is_final = false;  // Non-endpoint partials only; endpoints go through pending_final_
+        seg.confidence = 1.0f;
     }
     if (r) {
         SherpaOnnxDestroyOnlineRecognizerResult(r);
@@ -124,6 +134,8 @@ void SttEngine::reset() {
     }
     stream_ = SherpaOnnxCreateOnlineStream(recognizer_);
     last_text_.clear();
+    pending_final_ = false;
+    pending_final_text_.clear();
     has_new_result_.store(false, std::memory_order_relaxed);
 }
 
@@ -131,8 +143,10 @@ void SttEngine::process_tick() {
     if (!initialized_ || !stream_) return;
 
     // Decode available frames
+    int decoded = 0;
     while (SherpaOnnxIsOnlineStreamReady(recognizer_, stream_)) {
         SherpaOnnxDecodeOnlineStream(recognizer_, stream_);
+        decoded++;
     }
 
     // Check for new text
@@ -155,8 +169,11 @@ void SttEngine::process_tick() {
                 callback_(seg);
             }
 
-            // Reset stream on endpoint for next utterance
+            // Buffer endpoint result BEFORE resetting, so get_result()
+            // can still retrieve the final text after the stream is reset.
             if (is_endpoint) {
+                pending_final_text_ = text;
+                pending_final_ = true;
                 SherpaOnnxOnlineStreamReset(recognizer_, stream_);
                 last_text_.clear();
             }

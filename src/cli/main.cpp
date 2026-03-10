@@ -22,8 +22,10 @@
 #include "cli/visualizer.h"
 #include "cli/tui_app.h"
 #include "pipeline/orchestrator.h"
+#include "engines/metalrt_loader.h"
 #include "audio/audio_io.h"
 #include "audio/mic_permission.h"
+#include "core/personality.h"
 #include "llama.h"
 
 // Defined in cli_common.h as a forward declaration; implemented here because
@@ -61,366 +63,7 @@ inline bool ensure_mic_permission() {
 }
 
 // =============================================================================
-// Interactive mode — prompt reset helper
-// =============================================================================
-
-static void reset_prompt(std::string& input_buf, bool& typing, size_t& cursor_pos) {
-    input_buf.clear();
-    typing = false;
-    cursor_pos = 0;
-    fprintf(stderr, "  %s%s>%s ", color::orange, color::bold, color::reset);
-    fflush(stderr);
-}
-
-static void reset_prompt_nl(std::string& input_buf, bool& typing, size_t& cursor_pos) {
-    input_buf.clear();
-    typing = false;
-    cursor_pos = 0;
-    fprintf(stderr, "\n  %s%s>%s ", color::orange, color::bold, color::reset);
-    fflush(stderr);
-}
-
-// =============================================================================
-// Interactive mode — command dispatch (extracted from the main loop)
-// =============================================================================
-
-// Returns true if the input was handled as a command, false to fall through to LLM.
-static bool dispatch_command(const std::string& cmd_input,
-                             const std::string& input_buf,
-                             const Args& args,
-                             bool& rag_loaded,
-                             std::string& ibuf, bool& typing, size_t& cursor_pos) {
-    if (cmd_input == "quit" || cmd_input == "q" || cmd_input == "exit") {
-        g_running = false;
-        return true;
-    }
-
-    if (cmd_input == "help" || cmd_input == "h" || cmd_input == "?") {
-        print_help_interactive();
-        reset_prompt(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    if (cmd_input == "models") {
-        fprintf(stderr, "\n  %s%s  Active Models%s\n\n", color::bold, color::orange, color::reset);
-        fprintf(stderr, "    %sLLM:%s  %s%s%s\n",
-                color::bold, color::reset,
-                color::green, rcli_get_llm_model(g_engine), color::reset);
-        fprintf(stderr, "    %sSTT:%s  %s%s%s (offline)  |  Zipformer (streaming)\n",
-                color::bold, color::reset,
-                color::green, rcli_get_stt_model(g_engine), color::reset);
-        fprintf(stderr, "    %sTTS:%s  %s%s%s\n\n",
-                color::bold, color::reset,
-                color::green, rcli_get_tts_model(g_engine), color::reset);
-        fprintf(stderr, "    %sTip:%s Run %srcli models%s to switch (LLM, STT, or TTS).\n\n",
-                color::dim, color::reset, color::bold, color::reset);
-        reset_prompt(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    if (cmd_input == "voices") {
-        auto tts_all = rcli::all_tts_models();
-        std::string mdir = default_models_dir();
-        const auto* active_tts = rcli::resolve_active_tts(mdir, tts_all);
-        std::string user_tts = rcli::read_selected_tts_id();
-
-        fprintf(stderr, "\n  %s%s  Voices%s", color::bold, color::orange, color::reset);
-        fprintf(stderr, !user_tts.empty() ? "  (pinned: %s)" : "  (auto-detect)", user_tts.c_str());
-        fprintf(stderr, "\n\n");
-
-        fprintf(stderr, "    %s#  %-30s  %-8s  %-8s  %-10s  %s%s\n",
-                color::bold, "Voice", "Size", "Arch", "Speakers", "Status", color::reset);
-        for (size_t i = 0; i < tts_all.size(); i++) {
-            auto& v = tts_all[i];
-            bool inst = rcli::is_tts_installed(mdir, v);
-            bool is_act = active_tts && active_tts->id == v.id;
-            std::string label = v.name;
-            if (v.is_default) label += " (default)";
-            char spk[16]; snprintf(spk, sizeof(spk), "%d", v.num_speakers);
-            fprintf(stderr, "    %s%-2zu%s %-30s  %-8s  %-8s  %-10s  %s%s%s\n",
-                    is_act ? "\033[32m" : "", i + 1, is_act ? "\033[0m" : "",
-                    label.c_str(), rcli::format_size(v.size_mb).c_str(),
-                    v.architecture.c_str(), spk,
-                    is_act ? "\033[32m* active" :
-                        (inst ? "installed" : "\033[2mnot installed"),
-                    is_act || !inst ? "\033[0m" : "", "");
-        }
-        fprintf(stderr, "\n    %sTip:%s Run %srcli voices%s to switch voices.\n\n",
-                color::dim, color::reset, color::bold, color::reset);
-        reset_prompt(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    if (cmd_input == "stt") {
-        auto stt_all = rcli::all_stt_models();
-        std::string mdir = default_models_dir();
-        const auto* active_stt_m = rcli::resolve_active_stt(mdir, stt_all);
-        std::string user_stt = rcli::read_selected_stt_id();
-
-        fprintf(stderr, "\n  %s%s  STT Models%s", color::bold, color::orange, color::reset);
-        fprintf(stderr, !user_stt.empty() ? "  (pinned: %s)" : "  (auto-detect)", user_stt.c_str());
-        fprintf(stderr, "\n\n");
-        fprintf(stderr, "    %sStreaming:%s  Zipformer (always active for live mic)\n",
-                color::bold, color::reset);
-        fprintf(stderr, "    %sOffline:%s   %s%s%s (active)\n\n",
-                color::bold, color::reset, color::green,
-                active_stt_m ? active_stt_m->name.c_str() : rcli_get_stt_model(g_engine),
-                color::reset);
-
-        auto offline = rcli::get_offline_stt_models(stt_all);
-        fprintf(stderr, "    %s#  %-28s  %-7s  %-12s  %s%s\n",
-                color::bold, "Offline Model", "Size", "Accuracy", "Status", color::reset);
-        for (size_t i = 0; i < offline.size(); i++) {
-            auto& m = *offline[i];
-            bool inst = rcli::is_stt_installed(mdir, m);
-            bool is_act = active_stt_m && active_stt_m->id == m.id;
-            std::string label = m.name;
-            if (m.is_default) label += " (default)";
-            fprintf(stderr, "    %s%-2zu%s %-28s  %-7s  %-12s  %s%s%s\n",
-                    is_act ? "\033[32m" : "", i + 1, is_act ? "\033[0m" : "",
-                    label.c_str(), rcli::format_size(m.size_mb).c_str(),
-                    m.accuracy.c_str(),
-                    is_act ? "\033[32m* active" :
-                        (inst ? "installed" : "\033[2mnot installed"),
-                    is_act || !inst ? "\033[0m" : "", "");
-        }
-        fprintf(stderr, "\n    %sTip:%s Run %srcli stt%s to switch STT models.\n\n",
-                color::dim, color::reset, color::bold, color::reset);
-        reset_prompt(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    if (cmd_input == "actions" || cmd_input.substr(0, 8) == "actions ") {
-        std::string detail_name;
-        if (cmd_input.size() > 8) detail_name = cmd_input.substr(8);
-
-        ActionRegistry inline_reg;
-        inline_reg.register_defaults();
-
-        if (!detail_name.empty()) {
-            const ActionDef* def = inline_reg.get_def(detail_name);
-            if (def) {
-                disable_raw_mode();
-                print_action_detail(*def);
-                enable_raw_mode();
-            } else {
-                fprintf(stderr, "  %s%sUnknown action: %s%s  (type %sactions%s to list all)\n",
-                        color::bold, color::red, detail_name.c_str(), color::reset,
-                        color::bold, color::reset);
-            }
-        } else {
-            disable_raw_mode();
-            print_actions_interactive();
-            enable_raw_mode();
-        }
-        reset_prompt(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    if (cmd_input.substr(0, 3) == "do " ||
-        (input_buf[0] == '/' && input_buf.substr(0, 4) == "/do ")) {
-        std::string action_str = (cmd_input.substr(0, 3) == "do ")
-            ? cmd_input.substr(3) : input_buf.substr(4);
-        std::string action_name, action_text;
-        auto space = action_str.find(' ');
-        if (space != std::string::npos) {
-            action_name = action_str.substr(0, space);
-            action_text = action_str.substr(space + 1);
-        } else {
-            action_name = action_str;
-        }
-
-        ActionRegistry do_reg;
-        do_reg.register_defaults();
-        const ActionDef* def = do_reg.get_def(action_name);
-        if (!def) {
-            fprintf(stderr, "  %s%sUnknown action: %s%s  (type %sactions%s to list all)\n",
-                    color::bold, color::red, action_name.c_str(), color::reset,
-                    color::bold, color::reset);
-            reset_prompt(ibuf, typing, cursor_pos);
-            return true;
-        }
-
-        std::string action_args = "{}";
-        if (!action_text.empty()) {
-            if (action_text.front() == '{') {
-                action_args = action_text;
-            } else {
-                std::string first_key;
-                const auto& schema = def->parameters_json;
-                auto qpos = schema.find('"');
-                if (qpos != std::string::npos) {
-                    auto qend = schema.find('"', qpos + 1);
-                    if (qend != std::string::npos)
-                        first_key = schema.substr(qpos + 1, qend - qpos - 1);
-                }
-                if (!first_key.empty()) {
-                    std::string escaped;
-                    for (char ch : action_text) {
-                        if (ch == '"') escaped += "\\\"";
-                        else if (ch == '\\') escaped += "\\\\";
-                        else if (ch == '\n') escaped += "\\n";
-                        else escaped += ch;
-                    }
-                    action_args = "{\"" + first_key + "\": \"" + escaped + "\"}";
-                }
-            }
-        }
-
-        auto result = do_reg.execute(action_name, action_args);
-        if (result.success)
-            fprintf(stderr, "  %s%s%s%s\n", color::green, color::bold, result.output.c_str(), color::reset);
-        else
-            fprintf(stderr, "  %s%s[failed]%s %s  %s\n",
-                    color::bold, color::red, color::reset, action_name.c_str(), result.error.c_str());
-
-        reset_prompt_nl(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    if (cmd_input == "rag status") {
-        if (rag_loaded) {
-            fprintf(stderr, "  %s%sRAG:%s active (index: %s%s%s)\n",
-                    color::bold, color::green, color::reset,
-                    color::dim, args.rag_index.c_str(), color::reset);
-        } else {
-            fprintf(stderr, "  %s%sRAG:%s not loaded\n", color::bold, color::yellow, color::reset);
-            fprintf(stderr, "  %sStart with: rcli --rag <index_dir>%s\n", color::dim, color::reset);
-        }
-        reset_prompt_nl(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    if (cmd_input.substr(0, 11) == "rag ingest " || cmd_input == "rag ingest") {
-        std::string docs_dir;
-        if (cmd_input.size() > 11) docs_dir = cmd_input.substr(11);
-        while (!docs_dir.empty() && docs_dir.back() == ' ') docs_dir.pop_back();
-        while (!docs_dir.empty() && docs_dir.front() == ' ') docs_dir.erase(docs_dir.begin());
-        if (!docs_dir.empty()) docs_dir = sanitize_path(docs_dir);
-
-        if (docs_dir.empty()) {
-            fprintf(stderr, "  %sUsage: rag ingest <directory>%s\n", color::dim, color::reset);
-        } else {
-            if (!ensure_embedding_model(args.models_dir)) {
-                reset_prompt_nl(ibuf, typing, cursor_pos);
-                return true;
-            }
-            fprintf(stderr, "  Indexing %s ...\n", docs_dir.c_str());
-            fflush(stderr);
-            int rc = rcli_rag_ingest(g_engine, docs_dir.c_str());
-            if (rc == 0) {
-                rag_loaded = true;
-                fprintf(stderr, "  %s%sIndexing complete!%s RAG is now active.\n",
-                        color::bold, color::green, color::reset);
-            } else {
-                fprintf(stderr, "  %s%sIndexing failed.%s\n", color::bold, color::red, color::reset);
-            }
-        }
-        reset_prompt_nl(ibuf, typing, cursor_pos);
-        return true;
-    }
-
-    return false;  // Not a command — fall through to LLM
-}
-
-// =============================================================================
-// Interactive mode — push-to-talk voice recording
-// =============================================================================
-
-static void handle_voice_recording(const Args& args, bool rag_loaded) {
-    rcli_stop_speaking(g_engine);
-
-    g_recording = true;
-    g_vis_active = true;
-    g_peak_rms.store(0.0f, std::memory_order_relaxed);
-
-    int saved_stderr = visualizer::suppress_stderr();
-    rcli_start_capture(g_engine);
-
-    visualizer::begin();
-    fprintf(visualizer::vis_out, "\n");
-    fflush(visualizer::vis_out);
-    visualizer::draw(visualizer::DogState::LISTENING, 0.0f, 0, true);
-
-    std::atomic<bool> vis_running{true};
-    std::thread vis_thread([&vis_running]() {
-        int tick = 0;
-        while (vis_running.load(std::memory_order_relaxed)) {
-            float level = rcli_get_audio_level(g_engine);
-            float prev = g_peak_rms.load(std::memory_order_relaxed);
-            if (level > prev) g_peak_rms.store(level, std::memory_order_relaxed);
-            visualizer::draw(visualizer::DogState::LISTENING, level, tick++);
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    });
-
-    while (g_running) {
-        char stop = 0;
-        ssize_t r = read(STDIN_FILENO, &stop, 1);
-        if (r <= 0) continue;
-        if (stop != ' ') break;
-    }
-
-    vis_running = false;
-    vis_thread.join();
-    g_recording = false;
-
-    bool below_noise_gate = (g_peak_rms.load(std::memory_order_relaxed) < NOISE_GATE_THRESHOLD);
-
-    if (below_noise_gate) {
-        rcli_stop_capture_and_transcribe(g_engine);
-        visualizer::clear();
-        g_vis_active = false;
-        visualizer::restore_stderr(saved_stderr);
-        fprintf(stderr, "%s", visualizer::ESC_SHOW_CURSOR);
-        fprintf(stderr, "  %s(no speech detected — speak louder or closer to the mic)%s\n",
-                color::dim, color::reset);
-    } else {
-        visualizer::draw(visualizer::DogState::THINKING, 0.0f, 0);
-        const char* transcript = rcli_stop_capture_and_transcribe(g_engine);
-
-        visualizer::clear();
-        g_vis_active = false;
-        visualizer::restore_stderr(saved_stderr);
-        fprintf(stderr, "%s", visualizer::ESC_SHOW_CURSOR);
-
-        if (transcript && transcript[0]) {
-            fprintf(stderr, "  %s%sYou:%s %s\n", color::bold, color::blue, color::reset, transcript);
-            print_stt_perf(g_engine);
-            fprintf(stderr, "  %sThinking...%s", color::dim, color::reset);
-            fflush(stderr);
-
-            int llm_saved = visualizer::suppress_stderr();
-            const char* response = nullptr;
-            if (rag_loaded) {
-                response = rcli_rag_query(g_engine, transcript);
-            } else {
-                response = rcli_process_command(g_engine, transcript);
-            }
-            visualizer::restore_stderr(llm_saved);
-
-            fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
-
-            if (response && response[0]) {
-                print_response(response);
-                print_llm_perf(g_engine);
-                int speak_saved = visualizer::suppress_stderr();
-                if (!args.no_speak) rcli_speak(g_engine, response);
-                visualizer::restore_stderr(speak_saved);
-                print_tts_perf(g_engine);
-            }
-        } else {
-            fprintf(stderr, "  %s(no speech detected — try speaking louder)%s\n",
-                    color::dim, color::reset);
-        }
-    }
-    g_current_transcript.clear();
-    fprintf(stderr, "\n%s%s  >%s ", color::orange, color::bold, color::reset);
-    fflush(stderr);
-}
-
-// =============================================================================
-// Interactive mode — main loop
+// Interactive mode — main loop (TUI dashboard)
 // =============================================================================
 
 static int cmd_interactive(const Args& args) {
@@ -517,7 +160,7 @@ static int cmd_interactive(const Args& args) {
 }
 
 // =============================================================================
-// Listen mode (continuous voice-to-action)
+// Listen mode (push-to-talk voice loop)
 // =============================================================================
 
 static int cmd_listen(const Args& args) {
@@ -525,50 +168,14 @@ static int cmd_listen(const Args& args) {
     if (!ensure_mic_permission()) return 1;
     if (!models_exist(args.models_dir)) { print_missing_models(args.models_dir); return 1; }
 
-    fprintf(stderr, "\n%s%s  RCLI — Continuous Voice Mode%s\n", color::bold, color::orange, color::reset);
-    fprintf(stderr, "  Speak naturally. RCLI listens, acts, and responds.\n");
-    fprintf(stderr, "  Press Ctrl+C to stop.\n\n");
+    fprintf(stderr, "\n%s%s  RCLI — Voice Mode (Push-to-Talk)%s\n", color::bold, color::orange, color::reset);
+    fprintf(stderr, "  Press SPACE to start talking, SPACE again to stop.\n");
+    fprintf(stderr, "  Press Ctrl+C to quit.\n\n");
 
     g_engine = rcli_create(nullptr);
     if (!g_engine) return 1;
 
     signal(SIGINT, signal_handler);
-
-    static std::atomic<int> listen_vis_state{0};
-
-    rcli_set_transcript_callback(g_engine,
-        [](const char* text, int is_final, void* ud) {
-            auto* a = static_cast<const Args*>(ud);
-            if (is_final) {
-                listen_vis_state.store(1);
-                visualizer::clear();
-                fprintf(stderr, "  %s%sYou:%s %s\n\n", color::bold, color::blue, color::reset, text);
-                visualizer::begin();
-                visualizer::draw(visualizer::DogState::THINKING, 0.0f, 0, true);
-
-                const char* response = rcli_process_command(g_engine, text);
-                visualizer::clear();
-
-                if (response && response[0]) {
-                    print_response(response);
-                    print_llm_perf(g_engine);
-                    if (!a->no_speak) {
-                        listen_vis_state.store(2);
-                        fprintf(stderr, "\n");
-                        visualizer::begin();
-                        visualizer::draw(visualizer::DogState::SPEAKING, 0.3f, 0, true);
-                        rcli_speak(g_engine, response);
-                        visualizer::clear();
-                        print_tts_perf(g_engine);
-                    }
-                }
-
-                listen_vis_state.store(0);
-                fprintf(stderr, "\n");
-                visualizer::begin();
-                visualizer::draw(visualizer::DogState::LISTENING, 0.0f, 0, true);
-            }
-        }, const_cast<Args*>(&args));
 
     rcli_set_action_callback(g_engine,
         [](const char* name, const char* result, int success, void*) {
@@ -580,26 +187,129 @@ static int cmd_listen(const Args& args) {
         return 1;
     }
 
-    fprintf(stderr, "  %s%sReady.%s\n\n", color::bold, color::green, color::reset);
-    visualizer::set_output(visualizer::open_tty());
-    rcli_start_listening(g_engine);
+    fprintf(stderr, "  %s%sReady.%s Press SPACE to talk.\n\n", color::bold, color::green, color::reset);
 
-    visualizer::begin();
-    fprintf(visualizer::vis_out, "\n");
-    fflush(visualizer::vis_out);
-    visualizer::draw(visualizer::DogState::LISTENING, 0.0f, 0, true);
-
-    int tick = 0;
-    while (g_running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        int vs = listen_vis_state.load();
-        if (vs == 0)      visualizer::draw(visualizer::DogState::LISTENING, rcli_get_audio_level(g_engine), tick++);
-        else if (vs == 1)  visualizer::draw(visualizer::DogState::THINKING, 0.0f, tick++);
-        else               visualizer::draw(visualizer::DogState::SPEAKING, 0.3f, tick++);
+    // Open /dev/tty directly for keyboard input — isolated from anything
+    // else that might touch STDIN_FILENO (engine init, audio threads, etc.)
+    int tty_fd = open("/dev/tty", O_RDONLY);
+    if (tty_fd < 0) {
+        fprintf(stderr, "  %s%sError: Cannot open /dev/tty%s\n", color::bold, color::red, color::reset);
+        rcli_destroy(g_engine);
+        return 1;
     }
 
-    visualizer::clear();
-    rcli_stop_listening(g_engine);
+    struct termios tty_orig;
+    tcgetattr(tty_fd, &tty_orig);
+    struct termios tty_raw = tty_orig;
+    tty_raw.c_lflag &= ~(ECHO | ICANON | ISIG);
+    tty_raw.c_cc[VMIN] = 0;
+    tty_raw.c_cc[VTIME] = 1;
+    tcsetattr(tty_fd, TCSAFLUSH, &tty_raw);
+
+    auto read_key = [tty_fd]() -> char {
+        char c = 0;
+        read(tty_fd, &c, 1);
+        return c;
+    };
+
+    while (g_running) {
+        fprintf(stderr, "  %s[SPACE] to record  [q] to quit%s\r",
+                color::dim, color::reset);
+        fflush(stderr);
+
+        while (g_running) {
+            char c = read_key();
+            if (c == ' ') break;
+            if (c == 'q' || c == 'Q' || c == 3 || c == 27) { g_running = false; break; }
+        }
+        if (!g_running) break;
+
+        fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
+
+        rcli_stop_speaking(g_engine);
+        g_peak_rms.store(0.0f, std::memory_order_relaxed);
+        rcli_start_capture(g_engine);
+
+        fprintf(stderr, "  %s%s● Recording...%s speak now! Press SPACE to stop.\r",
+                color::bold, color::green, color::reset);
+        fflush(stderr);
+
+        while (g_running) {
+            char c = read_key();
+            if (c == ' ') break;
+            if (c == 'q' || c == 'Q' || c == 3 || c == 27) { g_running = false; break; }
+
+            float level = rcli_get_audio_level(g_engine);
+            float prev = g_peak_rms.load(std::memory_order_relaxed);
+            if (level > prev) g_peak_rms.store(level, std::memory_order_relaxed);
+        }
+
+        fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
+
+        if (!g_running) break;
+
+        bool below_noise_gate = (g_peak_rms.load(std::memory_order_relaxed) < NOISE_GATE_THRESHOLD);
+
+        if (below_noise_gate) {
+            rcli_stop_capture_and_transcribe(g_engine);
+            fprintf(stderr, "  %s(no speech detected)%s\n\n", color::dim, color::reset);
+            continue;
+        }
+
+        fprintf(stderr, "  %sTranscribing...%s", color::dim, color::reset);
+        fflush(stderr);
+        const char* transcript = rcli_stop_capture_and_transcribe(g_engine);
+        fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
+
+        if (transcript && transcript[0]) {
+            fprintf(stderr, "  %s%sYou:%s %s\n", color::bold, color::blue, color::reset, transcript);
+            print_stt_perf(g_engine);
+            fprintf(stderr, "  %sThinking...%s", color::dim, color::reset);
+            fflush(stderr);
+
+            const char* response = rcli_process_command(g_engine, transcript);
+            fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
+
+            if (response && response[0]) {
+                print_response(response);
+                print_llm_perf(g_engine);
+                if (!args.no_speak) {
+                    std::atomic<bool> tts_done{false};
+                    std::thread tts_thread([&]() {
+                        rcli_speak(g_engine, response);
+                        tts_done.store(true, std::memory_order_release);
+                    });
+                    tts_thread.detach();
+
+                    fprintf(stderr, "  %s%s♪ Speaking...%s press SPACE to interrupt\r",
+                            color::bold, color::cyan, color::reset);
+                    fflush(stderr);
+
+                    while (g_running && !tts_done.load(std::memory_order_acquire)) {
+                        char c = read_key();
+                        if (c == ' ') {
+                            rcli_stop_speaking(g_engine);
+                            fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
+                            break;
+                        }
+                        if (c == 'q' || c == 'Q' || c == 3 || c == 27) {
+                            rcli_stop_speaking(g_engine);
+                            g_running = false;
+                            break;
+                        }
+                    }
+                    fprintf(stderr, "\r%s", visualizer::ESC_CLEAR_LINE);
+                    print_tts_perf(g_engine);
+                }
+            }
+        } else {
+            fprintf(stderr, "  %s(no speech detected)%s\n", color::dim, color::reset);
+        }
+        fprintf(stderr, "\n");
+    }
+
+    tcsetattr(tty_fd, TCSAFLUSH, &tty_orig);
+    close(tty_fd);
     rcli_destroy(g_engine);
     fprintf(stderr, "\n  %s%sRCLI%s %s\xe2\x80\x94 See you next time!%s\n\n",
             color::bold, color::orange, color::reset, color::dim, color::reset);
@@ -875,6 +585,406 @@ static int cmd_rag(const Args& args) {
 }
 
 // =============================================================================
+// MetalRT management
+// =============================================================================
+
+static int cmd_metalrt(const Args& args) {
+    if (args.arg1 == "install") {
+        auto& loader = rastack::MetalRTLoader::instance();
+        if (loader.is_available()) {
+            std::string ver = rastack::MetalRTLoader::installed_version();
+            fprintf(stderr, "\n  %s%sMetalRT already installed%s", color::bold, color::green, color::reset);
+            if (!ver.empty()) fprintf(stderr, " (%s)", ver.c_str());
+            fprintf(stderr, "\n\n");
+            return 0;
+        }
+        fprintf(stderr, "\n%s%s  MetalRT Install%s\n\n", color::bold, color::orange, color::reset);
+        if (rastack::MetalRTLoader::install()) {
+            fprintf(stderr, "\n  %s%sMetalRT installed successfully!%s\n", color::bold, color::green, color::reset);
+            fprintf(stderr, "  Run %srcli engine metalrt%s to activate.\n\n", color::bold, color::reset);
+            return 0;
+        }
+        fprintf(stderr, "\n  %s%sInstallation failed.%s\n", color::bold, color::red, color::reset);
+        fprintf(stderr, "  Tip: set METALRT_REPO=/path/to/metalrt-binaries for local install,\n");
+        fprintf(stderr, "       or check your internet connection for remote install.\n\n");
+        return 1;
+    }
+
+    if (args.arg1 == "remove") {
+        if (!rastack::MetalRTLoader::instance().is_available()) {
+            fprintf(stderr, "\n  MetalRT is not installed.\n\n");
+            return 0;
+        }
+        rastack::MetalRTLoader::instance().unload();
+        if (rastack::MetalRTLoader::remove()) {
+            rcli::write_engine_preference("llamacpp");
+            fprintf(stderr, "\n  %s%sMetalRT removed.%s Engine reverted to llama.cpp.\n\n",
+                    color::bold, color::green, color::reset);
+            return 0;
+        }
+        fprintf(stderr, "\n  %s%sFailed to remove MetalRT.%s\n\n", color::bold, color::red, color::reset);
+        return 1;
+    }
+
+    if (args.arg1 == "status") {
+        fprintf(stderr, "\n%s%s  MetalRT Status%s\n\n", color::bold, color::orange, color::reset);
+        auto& loader = rastack::MetalRTLoader::instance();
+        if (!loader.is_available()) {
+            fprintf(stderr, "  %sInstalled:%s  no\n", color::bold, color::reset);
+            fprintf(stderr, "  Run %srcli metalrt install%s to download.\n\n", color::bold, color::reset);
+            return 0;
+        }
+        std::string ver = rastack::MetalRTLoader::installed_version();
+        fprintf(stderr, "  %sInstalled:%s  %s%syes%s", color::bold, color::reset,
+                color::bold, color::green, color::reset);
+        if (!ver.empty()) fprintf(stderr, " (%s)", ver.c_str());
+        fprintf(stderr, "\n");
+
+        if (loader.load()) {
+            fprintf(stderr, "  %sABI:%s       v%u\n", color::bold, color::reset, loader.abi_version());
+        }
+        loader.unload();
+
+        // Show install mode
+        bool local = rastack::MetalRTLoader::is_local_mode();
+        std::string local_repo = rastack::MetalRTLoader::local_repo_path();
+        if (local) {
+            fprintf(stderr, "  %sMode:%s      %sLOCAL%s%s%s%s\n", color::bold, color::reset,
+                    color::cyan, color::reset,
+                    local_repo.empty() ? "" : " (",
+                    local_repo.c_str(),
+                    local_repo.empty() ? "" : ")");
+        } else {
+            fprintf(stderr, "  %sMode:%s      %sREMOTE%s (GitHub releases)\n",
+                    color::bold, color::reset, color::green, color::reset);
+        }
+
+        // Show supported models
+        auto models = rcli::all_models();
+        fprintf(stderr, "  %sModels:%s    ", color::bold, color::reset);
+        bool first = true;
+        for (auto& m : models) {
+            if (m.metalrt_supported) {
+                if (!first) fprintf(stderr, ", ");
+                bool inst = rcli::is_metalrt_model_installed(m);
+                fprintf(stderr, "%s%s%s", inst ? color::green : "", m.name.c_str(),
+                        inst ? color::reset : "");
+                first = false;
+            }
+        }
+        fprintf(stderr, "\n");
+
+        // Codesign check
+        std::string dylib = rastack::MetalRTLoader::dylib_path();
+        std::string verify_cmd = "codesign --verify --deep --strict '" + dylib + "' 2>/dev/null";
+        bool sig_ok = (system(verify_cmd.c_str()) == 0);
+        fprintf(stderr, "  %sSignature:%s %s%s%s\n\n",
+                color::bold, color::reset,
+                sig_ok ? color::green : color::red,
+                sig_ok ? "valid" : "INVALID",
+                color::reset);
+        return 0;
+    }
+
+    if (args.arg1 == "download") {
+        auto models = rcli::all_models();
+        std::vector<const rcli::LlmModelDef*> mrt_models;
+        for (auto& m : models) {
+            if (m.metalrt_supported) mrt_models.push_back(&m);
+        }
+        auto comp_models = rcli::metalrt_component_models();
+
+        fprintf(stderr, "\n%s%s  MetalRT Model Download%s\n\n", color::bold, color::orange, color::reset);
+
+        // LLM models
+        fprintf(stderr, "  %s— LLM Models —%s\n", color::bold, color::reset);
+        fprintf(stderr, "  %s#  %-28s  %-8s  %-12s  Status%s\n",
+                color::bold, "Model", "Size", "Speed", color::reset);
+
+        for (size_t i = 0; i < mrt_models.size(); i++) {
+            auto* m = mrt_models[i];
+            bool inst = rcli::is_metalrt_model_installed(*m);
+            fprintf(stderr, "  %s%zu%s  %-28s  %-8s  %-12s  %s%s%s\n",
+                    color::bold, i + 1, color::reset,
+                    m->name.c_str(),
+                    rcli::format_size(m->metalrt_size_mb).c_str(),
+                    m->metalrt_speed_est.c_str(),
+                    inst ? color::green : "",
+                    inst ? "installed" : "-",
+                    inst ? color::reset : "");
+        }
+
+        // STT/TTS component models
+        size_t offset = mrt_models.size();
+        fprintf(stderr, "\n  %s— STT/TTS Components —%s\n", color::bold, color::reset);
+        fprintf(stderr, "  %s#  %-28s  %-8s  %-5s  Status%s\n",
+                color::bold, "Model", "Size", "Type", color::reset);
+
+        for (size_t i = 0; i < comp_models.size(); i++) {
+            auto& cm = comp_models[i];
+            bool inst = rcli::is_metalrt_component_installed(cm);
+            std::string type_label = (cm.component == "stt") ? "STT" : "TTS";
+            fprintf(stderr, "  %s%zu%s  %-28s  %-8s  %-5s  %s%s%s\n",
+                    color::bold, offset + i + 1, color::reset,
+                    cm.name.c_str(),
+                    rcli::format_size(cm.size_mb).c_str(),
+                    type_label.c_str(),
+                    inst ? color::green : "",
+                    inst ? "installed" : "-",
+                    inst ? color::reset : "");
+        }
+
+        size_t total = offset + comp_models.size();
+        fprintf(stderr, "\n  Enter model number [1-%zu/q]: ", total);
+        fflush(stderr);
+
+        char buf[16] = {};
+        if (read(STDIN_FILENO, buf, sizeof(buf) - 1) <= 0 || buf[0] == '\n' || buf[0] == 'q') {
+            fprintf(stderr, "\n  Cancelled.\n\n");
+            return 0;
+        }
+
+        int choice = atoi(buf);
+        if (choice < 1 || choice > (int)total) {
+            fprintf(stderr, "\n  Invalid choice.\n\n");
+            return 1;
+        }
+
+        if (choice <= (int)offset) {
+            // LLM model selected
+            auto* sel = mrt_models[choice - 1];
+            if (rcli::is_metalrt_model_installed(*sel)) {
+                fprintf(stderr, "\n  %s%s%s already installed.%s\n\n",
+                        color::bold, color::green, sel->name.c_str(), color::reset);
+                return 0;
+            }
+
+            std::string mrt_dir = rcli::metalrt_models_dir() + "/" + sel->metalrt_dir_name;
+            fprintf(stderr, "\n  Downloading %s (%s)...\n\n",
+                    sel->name.c_str(), rcli::format_size(sel->metalrt_size_mb).c_str());
+
+            std::string config_url = sel->metalrt_url;
+            auto cpos = config_url.rfind("model.safetensors");
+            if (cpos != std::string::npos) config_url.replace(cpos, 17, "config.json");
+            std::string dl_cmd = "bash -c '"
+                "set -e; mkdir -p \"" + mrt_dir + "\"; "
+                "curl -fL -# -o \"" + mrt_dir + "/model.safetensors\" \"" + sel->metalrt_url + "\"; "
+                "curl -fL -# -o \"" + mrt_dir + "/tokenizer.json\" \"" + sel->metalrt_tokenizer_url + "\"; "
+                "curl -fL -# -o \"" + mrt_dir + "/config.json\" \"" + config_url + "\"; "
+                "'";
+
+            if (system(dl_cmd.c_str()) != 0) {
+                fprintf(stderr, "\n  %s%sDownload failed.%s Check your internet connection.\n\n",
+                        color::bold, color::red, color::reset);
+                return 1;
+            }
+
+            fprintf(stderr, "\n  %s%s%s downloaded!%s\n", color::bold, color::green, sel->name.c_str(), color::reset);
+            fprintf(stderr, "  Location: %s\n\n", mrt_dir.c_str());
+        } else {
+            // STT/TTS component model selected
+            auto& sel = comp_models[choice - 1 - offset];
+            if (rcli::is_metalrt_component_installed(sel)) {
+                fprintf(stderr, "\n  %s%s%s already installed.%s\n\n",
+                        color::bold, color::green, sel.name.c_str(), color::reset);
+                return 0;
+            }
+
+            std::string mrt_dir = rcli::metalrt_models_dir() + "/" + sel.dir_name;
+            fprintf(stderr, "\n  Downloading %s (%s)...\n\n",
+                    sel.name.c_str(), rcli::format_size(sel.size_mb).c_str());
+
+            std::string hf_base = "https://huggingface.co/" + sel.hf_repo + "/resolve/main/";
+            std::string subdir = sel.hf_subdir.empty() ? "" : sel.hf_subdir + "/";
+            std::string dl_cmd;
+            if (sel.component == "tts") {
+                dl_cmd = "bash -c '"
+                    "set -e; mkdir -p \"" + mrt_dir + "/voices\"; "
+                    "curl -fL -# -o \"" + mrt_dir + "/config.json\" \"" + hf_base + subdir + "config.json\"; "
+                    "curl -fL -# -o \"" + mrt_dir + "/kokoro-v1_0.safetensors\" \"" + hf_base + subdir + "kokoro-v1_0.safetensors\"; "
+                    "for v in af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky "
+                    "am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa "
+                    "bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis; do "
+                    "curl -fL -s -o \"" + mrt_dir + "/voices/${v}.safetensors\" \"" + hf_base + subdir + "voices/${v}.safetensors\"; "
+                    "done; "
+                    "'";
+            } else {
+                dl_cmd = "bash -c '"
+                    "set -e; mkdir -p \"" + mrt_dir + "\"; "
+                    "curl -fL -# -o \"" + mrt_dir + "/config.json\" \"" + hf_base + subdir + "config.json\"; "
+                    "curl -fL -# -o \"" + mrt_dir + "/model.safetensors\" \"" + hf_base + subdir + "model.safetensors\"; "
+                    "curl -fL -# -o \"" + mrt_dir + "/tokenizer.json\" \"" + hf_base + subdir + "tokenizer.json\"; "
+                    "'";
+            }
+
+            if (system(dl_cmd.c_str()) != 0) {
+                fprintf(stderr, "\n  %s%sDownload failed.%s Check your internet connection.\n\n",
+                        color::bold, color::red, color::reset);
+                return 1;
+            }
+
+            fprintf(stderr, "\n  %s%s%s downloaded!%s\n", color::bold, color::green, sel.name.c_str(), color::reset);
+            fprintf(stderr, "  Location: %s\n\n", mrt_dir.c_str());
+        }
+        return 0;
+    }
+
+    if (args.arg1 == "bench") {
+        if (!rastack::MetalRTLoader::instance().is_available()) {
+            fprintf(stderr, "\n  MetalRT is not installed. Run %srcli metalrt install%s first.\n\n",
+                    color::bold, color::reset);
+            return 1;
+        }
+
+        auto models = rcli::all_models();
+        const rcli::LlmModelDef* bench_model = nullptr;
+        for (auto& m : models) {
+            if (m.metalrt_supported && rcli::is_metalrt_model_installed(m)) {
+                if (!bench_model || m.metalrt_size_mb > bench_model->metalrt_size_mb)
+                    bench_model = &m;
+            }
+        }
+        if (!bench_model) {
+            fprintf(stderr, "\n  No MetalRT models installed. Run %srcli metalrt download%s first.\n\n",
+                    color::bold, color::reset);
+            return 1;
+        }
+
+        std::string model_dir = rcli::metalrt_models_dir() + "/" + bench_model->metalrt_dir_name;
+        fprintf(stderr, "\n%s%s  MetalRT Benchmark%s\n\n", color::bold, color::orange, color::reset);
+        fprintf(stderr, "  Model: %s\n", bench_model->name.c_str());
+        fprintf(stderr, "  Path:  %s\n\n", model_dir.c_str());
+
+        rastack::MetalRTEngineConfig cfg;
+        cfg.model_dir = model_dir;
+        cfg.max_tokens = 128;
+        cfg.temperature = 0.0f;
+
+        rastack::MetalRTEngine engine;
+        if (!engine.init(cfg)) {
+            fprintf(stderr, "  %s%sFailed to init MetalRT engine.%s\n\n",
+                    color::bold, color::red, color::reset);
+            return 1;
+        }
+
+        fprintf(stderr, "  Device: %s\n\n", engine.device_name().c_str());
+
+        const char* prompts[] = {
+            "Hello, how are you?",
+            "Explain quantum computing in one sentence.",
+            "Write a haiku about the ocean.",
+        };
+
+        for (int i = 0; i < 3; i++) {
+            fprintf(stderr, "  Run %d: \"%s\"\n", i + 1, prompts[i]);
+            engine.reset_conversation();
+            std::string result = engine.generate(prompts[i]);
+
+            const auto& stats = engine.last_stats();
+            fprintf(stderr, "    Prefill: %6.1f ms (%d tokens, %.0f tok/s)\n",
+                    stats.prompt_eval_us / 1000.0, stats.prompt_tokens, stats.prompt_tps());
+            fprintf(stderr, "    Decode:  %6.1f ms (%d tokens, %.0f tok/s)\n",
+                    stats.generation_us / 1000.0, stats.generated_tokens, stats.gen_tps());
+            fprintf(stderr, "    Output:  \"%.*s%s\"\n\n",
+                    (int)std::min(result.size(), (size_t)80), result.c_str(),
+                    result.size() > 80 ? "..." : "");
+        }
+
+        engine.shutdown();
+        return 0;
+    }
+
+    fprintf(stderr,
+        "\n%s%s  rcli metalrt%s  —  Manage MetalRT engine\n\n"
+        "  Commands:\n"
+        "    rcli metalrt install    Download and install MetalRT binary\n"
+        "    rcli metalrt remove     Uninstall MetalRT binary\n"
+        "    rcli metalrt status     Show version, models, signature status\n"
+        "    rcli metalrt download   Download MetalRT model weights\n"
+        "    rcli metalrt bench      Benchmark MetalRT inference speed\n\n",
+        color::bold, color::orange, color::reset);
+    return args.arg1.empty() ? 0 : 1;
+}
+
+static int cmd_engine(const Args& args) {
+    std::string target = args.arg1;
+
+    if (target == "metalrt") {
+        if (!rastack::MetalRTLoader::instance().is_available()) {
+            fprintf(stderr, "\n  %s%sMetalRT is not installed.%s Run %srcli metalrt install%s first.\n\n",
+                    color::bold, color::yellow, color::reset, color::bold, color::reset);
+            return 1;
+        }
+        rcli::write_engine_preference("metalrt");
+        fprintf(stderr, "\n  %s%sEngine set to MetalRT.%s Restart RCLI to apply.\n\n",
+                color::bold, color::green, color::reset);
+        return 0;
+    }
+
+    if (target == "llamacpp") {
+        rcli::write_engine_preference("llamacpp");
+        fprintf(stderr, "\n  %s%sEngine set to llama.cpp.%s Restart RCLI to apply.\n\n",
+                color::bold, color::green, color::reset);
+        return 0;
+    }
+
+    if (target == "auto") {
+        rcli::write_engine_preference("auto");
+        fprintf(stderr, "\n  %s%sEngine set to Auto.%s MetalRT when available, llama.cpp fallback.\n\n",
+                color::bold, color::green, color::reset);
+        return 0;
+    }
+
+    std::string current = rcli::read_engine_preference();
+    if (current.empty()) current = "auto";
+    fprintf(stderr,
+        "\n%s%s  rcli engine%s  —  Switch LLM inference backend\n\n"
+        "  Current: %s%s%s\n\n"
+        "  Commands:\n"
+        "    rcli engine metalrt    Use MetalRT (Apple Silicon GPU)\n"
+        "    rcli engine llamacpp   Use llama.cpp (open source)\n"
+        "    rcli engine auto       Auto-select best available\n\n",
+        color::bold, color::orange, color::reset,
+        color::bold, current.c_str(), color::reset);
+    return 0;
+}
+
+static int cmd_personality(const Args& args) {
+    std::string target = args.arg1;
+
+    if (!target.empty()) {
+        auto* info = rastack::find_personality(target);
+        if (!info) {
+            fprintf(stderr, "\n  %s%sUnknown personality: %s%s\n\n", color::bold, color::red, target.c_str(), color::reset);
+            fprintf(stderr, "  Available: ");
+            for (auto& p : rastack::all_personalities()) fprintf(stderr, "%s ", p.key);
+            fprintf(stderr, "\n\n");
+            return 1;
+        }
+        rcli::write_personality_preference(target);
+        fprintf(stderr, "\n  %s%sPersonality set to %s.%s %s\n",
+                color::bold, color::green, info->name, color::reset, info->tagline);
+        fprintf(stderr, "  Restart RCLI to apply.\n\n");
+        return 0;
+    }
+
+    // Show current + list
+    std::string current = rcli::read_personality_preference();
+    if (current.empty()) current = "default";
+
+    fprintf(stderr, "\n%s%s  rcli personality%s  —  Change assistant personality\n\n",
+            color::bold, color::orange, color::reset);
+    fprintf(stderr, "  Current: %s%s%s\n\n", color::bold, current.c_str(), color::reset);
+    fprintf(stderr, "  Available:\n");
+    for (auto& p : rastack::all_personalities()) {
+        const char* marker = (current == p.key) ? " *" : "  ";
+        fprintf(stderr, "   %s %s%-14s%s  %s\n", marker, color::green, p.key, color::reset, p.tagline);
+    }
+    fprintf(stderr, "\n  Usage: rcli personality <name>\n\n");
+    return 0;
+}
+
+// =============================================================================
 // Main — command dispatch
 // =============================================================================
 
@@ -907,6 +1017,29 @@ int main(int argc, char** argv) {
     if (args.command == "cleanup")     return cmd_cleanup(args);
     if (args.command == "bench")       return cmd_bench(args);
     if (args.command == "info")        return cmd_info();
+    if (args.command == "metalrt")     return cmd_metalrt(args);
+    if (args.command == "engine")      return cmd_engine(args);
+    if (args.command == "personality") return cmd_personality(args);
+
+    // Hidden test command: exercises streaming LLM → TTS pipeline
+    if (args.command == "stream-test") {
+        if (!models_exist(args.models_dir)) { print_missing_models(args.models_dir); return 1; }
+        g_engine = rcli_create(nullptr);
+        if (!g_engine) return 1;
+        fprintf(stderr, "%sInitializing...%s\n", color::dim, color::reset);
+        if (rcli_init(g_engine, args.models_dir.c_str(), args.gpu_layers) != 0) {
+            rcli_destroy(g_engine); return 1;
+        }
+        std::string query = args.arg1.empty() ? "hello, how are you?" : args.arg1;
+        auto cb = [](const char* event, const char* data, void*) {
+            fprintf(stderr, "  [STREAM] event=%-12s data=%.80s\n", event, data ? data : "");
+        };
+        fprintf(stderr, "\nTesting streaming pipeline with: \"%s\"\n", query.c_str());
+        const char* resp = rcli_process_and_speak(g_engine, query.c_str(), cb, nullptr);
+        fprintf(stderr, "\nResponse: %s\n", resp ? resp : "(null)");
+        rcli_destroy(g_engine);
+        return resp && resp[0] ? 0 : 1;
+    }
 
     if (args.command == "--help" || args.command == "-h") {
         print_usage(argv[0]);
