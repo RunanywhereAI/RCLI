@@ -1,7 +1,5 @@
 <p align="center">
-  <img src="assets/terminal.png" alt="RCLI" width="700" />
-  <br><br>
-  <a href="https://github.com/RunanywhereAI/runanywhere-sdks"><img src="https://img.shields.io/badge/RunAnywhere_Command_Line_Interface-FF4500?style=for-the-badge&labelColor=1a1a2e" alt="RunAnywhere Command Line Interface"></a>
+  <img src="assets/rcli_waveform.gif" alt="RCLI Waveform" width="700" />
   <br>
   <strong>Talk to your Mac, query your docs, no cloud required.</strong>
   <br><br>
