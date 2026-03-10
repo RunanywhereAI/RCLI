@@ -70,5 +70,5 @@ fi
 
 ok "RCLI v${VERSION} installed successfully"
 echo ""
-info "Downloading AI models (~1GB, one-time)..."
+info "Setting up AI models and engine (one-time)..."
 rcli setup
