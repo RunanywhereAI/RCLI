@@ -160,6 +160,22 @@ static ActionResult action_get_ip_address(const std::string& args_json) {
             "{\"action\": \"get_ip_address\", \"local\": \"" + local_ip + "\", \"public\": \"" + pub_ip + "\"}"};
 }
 
+static ActionResult action_empty_trash(const std::string& args_json) {
+    (void)args_json;
+    auto r = run_applescript(
+        "tell application \"Finder\" to empty trash");
+    if (r.success) return {true, "Trash emptied", "", "{\"action\": \"empty_trash\"}"};
+    return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};
+}
+
+static ActionResult action_toggle_do_not_disturb(const std::string& args_json) {
+    (void)args_json;
+    auto r = run_shell("open 'x-apple.systempreferences:com.apple.Focus-Settings.extension'");
+    if (r.success)
+        return {true, "Opened Focus settings", "", "{\"action\": \"toggle_do_not_disturb\"}"};
+    return {false, "", r.error, "{\"error\": \"" + r.error + "\"}"};
+}
+
 void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"screenshot", "Take a screenshot",
@@ -250,6 +266,24 @@ void register_system_actions(ActionRegistry& registry) {
          "What's my IP address?",
          "rcli action get_ip_address '{}'"},
         action_get_ip_address);
+
+    registry.register_action(
+        {"empty_trash", "Empty the Trash",
+         "{}",
+         true,
+         "system",
+         "Empty my trash",
+         "rcli action empty_trash '{}'"},
+        action_empty_trash);
+
+    registry.register_action(
+        {"toggle_do_not_disturb", "Toggle Do Not Disturb / Focus mode",
+         "{}",
+         true,
+         "system",
+         "Turn on do not disturb",
+         "rcli action toggle_do_not_disturb '{}'"},
+        action_toggle_do_not_disturb);
 }
 
 } // namespace rcli
