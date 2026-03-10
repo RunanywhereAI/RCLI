@@ -622,6 +622,10 @@ private:
                             if (ev == "first_audio") {
                                 double ttfa = std::stod(data);
                                 app->last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
+                                if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
+                                    app->append_ttfa_to_last_perf(ttfa);
+                                    app->screen_->Post(Event::Custom);
+                                }
                             } else if (ev == "complete") {
                                 std::string json(data);
                                 double total_tts = 0;
@@ -630,17 +634,14 @@ private:
                                     total_tts = std::stod(json.substr(pos + 15));
                                 }
                                 if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
-                                    double ttfa = app->last_ttfa_ms_.load(std::memory_order_relaxed);
                                     if (total_tts > 0) {
                                         std::ostringstream ts;
                                         ts << std::fixed;
-                                        ts.precision(0);
-                                        ts << "TTFA: " << ttfa << "ms  TTS: ";
                                         ts.precision(1);
-                                        ts << total_tts << "ms (streamed)";
+                                        ts << "TTS: " << total_tts << "ms (streamed)";
                                         app->add_system_message(ts.str());
-                                        app->screen_->Post(Event::Custom);
                                     }
+                                    app->screen_->Post(Event::Custom);
                                 }
                             }
                         };
@@ -674,10 +675,22 @@ private:
                     if (ev == "first_audio") {
                         double ttfa = std::stod(data);
                         app->last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
+                        // Append TTFA to perf line now (no-op if "response" hasn't fired yet)
+                        if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
+                            app->append_ttfa_to_last_perf(ttfa);
+                            app->screen_->Post(Event::Custom);
+                        }
                         app->voice_state_ = VoiceState::SPEAKING;
                         app->screen_->Post(Event::Custom);
                     } else if (ev == "response") {
                         std::string perf = app->format_llm_perf(false);
+                        // If first_audio already fired, append TTFA to perf before adding
+                        double ttfa = app->last_ttfa_ms_.load(std::memory_order_relaxed);
+                        if (ttfa > 0 && app->verbose_metrics_.load(std::memory_order_relaxed)) {
+                            std::ostringstream os;
+                            os << std::fixed << std::setprecision(0) << "  TTFA " << ttfa << "ms";
+                            perf += os.str();
+                        }
                         int pt = 0, cs = 0;
                         rcli_get_context_info(app->engine_, &pt, &cs);
                         if (pt > 0) app->ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
@@ -688,24 +701,20 @@ private:
                     } else if (ev == "complete") {
                         // Parse TTS stats from JSON and display
                         std::string json(data);
-                        // Simple parse of total_tts_ms
                         double total_tts = 0;
                         auto pos = json.find("\"total_tts_ms\":");
                         if (pos != std::string::npos) {
                             total_tts = std::stod(json.substr(pos + 15));
                         }
                         if (app->verbose_metrics_.load(std::memory_order_relaxed)) {
-                            double ttfa = app->last_ttfa_ms_.load(std::memory_order_relaxed);
                             if (total_tts > 0) {
                                 std::ostringstream ts;
                                 ts << std::fixed;
-                                ts.precision(0);
-                                ts << "TTFA: " << ttfa << "ms  TTS: ";
                                 ts.precision(1);
-                                ts << total_tts << "ms (streamed)";
+                                ts << "TTS: " << total_tts << "ms (streamed)";
                                 app->add_system_message(ts.str());
-                                app->screen_->Post(Event::Custom);
                             }
+                            app->screen_->Post(Event::Custom);
                         }
                     }
                 };
@@ -2647,6 +2656,11 @@ private:
                     double ttfa = std::chrono::duration<double, std::milli>(t_audio - t_start).count();
                     last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
 
+                    if (verbose_metrics_.load(std::memory_order_relaxed)) {
+                        append_ttfa_to_last_perf(ttfa);
+                        screen_->Post(Event::Custom);
+                    }
+
                     voice_state_ = VoiceState::SPEAKING;
                     screen_->Post(Event::Custom);
                     fprintf(stderr, "[TRACE] [tui-thread] calling rcli_speak ...\n");
@@ -2659,12 +2673,11 @@ private:
                         if (samples > 0) {
                             std::ostringstream ts;
                             ts << std::fixed;
-                            ts.precision(0);
-                            ts << "TTFA: " << ttfa << "ms  TTS: ";
                             ts.precision(1);
-                            ts << synth_ms << "ms " << rtf << "x RT";
+                            ts << "TTS: " << synth_ms << "ms " << rtf << "x RT";
                             add_system_message(ts.str());
                         }
+                        screen_->Post(Event::Custom);
                     }
                     fprintf(stderr, "[TRACE] [tui-thread] entering wait_for_speech ...\n");
                     wait_for_speech();
@@ -2703,6 +2716,19 @@ private:
         std::lock_guard<std::mutex> lock(chat_mu_);
         chat_history_.push_back({"*", text, "", false});
         trim_history();
+    }
+
+    // Append TTFA to the last RCLI response's perf line
+    void append_ttfa_to_last_perf(double ttfa_ms) {
+        std::lock_guard<std::mutex> lock(chat_mu_);
+        for (auto it = chat_history_.rbegin(); it != chat_history_.rend(); ++it) {
+            if (it->prefix == "RCLI:" && !it->perf.empty()) {
+                std::ostringstream os;
+                os << std::fixed << std::setprecision(0) << "  TTFA " << ttfa_ms << "ms";
+                it->perf += os.str();
+                break;
+            }
+        }
     }
 
     void check_context_full() {
