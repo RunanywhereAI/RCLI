@@ -233,12 +233,12 @@ std::string LlmEngine::generate(const std::string& prompt, TokenCallback on_toke
 
         bool suppress = profile_.should_suppress_token(result, in_think_block, in_tool_call_block);
 
-        if (!suppress && on_token) {
+        if (on_token && (!suppress || in_tool_call_block)) {
             TokenOutput tok;
             tok.text = piece;
             tok.token_id = new_token;
             tok.is_eos = false;
-            tok.is_tool_call = false;
+            tok.is_tool_call = in_tool_call_block;
             on_token(tok);
         }
 
@@ -417,12 +417,12 @@ std::string LlmEngine::generate_with_cached_prompt(const std::string& user_porti
         }
 
         bool suppress = profile_.should_suppress_token(result, in_think_block, in_tool_call_block);
-        if (!suppress && on_token) {
+        if (on_token && (!suppress || in_tool_call_block)) {
             TokenOutput tok;
             tok.text = piece;
             tok.token_id = new_token;
             tok.is_eos = false;
-            tok.is_tool_call = false;
+            tok.is_tool_call = in_tool_call_block;
             on_token(tok);
         }
 
