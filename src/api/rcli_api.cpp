@@ -1142,6 +1142,13 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     }
 
     // === Single LLM-driven path: tool definitions in system prompt ===
+    if (!engine->pipeline.llm().is_initialized()) {
+        LOG_ERROR("RCLI", "LLM engine not initialized — cannot process command");
+        engine->last_response = "Error: LLM engine failed to initialize. "
+            "Try running: rcli engine llamacpp";
+        return engine->last_response.c_str();
+    }
+
     std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
     std::string system_prompt = engine->pipeline.llm().profile().build_tool_system_prompt(
         std::string(rastack::RCLI_SYSTEM_PROMPT), tool_defs);
@@ -1738,6 +1745,18 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
         }
     } else {
         // --- llama.cpp path ---
+        if (!engine->pipeline.llm().is_initialized()) {
+            LOG_ERROR("RCLI", "LLM engine not initialized — cannot process command");
+            if (callback) {
+                callback("response",
+                    "Error: LLM engine failed to initialize. Try: rcli engine llamacpp",
+                    user_data);
+                callback("complete", "", user_data);
+            }
+            engine->last_response = "Error: LLM engine failed to initialize.";
+            return engine->last_response.c_str();
+        }
+
         const auto& profile = engine->pipeline.llm().profile();
         std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
         std::string system_prompt = profile.build_tool_system_prompt(
@@ -2637,10 +2656,13 @@ const char* rcli_rag_query(RCLIHandle handle, const char* query) {
         std::string rag_full = mrt.profile().build_chat_prompt(rag_system, {}, rag_prompt);
         answer = mrt.generate_raw(rag_full, nullptr);
         engine->metalrt_kv_continuation_len = 0;
-    } else {
+    } else if (engine->pipeline.llm().is_initialized()) {
         answer = engine->pipeline.llm().generate(
             engine->pipeline.llm().build_chat_prompt(rag_system, {}, rag_prompt),
             nullptr);
+    } else {
+        engine->last_rag_result = "Error: No LLM backend available.";
+        return engine->last_rag_result.c_str();
     }
 
     engine->last_rag_result = clean_llm_output(engine, answer);

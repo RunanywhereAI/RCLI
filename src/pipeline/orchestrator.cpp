@@ -8,6 +8,63 @@
 #include <cmath>
 #include <algorithm>
 #include <future>
+#include <string>
+#include <csignal>
+#include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
+
+// --- MetalRT crash recovery ---
+// Before calling into the MetalRT dylib for init, we write a breadcrumb file.
+// If the dylib segfaults (common on certain M3/M4 hardware), the breadcrumb
+// persists.  On the next launch we detect it and skip MetalRT entirely,
+// falling back to llama.cpp so the user isn't stuck in a crash loop.
+
+static std::string metalrt_crash_breadcrumb_path() {
+    const char* home = getenv("HOME");
+    if (!home) return "/tmp/.rcli_metalrt_crash";
+    return std::string(home) + "/.rcli/.metalrt_init_in_progress";
+}
+
+static bool metalrt_previously_crashed() {
+    struct stat st;
+    return stat(metalrt_crash_breadcrumb_path().c_str(), &st) == 0;
+}
+
+static void metalrt_breadcrumb_create() {
+    std::string path = metalrt_crash_breadcrumb_path();
+    // Ensure parent dir exists
+    std::string dir = path.substr(0, path.rfind('/'));
+    mkdir(dir.c_str(), 0755);
+    FILE* f = fopen(path.c_str(), "w");
+    if (f) { fprintf(f, "metalrt init in progress\n"); fclose(f); }
+}
+
+static void metalrt_breadcrumb_remove() {
+    unlink(metalrt_crash_breadcrumb_path().c_str());
+}
+
+// Signal handler installed during MetalRT init to provide a helpful
+// crash message instead of bare "segmentation fault".
+static struct sigaction s_old_sigsegv, s_old_sigbus;
+
+static void metalrt_crash_handler(int sig) {
+    // Write directly to stderr (signal-safe)
+    const char* msg =
+        "\n\n  MetalRT GPU engine crashed during initialization.\n"
+        "  This is a known issue on some M3/M4 Macs.\n\n"
+        "  RCLI will automatically use llama.cpp on next launch.\n"
+        "  Or run manually:  rcli engine llamacpp\n\n";
+    (void)write(STDERR_FILENO, msg, strlen(msg));
+
+    // Leave breadcrumb so next launch skips MetalRT
+    // (breadcrumb was already created before init started)
+
+    // Restore original handler and re-raise
+    sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+    sigaction(SIGBUS, &s_old_sigbus, nullptr);
+    raise(sig);
+}
 
 namespace rastack {
 
@@ -84,9 +141,34 @@ bool Orchestrator::init(const PipelineConfig& config) {
     }
 
     // --- MetalRT backend (optional) ---
+    bool metalrt_skip_due_to_crash = false;
     if (config.llm_backend == LlmBackend::METALRT ||
         config.llm_backend == LlmBackend::AUTO) {
-        if (!config.metalrt.model_dir.empty()) {
+        // Check if MetalRT crashed on a previous launch
+        if (metalrt_previously_crashed()) {
+            LOG_WARN("Pipeline", "MetalRT crashed on a previous launch — skipping. "
+                     "Remove %s to retry, or run: rcli engine llamacpp",
+                     metalrt_crash_breadcrumb_path().c_str());
+            fprintf(stderr, "\n  MetalRT crashed previously — using llama.cpp instead.\n"
+                    "  To retry MetalRT: rm %s && rcli\n\n",
+                    metalrt_crash_breadcrumb_path().c_str());
+            metalrt_breadcrumb_remove();
+            metalrt_skip_due_to_crash = true;
+            if (config.llm_backend == LlmBackend::METALRT && !llm_.is_initialized()) {
+                LOG_ERROR("Pipeline", "MetalRT skipped and llama.cpp LLM not available");
+                return false;
+            }
+        }
+
+        if (!metalrt_skip_due_to_crash && !config.metalrt.model_dir.empty()) {
+            // Install crash handler + breadcrumb before MetalRT dylib calls
+            metalrt_breadcrumb_create();
+            struct sigaction sa = {};
+            sa.sa_handler = metalrt_crash_handler;
+            sigemptyset(&sa.sa_mask);
+            sigaction(SIGSEGV, &sa, &s_old_sigsegv);
+            sigaction(SIGBUS, &sa, &s_old_sigbus);
+
             if (metalrt_.init(config.metalrt)) {
                 LOG_INFO("Pipeline", "MetalRT engine ready: %s on %s",
                          metalrt_.model_name().c_str(), metalrt_.device_name().c_str());
@@ -102,16 +184,32 @@ bool Orchestrator::init(const PipelineConfig& config) {
                     LOG_INFO("Pipeline", "Active LLM backend: MetalRT");
                 }
             } else if (config.llm_backend == LlmBackend::METALRT) {
+                metalrt_breadcrumb_remove();
+                sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+                sigaction(SIGBUS, &s_old_sigbus, nullptr);
                 LOG_ERROR("Pipeline", "MetalRT LLM init FAILED — refusing to fall back to CPU. "
                           "Check that libmetalrt.dylib is installed and MetalRT models are present.");
                 return false;
             }
+
+            // Restore original signal handlers (breadcrumb stays until STT/TTS done)
+            sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+            sigaction(SIGBUS, &s_old_sigbus, nullptr);
         }
     }
 
     // --- MetalRT STT (Whisper) and TTS (Kokoro) — required when MetalRT is active ---
     if (active_backend_ == LlmBackend::METALRT) {
         bool stt_ok = false, tts_ok = false;
+
+        // Re-install crash handler for STT/TTS init (dylib calls can segfault)
+        {
+            struct sigaction sa = {};
+            sa.sa_handler = metalrt_crash_handler;
+            sigemptyset(&sa.sa_mask);
+            sigaction(SIGSEGV, &sa, &s_old_sigsegv);
+            sigaction(SIGBUS, &sa, &s_old_sigbus);
+        }
 
         if (!config.metalrt_stt.model_dir.empty()) {
             if (metalrt_stt_.init(config.metalrt_stt)) {
@@ -140,6 +238,11 @@ bool Orchestrator::init(const PipelineConfig& config) {
             LOG_WARN("Pipeline", "MetalRT TTS model path not configured");
         }
 
+        // Restore original signal handlers, remove breadcrumb (init survived)
+        sigaction(SIGSEGV, &s_old_sigsegv, nullptr);
+        sigaction(SIGBUS, &s_old_sigbus, nullptr);
+        metalrt_breadcrumb_remove();
+
         if (!stt_ok || !tts_ok) {
             if (config.llm_backend == LlmBackend::METALRT) {
                 LOG_ERROR("Pipeline", "MetalRT STT/TTS not available. "
@@ -152,6 +255,16 @@ bool Orchestrator::init(const PipelineConfig& config) {
             metalrt_stt_initialized_ = false;
             metalrt_tts_initialized_ = false;
         }
+    } else {
+        // MetalRT not active — clean up breadcrumb if it was created
+        metalrt_breadcrumb_remove();
+    }
+
+    // --- Final validation: at least one LLM backend must be working ---
+    if (!llm_.is_initialized() && active_backend_ != LlmBackend::METALRT) {
+        LOG_ERROR("Pipeline", "No LLM backend available — "
+                  "neither llama.cpp nor MetalRT initialized successfully");
+        return false;
     }
 
     LOG_INFO("Pipeline", "Ready");
