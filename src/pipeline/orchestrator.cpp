@@ -108,35 +108,46 @@ bool Orchestrator::init(const PipelineConfig& config) {
 
     // --- MetalRT STT (Whisper) and TTS (Kokoro) — required when MetalRT is active ---
     if (active_backend_ == LlmBackend::METALRT) {
-        if (config.metalrt_stt.model_dir.empty()) {
-            LOG_ERROR("Pipeline", "MetalRT is active but Whisper STT model not installed. "
-                      "Install with: rcli setup --metalrt");
-            return false;
-        }
-        if (metalrt_stt_.init(config.metalrt_stt)) {
-            metalrt_stt_initialized_ = true;
-            LOG_INFO("Pipeline", "MetalRT Whisper STT ready");
+        bool stt_ok = false, tts_ok = false;
+
+        if (!config.metalrt_stt.model_dir.empty()) {
+            if (metalrt_stt_.init(config.metalrt_stt)) {
+                metalrt_stt_initialized_ = true;
+                stt_ok = true;
+                LOG_INFO("Pipeline", "MetalRT Whisper STT ready");
+            } else {
+                LOG_ERROR("Pipeline", "MetalRT Whisper STT init FAILED at: %s",
+                          config.metalrt_stt.model_dir.c_str());
+            }
         } else {
-            LOG_ERROR("Pipeline", "MetalRT Whisper STT init FAILED — refusing to fall back to CPU. "
-                      "Check that Whisper model is installed at: %s",
-                      config.metalrt_stt.model_dir.c_str());
-            return false;
+            LOG_WARN("Pipeline", "MetalRT STT model path not configured");
         }
 
-        if (config.metalrt_tts.model_dir.empty()) {
-            LOG_ERROR("Pipeline", "MetalRT is active but Kokoro TTS model not installed. "
-                      "Install with: rcli setup --metalrt");
-            return false;
-        }
-        if (metalrt_tts_.init(config.metalrt_tts)) {
-            metalrt_tts_initialized_ = true;
-            LOG_INFO("Pipeline", "MetalRT Kokoro TTS ready (sample_rate=%d)",
-                     metalrt_tts_.sample_rate());
+        if (!config.metalrt_tts.model_dir.empty()) {
+            if (metalrt_tts_.init(config.metalrt_tts)) {
+                metalrt_tts_initialized_ = true;
+                tts_ok = true;
+                LOG_INFO("Pipeline", "MetalRT Kokoro TTS ready (sample_rate=%d)",
+                         metalrt_tts_.sample_rate());
+            } else {
+                LOG_ERROR("Pipeline", "MetalRT Kokoro TTS init FAILED at: %s",
+                          config.metalrt_tts.model_dir.c_str());
+            }
         } else {
-            LOG_ERROR("Pipeline", "MetalRT Kokoro TTS init FAILED — refusing to fall back to CPU. "
-                      "Check that Kokoro model + voices are installed at: %s",
-                      config.metalrt_tts.model_dir.c_str());
-            return false;
+            LOG_WARN("Pipeline", "MetalRT TTS model path not configured");
+        }
+
+        if (!stt_ok || !tts_ok) {
+            if (config.llm_backend == LlmBackend::METALRT) {
+                LOG_ERROR("Pipeline", "MetalRT STT/TTS not available. "
+                          "Install with: rcli setup --metalrt");
+                return false;
+            }
+            // AUTO mode: fall back to llama.cpp gracefully
+            LOG_WARN("Pipeline", "MetalRT STT/TTS incomplete — falling back to llama.cpp");
+            active_backend_ = LlmBackend::LLAMACPP;
+            metalrt_stt_initialized_ = false;
+            metalrt_tts_initialized_ = false;
         }
     }
 

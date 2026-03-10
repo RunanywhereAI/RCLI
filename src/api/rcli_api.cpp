@@ -553,8 +553,43 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
                 }
                 config.llm_backend = rastack::LlmBackend::LLAMACPP;
             }
-        } else if (engine_pref == "auto") {
+        } else if (engine_pref == "auto" || engine_pref.empty()) {
             config.llm_backend = rastack::LlmBackend::AUTO;
+
+            // For AUTO mode, populate MetalRT paths so the orchestrator can
+            // use MetalRT when it decides to (without paths it would hard-fail).
+            if (rastack::MetalRTLoader::gpu_supported()) {
+                auto& mrt_loader = rastack::MetalRTLoader::instance();
+                if (mrt_loader.is_available()) {
+                    auto models = rcli::all_models();
+                    for (auto& m : models) {
+                        if (m.metalrt_supported && rcli::is_metalrt_model_installed(m)) {
+                            config.metalrt.model_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
+                            break;
+                        }
+                    }
+                    if (!config.metalrt.model_dir.empty()) {
+                        auto comps = rcli::metalrt_component_models();
+                        std::string stt_pref = rcli::read_selected_metalrt_stt_id();
+                        for (auto& cm : comps) {
+                            if (!rcli::is_metalrt_component_installed(cm)) continue;
+                            std::string comp_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
+                            if (cm.component == "stt" && config.metalrt_stt.model_dir.empty()) {
+                                if (!stt_pref.empty() && cm.id != stt_pref) continue;
+                                config.metalrt_stt.model_dir = comp_dir;
+                                engine->stt_model_name = cm.name;
+                            } else if (cm.component == "tts" && config.metalrt_tts.model_dir.empty()) {
+                                config.metalrt_tts.model_dir = comp_dir;
+                                auto* pinfo = rastack::find_personality(engine->personality_key);
+                                config.metalrt_tts.voice = (pinfo && pinfo->voice[0] != '\0')
+                                    ? pinfo->voice : "af_heart";
+                                engine->tts_model_name = cm.name;
+                                config.audio.playback_rate = 24000;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
