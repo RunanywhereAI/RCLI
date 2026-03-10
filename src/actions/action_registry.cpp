@@ -28,11 +28,6 @@ std::string ActionRegistry::get_definitions_json() const {
     oss << "[\n";
     bool first = true;
 
-    // Built-in tools (time, calculate)
-    oss << "  {\"name\": \"get_current_time\", \"description\": \"Get the current date and time\", \"parameters\": {}}";
-    first = false;
-    oss << ",\n  {\"name\": \"calculate\", \"description\": \"Evaluate a math expression\", \"parameters\": {\"expression\": \"math expression like 2 + 2\"}}";
-
     for (auto& [name, entry] : actions_) {
         if (enabled_.count(name) == 0) continue;
         if (!first) oss << ",\n";
@@ -89,15 +84,6 @@ std::string ActionRegistry::get_filtered_definitions_json(
 
     std::vector<ScoredAction> scored;
 
-    // Score built-in tools the same way as macOS actions
-    scored.push_back({"get_current_time",
-                      "Get the current date and time", "{}",
-                      score_haystack("get_current_time get the current date and time")});
-    scored.push_back({"calculate",
-                      "Evaluate a math expression",
-                      "{\"expression\": \"math expression like 2 + 2\"}",
-                      score_haystack("calculate evaluate a math expression")});
-
     for (auto& [name, entry] : actions_) {
         if (enabled_.count(name) == 0) continue;
 
@@ -129,8 +115,7 @@ std::string ActionRegistry::get_filtered_definitions_json(
 
     if (!any_relevant) return "";
 
-    // Return full set: built-in tools are already in `scored`, plus
-    // top-k macOS actions (all of them if there are fewer than max_tools).
+    // Return top-k macOS actions (all of them if there are fewer than max_tools).
     std::ostringstream oss;
     oss << "[\n";
     int included = 0;
@@ -140,7 +125,7 @@ std::string ActionRegistry::get_filtered_definitions_json(
             << "\", \"description\": \"" << sa.description
             << "\", \"parameters\": " << sa.parameters_json << "}";
         included++;
-        if (included >= max_tools + 2) break; // +2 for built-in tools
+        if (included >= max_tools) break;
     }
     oss << "\n]";
     return oss.str();
