@@ -84,10 +84,10 @@ inline int cmd_setup(const Args& args) {
         } else {
             fprintf(stderr, "  %s%sMetalRT installed!%s\n\n", color::bold, color::green, color::reset);
 
-            // Download default MetalRT LLM weights (Qwen3-0.6B)
+            // Download default MetalRT LLM weights (LFM2.5 1.2B)
             auto all = rcli::all_models();
             for (auto& m : all) {
-                if (m.metalrt_id == "metalrt-qwen3-0.6b") {
+                if (m.metalrt_id == "metalrt-lfm2.5-1.2b") {
                     std::string mrt_dir = rcli::metalrt_models_dir() + "/" + m.metalrt_dir_name;
                     fprintf(stderr, "  %sDownloading MetalRT LLM: %s...%s\n", color::dim, m.name.c_str(), color::reset);
                     std::string config_url = m.metalrt_url;
