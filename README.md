@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
 </p>
 
-**RCLI** is an on-device voice AI for macOS. A complete STT + LLM + TTS pipeline running natively on Apple Silicon — 43 macOS actions via voice, local RAG over your documents, sub-200ms end-to-end latency. No cloud, no API keys.
+**RCLI** is an on-device voice AI for macOS. A complete STT + LLM + TTS pipeline running natively on Apple Silicon — 38 macOS actions via voice, local RAG over your documents, sub-200ms end-to-end latency. No cloud, no API keys.
 
 Powered by [MetalRT](#metalrt-gpu-engine), a proprietary GPU inference engine built by [RunAnywhere, Inc.](https://runanywhere.ai) specifically for Apple Silicon.
 
@@ -29,7 +29,7 @@ Powered by [MetalRT](#metalrt-gpu-engine), a proprietary GPU inference engine bu
 </td>
 <td width="50%" align="center">
 <strong>App Control</strong><br>
-<em>Control Spotify, adjust volume — 43 macOS actions by voice.</em><br><br>
+<em>Control Spotify, adjust volume — 38 macOS actions by voice.</em><br><br>
 <a href="https://youtu.be/eTYwkgNoaKg">
 <img src="assets/demos/demo2-spotify-volume.gif" alt="App Control Demo" width="100%">
 </a>
@@ -38,8 +38,8 @@ Powered by [MetalRT](#metalrt-gpu-engine), a proprietary GPU inference engine bu
 </tr>
 <tr>
 <td width="50%" align="center">
-<strong>Models & Benchmarks</strong><br>
-<em>Browse models, hot-swap LLMs, run benchmarks — all from the TUI.</em><br><br>
+<strong>Models</strong><br>
+<em>Browse models, hot-swap LLMs — all from the TUI.</em><br><br>
 <a href="https://youtu.be/HD1aS37zIGE">
 <img src="assets/demos/demo3-benchmarks.gif" alt="Models & Benchmarks Demo" width="100%">
 </a>
@@ -58,7 +58,8 @@ Powered by [MetalRT](#metalrt-gpu-engine), a proprietary GPU inference engine bu
 
 ## Install
 
-> **Requires macOS 13+ on Apple Silicon (M1 or later).**
+> [IMPORTANT]
+> **Requires macOS 13+ on Apple Silicon. MetalRT engine requires M3 or later.** M1/M2 Macs fall back to llama.cpp automatically.
 
 **One command:**
 
@@ -73,7 +74,6 @@ brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
 brew install rcli
 rcli setup
 ```
-
 ## Quick Start
 
 ```bash
@@ -81,7 +81,29 @@ rcli                             # interactive TUI (push-to-talk + text)
 rcli listen                      # continuous voice mode
 rcli ask "open Safari"           # one-shot command
 rcli ask "play some jazz on Spotify"
+rcli metalrt                     # MetalRT GPU engine management
+rcli llamacpp                    # llama.cpp engine management
 ```
+
+
+## Benchmarks
+
+<p align="center">
+  <img src="assets/decode-vs-llamacpp.webp" alt="MetalRT vs llama.cpp decode speed" width="700" />
+  <br>
+  <em>MetalRT decode throughput vs llama.cpp and Apple MLX on Apple M3 Max</em>
+</p>
+
+<p align="center">
+  <img src="assets/rtf_comparison.webp" alt="STT and TTS real-time factor comparison" width="700" />
+  <br>
+  <em>STT and TTS real-time factor — lower is better. MetalRT STT is 714x faster than real-time.</em>
+</p>
+
+For More info : 
+- https://www.runanywhere.ai/blog/metalrt-fastest-llm-decode-engine-apple-silicon
+- https://www.runanywhere.ai/blog/metalrt-speech-fastest-stt-tts-apple-silicon
+- https://www.runanywhere.ai/blog/fastvoice-on-device-voice-ai-pipeline-apple-silicon
 
 ## Features
 
@@ -96,7 +118,7 @@ A full STT + LLM + TTS pipeline running on Metal GPU with three concurrent threa
 - **Tool Calling** — LLM-native tool call formats (Qwen3, LFM2, etc.)
 - **Multi-turn Memory** — Sliding window conversation history with token-budget trimming
 
-### 43 macOS Actions
+### 38 macOS Actions
 
 Control your Mac by voice or text. The LLM routes intent to actions executed locally via AppleScript and shell commands.
 
@@ -108,7 +130,7 @@ Control your Mac by voice or text. The LLM routes intent to actions executed loc
 | **System** | `open_app`, `quit_app`, `set_volume`, `toggle_dark_mode`, `screenshot`, `lock_screen` |
 | **Web** | `search_web`, `search_youtube`, `open_url`, `open_maps` |
 
-Run `rcli actions` to see all 43, or toggle them on/off in the TUI Actions panel.
+Run `rcli actions` to see all 38, or toggle them on/off in the TUI Actions panel.
 
 > **Tip:** If tool calling feels unreliable, press **X** in the TUI to clear the conversation and reset context. With small LLMs, accumulated context can degrade tool-calling accuracy — a fresh context often fixes it.
 
@@ -130,7 +152,6 @@ A terminal dashboard with push-to-talk, live hardware monitoring, model manageme
 | **SPACE** | Push-to-talk |
 | **M** | Models — browse, download, hot-swap LLM/STT/TTS |
 | **A** | Actions — browse, enable/disable macOS actions |
-| **B** | Benchmarks — run STT, LLM, TTS, E2E benchmarks |
 | **R** | RAG — ingest documents |
 | **X** | Clear conversation and reset context |
 | **T** | Toggle tool call trace |
@@ -172,45 +193,6 @@ rcli voices                  # browse and switch TTS voices
 rcli cleanup                 # remove unused models
 ```
 
-## Architecture
-
-```
-Mic → VAD → STT → [RAG] → LLM → TTS → Speaker
-                            |
-                     Tool Calling → 43 macOS Actions
-```
-
-Three dedicated threads in live mode, synchronized via condition variables:
-
-| Thread | Role |
-|--------|------|
-| STT | Captures audio, runs VAD, detects speech endpoints |
-| LLM | Generates tokens, dispatches tool calls |
-| TTS | Double-buffered sentence-level synthesis and playback |
-
-**Key design decisions:**
-
-- 64 MB pre-allocated memory pool — zero runtime malloc during inference
-- Lock-free ring buffers for zero-copy audio transfer
-- System prompt KV caching across queries
-- Hardware profiling at startup for optimal config
-- Token-budget conversation trimming
-- Live model hot-swap without restarting
-
-```
-src/
-  engines/     STT, LLM, TTS, VAD, embedding engine wrappers
-  pipeline/    Orchestrator, sentence detector, text sanitizer
-  rag/         Vector index, BM25, hybrid retriever
-  core/        Types, ring buffer, memory pool, hardware profiler
-  audio/       CoreAudio mic/speaker I/O
-  tools/       Tool calling engine with JSON schema definitions
-  actions/     43 macOS action implementations
-  api/         C API (rcli_api.h)
-  cli/         TUI dashboard (FTXUI), CLI commands
-  models/      Model registries with on-demand download
-```
-
 ## Build from Source
 
 CPU-only build using llama.cpp + sherpa-onnx (no MetalRT):
@@ -239,7 +221,8 @@ rcli rag ingest <dir>         Index documents for RAG
 rcli rag query <text>         Query indexed documents
 rcli models [llm|stt|tts]    Manage AI models
 rcli voices                   Manage TTS voices
-rcli bench [--suite ...]      Run benchmarks
+rcli metalrt                  MetalRT GPU engine management
+rcli llamacpp                 llama.cpp engine management
 rcli setup                    Download default models
 rcli info                     Show engine and model info
 
