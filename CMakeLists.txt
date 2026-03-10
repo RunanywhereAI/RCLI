@@ -104,7 +104,6 @@ add_library(rcli STATIC
     src/pipeline/orchestrator.cpp
     src/pipeline/sentence_detector.cpp
     src/tools/tool_engine.cpp
-    src/bench/benchmark.cpp
 
     # --- RAG retrieval engine ---
     src/engines/embedding_engine.cpp

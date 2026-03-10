@@ -2048,24 +2048,13 @@ static void test_voice_bench(const std::string& models_dir) {
             const char* resp = rcli_process_and_speak(h, queries[i], voice_bench_cb, &ctx);
             double total_ms = elapsed_ms(t0);
 
-            int tok = 0; double tps = 0, ttft = 0, llm_ms = 0;
-            rcli_get_last_llm_perf(h, &tok, &tps, &ttft, &llm_ms);
-
-            double prefill_tps = 0, decode_tps = 0, prefill_ms = 0, decode_ms = 0;
-            int prompt_tok = 0; const char* ename = nullptr;
-            rcli_get_last_llm_perf_extended(h, &prefill_tps, &decode_tps,
-                                            &prefill_ms, &decode_ms, &prompt_tok, &ename);
-
             char label[128];
-            snprintf(label, sizeof(label), "[%s] Iter %d — TTFA=%.1fms TTFT=%.1fms",
-                     engine_name, i + 1, ctx.ttfa_ms, ttft);
+            snprintf(label, sizeof(label), "[%s] Iter %d — TTFA=%.1fms",
+                     engine_name, i + 1, ctx.ttfa_ms);
             TEST(label, resp != nullptr && strlen(resp) > 0);
             TEST_INFO("Query:    \"%s\"", queries[i]);
             TEST_INFO("Response: %.100s", resp ? resp : "(null)");
-            TEST_INFO("TTFA=%.1fms  TTFT=%.1fms  prefill=%.1fms  decode=%.1fms  "
-                      "%d tok  %.0f tok/s  prompt=%d tok  total=%.1fms",
-                      ctx.ttfa_ms, ttft, prefill_ms, decode_ms,
-                      tok, tps, prompt_tok, total_ms);
+            TEST_INFO("TTFA=%.1fms  total=%.1fms", ctx.ttfa_ms, total_ms);
 
             if (ctx.got_ttfa && ctx.ttfa_ms > 0) {
                 ttfa_sum += ctx.ttfa_ms;

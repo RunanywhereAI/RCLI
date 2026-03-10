@@ -30,8 +30,8 @@ typedef void (*RCLIActionCallback)(const char* action_name, const char* result_j
 typedef void (*RCLIToolTraceCallback)(const char* event, const char* tool_name,
                                       const char* data, int success, void* user_data);
 
-// Generic event callback (for file processing, benchmarks, timings)
-// Events: "state_change", "timings", "benchmark_progress", "benchmark_run", "benchmark_result"
+// Generic event callback (for file processing, timings)
+// Events: "state_change", "timings"
 typedef void (*RCLIEventCallback)(const char* event, const char* data, void* user_data);
 
 // --- Lifecycle ---
@@ -134,26 +134,6 @@ int rcli_process_wav(RCLIHandle handle,
 // Get JSON string with timings from last pipeline run
 // Caller must free() the returned string. Returns NULL if no run completed.
 char* rcli_get_timings(RCLIHandle handle);
-
-// --- Benchmark ---
-
-// Run benchmark: N iterations of the full pipeline on a test WAV.
-// callback receives: "benchmark_progress", "benchmark_run", "benchmark_result"
-// Returns 0 on success
-int rcli_benchmark(RCLIHandle handle,
-                        const char* test_wav,
-                        int iterations,
-                        RCLIEventCallback callback,
-                        void* user_data);
-
-// --- Benchmark ---
-
-// Run comprehensive benchmarks across all subsystems.
-// suite: "all", "stt", "llm", "tts", "e2e", "tools", "rag", "memory" (comma-separated)
-// runs: number of measured runs per test (3 is typical)
-// output_json: optional file path for JSON export (NULL to skip)
-// Returns 0 on success.
-int rcli_run_full_benchmark(RCLIHandle handle, const char* suite, int runs, const char* output_json);
 
 // --- RAG ---
 
@@ -266,50 +246,11 @@ const char* rcli_get_tts_model(RCLIHandle handle);
 // Get the name of the active offline STT model. Caller must NOT free.
 const char* rcli_get_stt_model(RCLIHandle handle);
 
-// --- Performance metrics from last operation ---
-
-// LLM performance from last process_command/rag_query call.
-// Returns: generated tokens, tok/s, time-to-first-token (ms), total generation (ms).
-// All output pointers are optional (pass NULL to skip).
-void rcli_get_last_llm_perf(RCLIHandle handle,
-                                  int* out_tokens,
-                                  double* out_tok_per_sec,
-                                  double* out_ttft_ms,
-                                  double* out_total_ms);
-
-// Extended LLM performance with prefill/decode breakdown.
-// out_prefill_tok_per_sec: prompt evaluation speed (tok/s).
-// out_decode_tok_per_sec: generation/decode speed (tok/s).
-// out_prefill_ms: time spent evaluating prompt (ms).
-// out_decode_ms: time spent decoding tokens (ms).
-// out_prompt_tokens: number of prompt tokens evaluated.
-// out_engine_name: "MetalRT" or "llama.cpp" — caller must NOT free.
-void rcli_get_last_llm_perf_extended(RCLIHandle handle,
-                                     double* out_prefill_tok_per_sec,
-                                     double* out_decode_tok_per_sec,
-                                     double* out_prefill_ms,
-                                     double* out_decode_ms,
-                                     int* out_prompt_tokens,
-                                     const char** out_engine_name);
-
 // Context window usage from last LLM call.
 // out_prompt_tokens: total tokens consumed by the last prompt (history + system + user).
 // out_ctx_size: model's configured context window size.
 // Both output pointers are optional (pass NULL to skip).
 void rcli_get_context_info(RCLIHandle handle, int* out_prompt_tokens, int* out_ctx_size);
-
-// TTS performance from last speak call.
-// Returns: samples generated, synthesis time (ms), real-time factor.
-void rcli_get_last_tts_perf(RCLIHandle handle,
-                                  int* out_samples,
-                                  double* out_synthesis_ms,
-                                  double* out_rtf);
-
-// STT performance from last stop_capture_and_transcribe call.
-// Returns: audio duration (ms), transcription time (ms).
-void rcli_get_last_stt_perf(RCLIHandle handle,
-                                  double* out_audio_ms,
-                                  double* out_transcribe_ms);
 
 #ifdef __cplusplus
 }
