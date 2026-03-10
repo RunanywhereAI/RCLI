@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: feature/metalrt
 
       - name: Setup dependencies
         run: bash scripts/setup.sh
