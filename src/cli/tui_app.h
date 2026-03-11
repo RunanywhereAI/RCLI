@@ -1002,6 +1002,13 @@ private:
                 text("[Up/Down] navigate  [Enter] select  [ESC] close ") | dim,
             });
         }
+        if (personality_mode_) {
+            return hbox({
+                text(" Personality ") | ftxui::bold | ftxui::color(theme_.accent),
+                filler(),
+                text("[Up/Down] navigate  [Enter] select  [ESC] close ") | dim,
+            });
+        }
 
         bool trace_on = tool_trace_enabled_.load(std::memory_order_relaxed);
 
@@ -1016,6 +1023,7 @@ private:
         right.push_back(text("[M] models  ") | dim);
         right.push_back(text("[A] actions  ") | dim);
         right.push_back(text("[R] RAG  ") | dim);
+        right.push_back(text("[P] personality  ") | dim);
         right.push_back(text("[D] cleanup  ") | dim);
         if (trace_on)
             right.push_back(text("[T] trace  ") | ftxui::color(theme_.info));
