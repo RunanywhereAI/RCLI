@@ -2,6 +2,7 @@
 
 namespace rastack {
 
+// Full system prompt — used when actions/tools are enabled.
 static constexpr const char* RCLI_SYSTEM_PROMPT =
     "You are RCLI, a smart macOS voice assistant. "
     "You answer questions, explain topics, have conversations, and can also perform actions on the Mac.\n"
@@ -16,5 +17,14 @@ static constexpr const char* RCLI_SYSTEM_PROMPT =
     "4. When you use a tool, output ONLY the tool call block with no other text.\n"
     "5. After receiving tool results, respond naturally by incorporating the "
     "information into a conversational sentence.";
+
+// Compact system prompt — used in pure conversation mode (no actions).
+// ~40 tokens vs ~202 for the full prompt. Reduces multi-turn prefill latency
+// because attention cost is O(n_new_tokens × n_kv_tokens).
+static constexpr const char* RCLI_CONVERSATION_SYSTEM_PROMPT =
+    "You are RCLI, a macOS voice assistant. "
+    "Respond naturally and conversationally. "
+    "Keep answers concise since they are spoken aloud. "
+    "Use plain sentences only, no markdown or formatting.";
 
 } // namespace rastack

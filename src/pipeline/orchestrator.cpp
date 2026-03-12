@@ -287,12 +287,10 @@ bool Orchestrator::init(const PipelineConfig& config) {
                 LOG_INFO("Pipeline", "MetalRT verification passed");
                 metalrt_.clear_kv();
                 metalrt_.reset_conversation();
-                if (metalrt_.has_prompt_cache()) {
-                    std::string mrt_system = metalrt_.profile().build_tool_system_prompt(
-                        config_.system_prompt, tools_.get_tool_definitions_json());
-                    std::string mrt_prefix = metalrt_.profile().build_system_prefix(mrt_system);
-                    metalrt_.cache_system_prompt(mrt_prefix);
-                }
+                std::string mrt_system = metalrt_.profile().build_tool_system_prompt(
+                    config_.system_prompt, tools_.get_tool_definitions_json());
+                std::string mrt_prefix = metalrt_.profile().build_system_prefix(mrt_system);
+                metalrt_.cache_system_prompt(mrt_prefix);
             }
         }
 
@@ -470,7 +468,7 @@ bool Orchestrator::run_file_pipeline(const std::string& input_wav, const std::st
     bool detected_tool_call = false;
     constexpr int SPECULATIVE_TOKENS = 30;
     int tokens_buffered = 0;
-    SentenceDetector detector(queue_sentence, 6, 35, 20);
+    SentenceDetector detector(queue_sentence, 6, 35, 20, /*first_sentence_min_words=*/1);
 
     auto speculative_callback = [&](const TokenOutput& tok) {
         if (detected_tool_call) return;
@@ -785,7 +783,7 @@ bool Orchestrator::run_stream_pipeline(const std::string& input_wav) {
     bool detected_tool_call = false;
     constexpr int SPECULATIVE_TOKENS = 30;
     int tokens_buffered = 0;
-    SentenceDetector detector(queue_sentence, 6, 35, 20);
+    SentenceDetector detector(queue_sentence, 6, 35, 20, /*first_sentence_min_words=*/1);
 
     auto speculative_callback = [&](const TokenOutput& tok) {
         if (detected_tool_call) return;
@@ -1840,7 +1838,7 @@ void Orchestrator::llm_thread_fn() {
             bool detected_tool_call = false;
             constexpr int SPECULATIVE_TOKENS = 30;
             int tokens_buffered = 0;
-            SentenceDetector detector(queue_sentence, 6, 35, 20);
+            SentenceDetector detector(queue_sentence, 6, 35, 20, /*first_sentence_min_words=*/1);
 
             auto speculative_callback = [&](const TokenOutput& tok) {
                 // Abort early if barge-in triggered during generation

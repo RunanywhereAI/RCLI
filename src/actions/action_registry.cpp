@@ -167,6 +167,18 @@ void ActionRegistry::set_enabled(const std::string& name, bool enabled) {
         enabled_.erase(name);
 }
 
+void ActionRegistry::disable_all() {
+    enabled_.clear();
+}
+
+void ActionRegistry::reset_to_defaults() {
+    enabled_.clear();
+    for (auto& [name, entry] : actions_) {
+        if (entry.def.default_enabled)
+            enabled_.insert(name);
+    }
+}
+
 bool ActionRegistry::is_enabled(const std::string& name) const {
     return enabled_.count(name) > 0;
 }

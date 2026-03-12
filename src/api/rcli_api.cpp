@@ -31,6 +31,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #include "actions/action_registry.h"
 #include "actions/macos_actions.h"
@@ -111,6 +112,21 @@ struct RCLIEngine {
     std::mutex mutex;
     bool initialized = false;
 };
+
+// Pick the base system prompt: compact when no tools are active (lower KV
+// overhead → faster multi-turn prefill), full prompt when tools are enabled.
+static const char* effective_base_prompt(RCLIEngine* engine) {
+    std::string defs = engine->pipeline.tools().get_tool_definitions_json();
+    bool has_tools = false;
+    for (char c : defs) {
+        if (c != '[' && c != ']' && c != ' ' && c != '\n' && c != '\r' && c != '\t') {
+            has_tools = true;
+            break;
+        }
+    }
+    return has_tools ? rastack::RCLI_SYSTEM_PROMPT
+                     : rastack::RCLI_CONVERSATION_SYSTEM_PROMPT;
+}
 
 // Build a brief system prompt with personality applied.
 // Used for action summaries, retries, and fallback paths that need personality.
@@ -332,6 +348,10 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
     config.system_prompt = rastack::apply_personality(
         rastack::RCLI_SYSTEM_PROMPT, engine->personality_key);
     LOG_DEBUG("RCLI", "Personality: %s", engine->personality_key.c_str());
+
+    // Save sherpa-onnx model names before MetalRT discovery may overwrite them
+    std::string sherpa_stt_name = engine->stt_model_name;
+    std::string sherpa_tts_name = engine->tts_model_name;
 
     // --- MetalRT (optional, based on user engine preference or CLI override) ---
     {
@@ -597,20 +617,8 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
         }
     }
 
-    // Load user action preferences (enable/disable state)
-    {
-        std::string prefs_dir;
-        if (const char* home = getenv("HOME"))
-            prefs_dir = std::string(home) + "/.rcli";
-        else
-            prefs_dir = "/tmp/.rcli";
-        struct stat st;
-        if (stat(prefs_dir.c_str(), &st) != 0)
-            mkdir(prefs_dir.c_str(), 0755);
-        engine->actions.load_preferences(prefs_dir + "/actions.json");
-    }
-
-    // Register ALL actions as tool implementations (so any can be executed)
+    // register_defaults() already enabled only actions with default_enabled=true.
+    // Register ALL actions as tool implementations (so any can be enabled via [A] panel)
     for (auto& name : engine->actions.list_actions()) {
         engine->pipeline.tools().register_tool(name,
             [&engine_ref = *engine, name](const std::string& args) -> std::string {
@@ -619,14 +627,30 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
             });
     }
 
-    // Expose only enabled action definitions to the LLM
+    // Expose only the enabled action definitions to the LLM
     engine->pipeline.tools().set_external_tool_definitions(
         engine->actions.get_definitions_json());
 
     LOG_DEBUG("RCLI", "Initializing pipeline...");
-    if (!engine->pipeline.init(config)) {
+    // Suppress sherpa-onnx's noisy stderr validation messages during init
+    // (model path probing prints errors for every path it tries).
+    int saved_stderr = dup(STDERR_FILENO);
+    {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+    }
+    bool init_ok = engine->pipeline.init(config);
+    if (saved_stderr >= 0) { dup2(saved_stderr, STDERR_FILENO); close(saved_stderr); }
+    if (!init_ok) {
         LOG_ERROR("RCLI", "Failed to initialize pipeline");
         return -1;
+    }
+
+    // If the pipeline chose llama.cpp, restore sherpa-onnx model names so the
+    // display matches the actual runtime components (not MetalRT discovery names).
+    if (!engine->pipeline.using_metalrt()) {
+        if (!sherpa_stt_name.empty()) engine->stt_model_name = sherpa_stt_name;
+        if (!sherpa_tts_name.empty()) engine->tts_model_name = sherpa_tts_name;
     }
 
     // Wire up state callback
@@ -647,7 +671,20 @@ int rcli_init(RCLIHandle handle, const char* models_dir, int gpu_layers) {
     }
 
     engine->initialized = true;
-    LOG_DEBUG("RCLI", "Initialized with %d actions", engine->actions.num_actions());
+
+    // Seed context usage so the TUI shows the system-prompt footprint at boot
+    // instead of 0/N.
+    {
+        std::string sp = rastack::apply_personality(
+            effective_base_prompt(engine), engine->personality_key);
+        if (engine->pipeline.using_metalrt())
+            engine->ctx_main_prompt_tokens = engine->pipeline.metalrt_llm().count_tokens(sp);
+        else
+            engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(sp);
+    }
+
+    LOG_DEBUG("RCLI", "Initialized with %d actions, ctx_boot=%d tok",
+              engine->actions.num_actions(), engine->ctx_main_prompt_tokens);
     return 0;
 }
 
@@ -721,36 +758,28 @@ static std::vector<std::pair<std::string, std::string>> truncate_history(
 }
 
 // Compute trimmed history for a given user input and system prompt.
-// Uses llama.cpp for token counting (works for both paths since tokenizers are similar).
+// Accepts pre-computed token counts to avoid redundant tokenization.
 static std::vector<std::pair<std::string, std::string>> get_trimmed_history(
     RCLIEngine* engine,
-    const std::string& system_prompt,
-    const std::string& input)
+    int ctx_size, int system_tokens, int user_tokens)
 {
     if (engine->conversation_history.empty()) return {};
 
-    int ctx_size = engine->pipeline.llm().context_size();
-    int system_tokens = engine->pipeline.llm().count_tokens(system_prompt);
-    int user_tokens = engine->pipeline.llm().count_tokens(input);
     int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
 
     return truncate_history(engine, engine->conversation_history,
                             std::max(0, history_budget));
 }
 
-// MetalRT-aware history trimming using MetalRT's own tokenizer and context size.
+// MetalRT-aware history trimming using MetalRT's own tokenizer.
+// Accepts pre-computed token counts to avoid redundant tokenization.
 static std::vector<std::pair<std::string, std::string>> get_trimmed_history_metalrt(
     RCLIEngine* engine,
     MetalRTEngine& mrt,
-    const std::string& system_prompt,
-    const std::string& input)
+    int ctx_size, int system_tokens, int user_tokens)
 {
     if (engine->conversation_history.empty()) return {};
 
-    int ctx_size = mrt.context_size();
-    if (ctx_size <= 0) ctx_size = 4096;
-    int system_tokens = mrt.count_tokens(system_prompt);
-    int user_tokens = mrt.count_tokens(input);
     int history_budget = ctx_size - 512 - system_tokens - user_tokens - 50;
 
     if (history_budget <= 0) return {};
@@ -1001,7 +1030,7 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
         const auto& profile = mrt.profile();
 
         std::string base_prompt = rastack::apply_personality(
-            rastack::RCLI_SYSTEM_PROMPT, engine->personality_key);
+            effective_base_prompt(engine), engine->personality_key);
         std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
         std::string system_prompt = profile.build_tool_system_prompt(
             base_prompt, tool_defs);
@@ -1017,7 +1046,7 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
             engine->metalrt_kv_continuation_len = 0;
         }
 
-        auto trimmed = get_trimmed_history_metalrt(engine, mrt, system_prompt, hinted_input);
+        auto trimmed = get_trimmed_history_metalrt(engine, mrt, ctx_sz, sys_tok, usr_tok);
         std::string full_prompt = profile.build_chat_prompt(
             system_prompt, trimmed, hinted_input);
 
@@ -1156,21 +1185,15 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
 
     std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
     std::string system_prompt = engine->pipeline.llm().profile().build_tool_system_prompt(
-        std::string(rastack::RCLI_SYSTEM_PROMPT), tool_defs);
-    {
-        auto* pinfo = rastack::find_personality(engine->personality_key);
-        if (pinfo && pinfo->prompt[0] != '\0')
-            system_prompt += "\n" + std::string(pinfo->prompt);
-    }
+        rastack::apply_personality(effective_base_prompt(engine), engine->personality_key),
+        tool_defs);
 
-    {
-        int ctx_sz = engine->pipeline.llm().context_size();
-        int sys_tok = engine->pipeline.llm().count_tokens(system_prompt);
-        int usr_tok = engine->pipeline.llm().count_tokens(input);
-        maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok);
-    }
+    int ctx_sz = engine->pipeline.llm().context_size();
+    int sys_tok = engine->pipeline.llm().count_tokens(system_prompt);
+    int usr_tok = engine->pipeline.llm().count_tokens(input);
+    maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok);
 
-    auto history = get_trimmed_history(engine, system_prompt, input);
+    auto history = get_trimmed_history(engine, ctx_sz, sys_tok, usr_tok);
     std::string hint = engine->pipeline.tools().build_tool_hint(input);
     std::string hinted_input = hint.empty() ? input : (hint + "\n" + input);
     std::string full_chat_prompt = engine->pipeline.llm().build_chat_prompt(
@@ -1286,7 +1309,10 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
         std::string retry_sp = rastack::apply_personality(
             "You are RCLI. Answer the user directly in one sentence. "
             "Do NOT use <think> tags.", engine->personality_key);
-        auto retry_history = get_trimmed_history(engine, retry_sp, input);
+        int r_ctx = engine->pipeline.llm().context_size();
+        int r_sys = engine->pipeline.llm().count_tokens(retry_sp);
+        int r_usr = engine->pipeline.llm().count_tokens(input);
+        auto retry_history = get_trimmed_history(engine, r_ctx, r_sys, r_usr);
         std::string retry = engine->pipeline.llm().generate(
             engine->pipeline.llm().build_chat_prompt(
                 retry_sp, retry_history, input + " Answer directly."),
@@ -1421,17 +1447,6 @@ int rcli_speak_streaming(RCLIHandle handle, const char* text,
 
             if (engine->streaming_cancelled.load(std::memory_order_acquire)) break;
 
-            if (!first_audio_fired) {
-                first_audio_fired = true;
-                if (callback) {
-                    auto now = std::chrono::steady_clock::now();
-                    double ttfa_ms = std::chrono::duration<double, std::milli>(now - t_start).count();
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%.1f", ttfa_ms);
-                    callback("first_audio", buf, user_data);
-                }
-            }
-
             std::vector<float> samples;
             if (engine->pipeline.using_metalrt_tts()) {
                 samples = engine->pipeline.metalrt_tts().synthesize(sentence);
@@ -1449,6 +1464,17 @@ int rcli_speak_streaming(RCLIHandle handle, const char* text,
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
             }
+
+            if (!first_audio_fired) {
+                first_audio_fired = true;
+                if (callback) {
+                    auto now = std::chrono::steady_clock::now();
+                    double ttfa_ms = std::chrono::duration<double, std::milli>(now - t_start).count();
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.1f", ttfa_ms);
+                    callback("first_audio", buf, user_data);
+                }
+            }
             sentence_count++;
         }
     });
@@ -1464,7 +1490,7 @@ int rcli_speak_streaming(RCLIHandle handle, const char* text,
         tts_queue_cv.notify_one();
     };
 
-    rastack::SentenceDetector detector(queue_sentence, 8, 40, 0);
+    rastack::SentenceDetector detector(queue_sentence, 8, 40, 0, /*first_sentence_min_words=*/1);
     detector.feed(std::string(text));
     detector.flush();
 
@@ -1548,18 +1574,6 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
 
             if (engine->streaming_cancelled.load(std::memory_order_acquire)) break;
 
-            // Fire "first_audio" on first sentence
-            if (!first_audio_fired) {
-                first_audio_fired = true;
-                if (callback) {
-                    auto now = std::chrono::steady_clock::now();
-                    double ttfa_ms = std::chrono::duration<double, std::milli>(now - t_start).count();
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%.1f", ttfa_ms);
-                    callback("first_audio", buf, user_data);
-                }
-            }
-
             LOG_DEBUG("TTS", "Streaming sentence: \"%s\"", sentence.c_str());
             std::vector<float> samples;
             if (engine->pipeline.using_metalrt_tts()) {
@@ -1578,6 +1592,20 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
             }
+
+            // Fire "first_audio" AFTER synthesis + write so TTFA reflects
+            // when the user actually starts hearing audio, not just when
+            // the sentence was ready for TTS.
+            if (!first_audio_fired) {
+                first_audio_fired = true;
+                if (callback) {
+                    auto now = std::chrono::steady_clock::now();
+                    double ttfa_ms = std::chrono::duration<double, std::milli>(now - t_start).count();
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.1f", ttfa_ms);
+                    callback("first_audio", buf, user_data);
+                }
+            }
             sentence_count++;
 
             // Fire per-sentence stats
@@ -1592,9 +1620,21 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
     });
 
     // --- Sentence queue lambda ---
+    std::atomic<bool> first_sentence_logged{false};
+    std::chrono::steady_clock::time_point t_first_sentence;
     auto queue_sentence = [&](const std::string& sentence) {
         std::string clean = sanitize_for_tts(sentence);
         if (clean.empty()) return;
+        if (!first_sentence_logged.exchange(true, std::memory_order_relaxed)) {
+            t_first_sentence = std::chrono::steady_clock::now();
+            if (callback) {
+                double sr_ms = std::chrono::duration<double, std::milli>(
+                    t_first_sentence - t_start).count();
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.1f", sr_ms);
+                callback("sentence_ready", buf, user_data);
+            }
+        }
         {
             std::lock_guard<std::mutex> lk(tts_queue_mutex);
             tts_queue.push_back(std::move(clean));
@@ -1604,13 +1644,14 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
 
     // --- LLM generation with streaming token callback ---
     std::string response;
+    std::chrono::steady_clock::time_point t_prep_done;
 
     if (engine->pipeline.using_metalrt()) {
         auto& mrt = engine->pipeline.metalrt_llm();
         const auto& profile = mrt.profile();
 
         std::string base_prompt = rastack::apply_personality(
-            rastack::RCLI_SYSTEM_PROMPT, engine->personality_key);
+            effective_base_prompt(engine), engine->personality_key);
         std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
         std::string system_prompt = profile.build_tool_system_prompt(
             base_prompt, tool_defs);
@@ -1618,14 +1659,12 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
         std::string hint = engine->pipeline.tools().build_tool_hint(input);
         std::string hinted_input = hint.empty() ? input : (hint + "\n" + input);
 
-        {
-            int sys_tok = mrt.count_tokens(system_prompt);
-            int usr_tok = mrt.count_tokens(hinted_input);
-            int ctx_sz = mrt.context_size();
-            if (ctx_sz <= 0) ctx_sz = 4096;
-            if (maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok)) {
-                engine->metalrt_kv_continuation_len = 0;
-            }
+        int sys_tok = mrt.count_tokens(system_prompt);
+        int usr_tok = mrt.count_tokens(hinted_input);
+        int ctx_sz = mrt.context_size();
+        if (ctx_sz <= 0) ctx_sz = 4096;
+        if (maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok)) {
+            engine->metalrt_kv_continuation_len = 0;
         }
 
         const std::string& tc_start = profile.tool_call_start;
@@ -1633,26 +1672,29 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
         bool detected_tool_call = false;
         int tokens_buffered = 0;
         constexpr int SPECULATIVE_TOKENS = 15;
-        SentenceDetector detector(queue_sentence, 8, 40, 0);
+        bool has_tools = engine->actions.num_enabled() > 0;
+        SentenceDetector detector(queue_sentence, 8, 40, 0, /*first_sentence_min_words=*/1);
 
         auto streaming_cb = [&](const TokenOutput& tok) {
             if (detected_tool_call) return;
-            tokens_buffered++;
-            if (tokens_buffered <= SPECULATIVE_TOKENS) {
-                token_buffer += tok.text;
-                if (token_buffer.find(tc_start) != std::string::npos) {
-                    detected_tool_call = true;
+            if (has_tools) {
+                tokens_buffered++;
+                if (tokens_buffered <= SPECULATIVE_TOKENS) {
+                    token_buffer += tok.text;
+                    if (token_buffer.find(tc_start) != std::string::npos) {
+                        detected_tool_call = true;
+                    }
+                    return;
                 }
-            } else {
                 if (!token_buffer.empty()) {
                     detector.feed(token_buffer);
                     token_buffer.clear();
                 }
-                detector.feed(tok.text);
             }
+            detector.feed(tok.text);
         };
 
-        auto trimmed = get_trimmed_history_metalrt(engine, mrt, system_prompt, hinted_input);
+        auto trimmed = get_trimmed_history_metalrt(engine, mrt, ctx_sz, sys_tok, usr_tok);
         std::string full_prompt = profile.build_chat_prompt(
             system_prompt, trimmed, hinted_input);
 
@@ -1660,26 +1702,66 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
             engine->metalrt_kv_continuation_len = 0;
         }
 
+        t_prep_done = std::chrono::steady_clock::now();
+
         const auto& cached = mrt.cached_prompt();
-        if (mrt.has_prompt_cache() && !cached.empty() &&
+        LOG_DEBUG("RCLI", "[speak] cache check: has_cache=%d cached_len=%zu "
+                  "prompt_len=%zu cached_first40='%.40s' prompt_first40='%.40s'",
+                  mrt.has_prompt_cache() ? 1 : 0,
+                  cached.size(), full_prompt.size(),
+                  cached.substr(0, 40).c_str(),
+                  full_prompt.substr(0, 40).c_str());
+
+        bool prefix_match = !cached.empty() &&
             full_prompt.size() > cached.size() &&
-            full_prompt.compare(0, cached.size(), cached) == 0) {
+            full_prompt.compare(0, cached.size(), cached) == 0;
+        bool cache_hit = mrt.has_prompt_cache() && prefix_match;
+
+        if (!prefix_match && !cached.empty()) {
+            size_t mismatch_pos = 0;
+            size_t check_len = std::min(cached.size(), full_prompt.size());
+            for (size_t i = 0; i < check_len; i++) {
+                if (cached[i] != full_prompt[i]) { mismatch_pos = i; break; }
+                mismatch_pos = i + 1;
+            }
+            LOG_DEBUG("RCLI", "[speak] cache MISS — cached=%zu prompt=%zu "
+                      "match_up_to=%zu (prompt>cached=%d)",
+                      cached.size(), full_prompt.size(), mismatch_pos,
+                      full_prompt.size() > cached.size() ? 1 : 0);
+            if (mismatch_pos < cached.size() && mismatch_pos < full_prompt.size()) {
+                std::string c_ctx = cached.substr(
+                    mismatch_pos > 20 ? mismatch_pos - 20 : 0, 60);
+                std::string p_ctx = full_prompt.substr(
+                    mismatch_pos > 20 ? mismatch_pos - 20 : 0, 60);
+                LOG_DEBUG("RCLI", "[speak] diff at %zu: cached='%s' vs prompt='%s'",
+                          mismatch_pos, c_ctx.c_str(), p_ctx.c_str());
+            }
+        }
+
+        if (cache_hit) {
             std::string full_continuation = full_prompt.substr(cached.size());
+            LOG_DEBUG("RCLI", "[speak] cache HIT — continuation=%zu chars, "
+                      "prev_kv_len=%zu",
+                      full_continuation.size(),
+                      engine->metalrt_kv_continuation_len);
 
             if (engine->metalrt_kv_continuation_len > 0 &&
                 engine->metalrt_kv_continuation_len < full_continuation.size()) {
                 std::string new_part = full_continuation.substr(engine->metalrt_kv_continuation_len);
-                LOG_TRACE("RCLI", "[speak] incremental continue "
+                LOG_DEBUG("RCLI", "[speak] incremental continue "
                         "(new=%zu chars, skip=%zu already in KV)",
                         new_part.size(), engine->metalrt_kv_continuation_len);
                 response = mrt.generate_raw_continue(new_part, streaming_cb, false);
             } else {
-                LOG_TRACE("RCLI", "[speak] full continue "
+                LOG_DEBUG("RCLI", "[speak] full continue "
                         "(continuation=%zu chars)", full_continuation.size());
                 response = mrt.generate_raw_continue(full_continuation, streaming_cb, true);
             }
             engine->metalrt_kv_continuation_len = full_continuation.size();
         } else {
+            LOG_DEBUG("RCLI", "[speak] cache MISS path — calling generate_raw() "
+                      "(has_cache=%d prefix_match=%d)",
+                      mrt.has_prompt_cache() ? 1 : 0, prefix_match ? 1 : 0);
             response = mrt.generate_raw(full_prompt, streaming_cb);
             engine->metalrt_kv_continuation_len = 0;
         }
@@ -1765,21 +1847,15 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
         const auto& profile = engine->pipeline.llm().profile();
         std::string tool_defs = engine->pipeline.tools().get_tool_definitions_json();
         std::string system_prompt = profile.build_tool_system_prompt(
-            std::string(rastack::RCLI_SYSTEM_PROMPT), tool_defs);
-        {
-            auto* pinfo = rastack::find_personality(engine->personality_key);
-            if (pinfo && pinfo->prompt[0] != '\0')
-                system_prompt += "\n" + std::string(pinfo->prompt);
-        }
+            rastack::apply_personality(effective_base_prompt(engine), engine->personality_key),
+            tool_defs);
 
-        {
-            int ctx_sz = engine->pipeline.llm().context_size();
-            int sys_tok = engine->pipeline.llm().count_tokens(system_prompt);
-            int usr_tok = engine->pipeline.llm().count_tokens(input);
-            maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok);
-        }
+        int ctx_sz = engine->pipeline.llm().context_size();
+        int sys_tok = engine->pipeline.llm().count_tokens(system_prompt);
+        int usr_tok = engine->pipeline.llm().count_tokens(input);
+        maybe_auto_compact(engine, ctx_sz, sys_tok, usr_tok);
 
-        auto history = get_trimmed_history(engine, system_prompt, input);
+        auto history = get_trimmed_history(engine, ctx_sz, sys_tok, usr_tok);
         std::string hint = engine->pipeline.tools().build_tool_hint(input);
         std::string hinted_input = hint.empty() ? input : (hint + "\n" + input);
 
@@ -1788,27 +1864,31 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
         bool detected_tool_call = false;
         int tokens_buffered = 0;
         constexpr int SPECULATIVE_TOKENS = 15;
-        SentenceDetector detector(queue_sentence, 8, 40, 0);
+        bool has_tools = engine->actions.num_enabled() > 0;
+        SentenceDetector detector(queue_sentence, 8, 40, 0, /*first_sentence_min_words=*/1);
 
         auto streaming_cb = [&](const TokenOutput& tok) {
             if (detected_tool_call) return;
-            tokens_buffered++;
-            if (tokens_buffered <= SPECULATIVE_TOKENS) {
-                token_buffer += tok.text;
-                if (token_buffer.find(tc_start) != std::string::npos) {
-                    detected_tool_call = true;
+            if (has_tools) {
+                tokens_buffered++;
+                if (tokens_buffered <= SPECULATIVE_TOKENS) {
+                    token_buffer += tok.text;
+                    if (token_buffer.find(tc_start) != std::string::npos) {
+                        detected_tool_call = true;
+                    }
+                    return;
                 }
-            } else {
                 if (!token_buffer.empty()) {
                     detector.feed(token_buffer);
                     token_buffer.clear();
                 }
-                detector.feed(tok.text);
             }
+            detector.feed(tok.text);
         };
 
         std::string full_chat_prompt = engine->pipeline.llm().build_chat_prompt(
             system_prompt, history, hinted_input);
+        t_prep_done = std::chrono::steady_clock::now();
         std::string raw = engine->pipeline.llm().generate(full_chat_prompt, streaming_cb);
         engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(full_chat_prompt);
 
@@ -1877,6 +1957,37 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
             detector.flush();
             response = clean_llm_output(engine, raw);
         }
+    }
+
+    // Log TTFA breakdown for diagnostics (LLM-side; displayed TTFA also includes 1st TTS synthesis)
+    {
+        auto t_gen_done = std::chrono::steady_clock::now();
+        double prep_ms = std::chrono::duration<double, std::milli>(t_prep_done - t_start).count();
+        double gen_ms = std::chrono::duration<double, std::milli>(t_gen_done - t_prep_done).count();
+        double sentence_ms = first_sentence_logged.load(std::memory_order_relaxed)
+            ? std::chrono::duration<double, std::milli>(t_first_sentence - t_prep_done).count()
+            : -1.0;
+        double sentence_ready_ms = first_sentence_logged.load(std::memory_order_relaxed)
+            ? std::chrono::duration<double, std::milli>(t_first_sentence - t_start).count()
+            : -1.0;
+
+        const char* eng = engine->pipeline.using_metalrt() ? "MetalRT" : "llama.cpp";
+        const char* tts_eng = engine->pipeline.using_metalrt_tts() ? "MetalRT" : "sherpa";
+        const auto& st = engine->pipeline.using_metalrt()
+            ? engine->pipeline.metalrt_llm().last_stats()
+            : engine->pipeline.llm().last_stats();
+
+        LOG_DEBUG("RCLI", "[TTFA breakdown] llm=%s tts=%s  prep=%.1fms  "
+                  "prefill=%.1fms  first_tok=%.1fms  gen_to_sentence=%.1fms  "
+                  "sentence_ready=%.1fms  total_gen=%.1fms  ctx=%d tok  "
+                  "(displayed TTFA includes 1st TTS synthesis)",
+                  eng, tts_eng, prep_ms,
+                  st.prompt_eval_us / 1000.0,
+                  st.first_token_us / 1000.0,
+                  sentence_ms,
+                  sentence_ready_ms,
+                  gen_ms,
+                  engine->ctx_main_prompt_tokens);
     }
 
     // Fire "response" callback with full LLM text
@@ -1960,13 +2071,22 @@ void rcli_clear_history(RCLIHandle handle) {
     engine->conversation_history.clear();
     engine->conversation_summary.clear();
     engine->metalrt_kv_continuation_len = 0;
-    engine->ctx_main_prompt_tokens = 0;
     if (engine->initialized) {
         if (engine->pipeline.using_metalrt()) {
             engine->pipeline.metalrt_llm().reset_conversation();
+            engine->pipeline.recache_system_prompt();
         } else {
             engine->pipeline.llm().clear_kv_cache();
         }
+        // Reflect that only the system prompt remains in KV
+        std::string sp = rastack::apply_personality(
+            effective_base_prompt(engine), engine->personality_key);
+        if (engine->pipeline.using_metalrt())
+            engine->ctx_main_prompt_tokens = engine->pipeline.metalrt_llm().count_tokens(sp);
+        else
+            engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(sp);
+    } else {
+        engine->ctx_main_prompt_tokens = 0;
     }
 }
 
@@ -1990,7 +2110,7 @@ int rcli_set_personality(RCLIHandle handle, const char* personality_key) {
     // Update the pipeline system prompt so it takes effect immediately
     if (engine->initialized) {
         std::string new_prompt = rastack::apply_personality(
-            rastack::RCLI_SYSTEM_PROMPT, key);
+            effective_base_prompt(engine), key);
         engine->pipeline.set_system_prompt(new_prompt);
         engine->pipeline.recache_system_prompt();
 
@@ -2000,6 +2120,7 @@ int rcli_set_personality(RCLIHandle handle, const char* personality_key) {
         engine->ctx_main_prompt_tokens = 0;
         if (engine->pipeline.using_metalrt()) {
             engine->pipeline.metalrt_llm().reset_conversation();
+            engine->pipeline.recache_system_prompt();
         }
 
         // Switch TTS voice to match personality
@@ -2393,9 +2514,17 @@ int rcli_set_action_enabled(RCLIHandle handle, const char* name, int enabled) {
     // Re-sync tool definitions visible to the LLM
     engine->pipeline.tools().set_external_tool_definitions(
         engine->actions.get_definitions_json());
-    // Re-cache system prompt with updated tool definitions
-    if (engine->initialized)
+    // Update base prompt (compact for conversation, full for tools) and re-cache
+    if (engine->initialized) {
+        std::string sp = rastack::apply_personality(
+            effective_base_prompt(engine), engine->personality_key);
+        engine->pipeline.set_system_prompt(sp);
         engine->pipeline.recache_system_prompt();
+        if (engine->pipeline.using_metalrt())
+            engine->ctx_main_prompt_tokens = engine->pipeline.metalrt_llm().count_tokens(sp);
+        else
+            engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(sp);
+    }
     return 0;
 }
 
@@ -2415,6 +2544,49 @@ int rcli_save_action_preferences(RCLIHandle handle) {
         prefs_path = "/tmp/.rcli/actions.json";
     engine->actions.save_preferences(prefs_path);
     return 0;
+}
+
+int rcli_num_actions_enabled(RCLIHandle handle) {
+    if (!handle) return 0;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    return engine->actions.num_enabled();
+}
+
+void rcli_disable_all_actions(RCLIHandle handle) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    engine->actions.disable_all();
+    engine->pipeline.tools().set_external_tool_definitions("[]");
+    if (engine->initialized) {
+        std::string sp = rastack::apply_personality(
+            rastack::RCLI_CONVERSATION_SYSTEM_PROMPT, engine->personality_key);
+        engine->pipeline.set_system_prompt(sp);
+        engine->pipeline.recache_system_prompt();
+        if (engine->pipeline.using_metalrt())
+            engine->ctx_main_prompt_tokens = engine->pipeline.metalrt_llm().count_tokens(sp);
+        else
+            engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(sp);
+    }
+}
+
+void rcli_reset_actions_to_defaults(RCLIHandle handle) {
+    if (!handle) return;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    engine->actions.reset_to_defaults();
+    engine->pipeline.tools().set_external_tool_definitions(
+        engine->actions.get_definitions_json());
+    if (engine->initialized) {
+        std::string sp = rastack::apply_personality(
+            effective_base_prompt(engine), engine->personality_key);
+        engine->pipeline.set_system_prompt(sp);
+        engine->pipeline.recache_system_prompt();
+        if (engine->pipeline.using_metalrt())
+            engine->ctx_main_prompt_tokens = engine->pipeline.metalrt_llm().count_tokens(sp);
+        else
+            engine->ctx_main_prompt_tokens = engine->pipeline.llm().count_tokens(sp);
+    }
 }
 
 // =============================================================================
@@ -2468,6 +2640,8 @@ int rcli_switch_llm(RCLIHandle handle, const char* model_id) {
 
     engine->pipeline.tools().set_external_tool_definitions(
         engine->actions.get_definitions_json());
+    engine->pipeline.set_system_prompt(rastack::apply_personality(
+        effective_base_prompt(engine), engine->personality_key));
     engine->pipeline.recache_system_prompt();
 
     LOG_INFO("RCLI", "LLM switched to %s (profile: %s)",

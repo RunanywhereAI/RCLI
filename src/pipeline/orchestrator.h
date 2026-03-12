@@ -42,7 +42,7 @@ struct PipelineConfig {
     size_t audio_ring_capacity = 16384 * 10;         // ~10 sec at 16kHz
     size_t tts_ring_capacity   = 24000 * 60;         // ~60 sec at 24kHz (Kokoro)
 
-    std::string system_prompt = RCLI_SYSTEM_PROMPT;
+    std::string system_prompt = RCLI_CONVERSATION_SYSTEM_PROMPT;
 };
 
 struct PipelineTimings {

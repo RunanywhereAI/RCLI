@@ -168,9 +168,19 @@ int rcli_set_action_enabled(RCLIHandle handle, const char* name, int enabled);
 // Query whether an action is currently enabled. Returns 1 if enabled, 0 if not.
 int rcli_is_action_enabled(RCLIHandle handle, const char* name);
 
+// Get the number of currently enabled actions.
+int rcli_num_actions_enabled(RCLIHandle handle);
+
 // Persist action enable/disable preferences to ~/.rcli/actions.json.
 // Returns 0 on success, -1 on failure.
 int rcli_save_action_preferences(RCLIHandle handle);
+
+// Disable all actions, clear tool definitions from LLM, and re-cache system prompt.
+// Puts the engine into pure conversation mode.
+void rcli_disable_all_actions(RCLIHandle handle);
+
+// Restore actions to their default_enabled state (boot defaults).
+void rcli_reset_actions_to_defaults(RCLIHandle handle);
 
 // --- Model Hot-Swap ---
 
