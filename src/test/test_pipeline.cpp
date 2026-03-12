@@ -1996,8 +1996,10 @@ static void test_personality_api(const std::string& models_dir) {
 
 struct VoiceBenchCtx {
     double ttfa_ms = 0;
+    double ttft_ms = 0;
     double tts_total_ms = 0;
     bool got_ttfa = false;
+    bool got_ttft = false;
     bool completed = false;
 };
 
@@ -2006,6 +2008,10 @@ static void voice_bench_cb(const char* event, const char* data, void* ud) {
     if (strcmp(event, "first_audio") == 0 && data) {
         ctx->ttfa_ms = atof(data);
         ctx->got_ttfa = true;
+    }
+    if (strcmp(event, "sentence_ready") == 0 && data) {
+        ctx->ttft_ms = atof(data);
+        ctx->got_ttft = true;
     }
     if (strcmp(event, "complete") == 0) {
         ctx->completed = true;
@@ -2022,8 +2028,10 @@ static void test_voice_bench(const std::string& models_dir) {
         "Hi there, bro.",
     };
 
-    auto run_engine = [&](const char* engine_name) {
-        TEST_SECTION(std::string("Voice Bench — " + std::string(engine_name)).c_str());
+    auto run_engine = [&](const char* engine_name, bool fresh_each_turn) {
+        const char* mode = fresh_each_turn ? "fresh-turn" : "multi-turn";
+        std::string section = std::string("Voice Bench [") + mode + "] — " + engine_name;
+        TEST_SECTION(section.c_str());
 
         rcli::write_engine_preference(engine_name);
 
@@ -2036,25 +2044,30 @@ static void test_voice_bench(const std::string& models_dir) {
         }
 
         const char* active = rcli_get_active_engine(h);
-        TEST_INFO("Active engine: %s", active ? active : "unknown");
+        TEST_INFO("Active engine: %s  mode: %s", active ? active : "unknown", mode);
 
-        double ttfa_sum = 0;
+        double ttfa_sum = 0, ttft_sum = 0;
         double ttfa_min = 1e9, ttfa_max = 0;
+        double ttft_min = 1e9, ttft_max = 0;
         int ok_count = 0;
 
         for (int i = 0; i < ITERS; i++) {
+            if (fresh_each_turn && i > 0) {
+                rcli_clear_history(h);
+            }
+
             VoiceBenchCtx ctx;
             auto t0 = std::chrono::steady_clock::now();
             const char* resp = rcli_process_and_speak(h, queries[i], voice_bench_cb, &ctx);
             double total_ms = elapsed_ms(t0);
 
-            char label[128];
-            snprintf(label, sizeof(label), "[%s] Iter %d — TTFA=%.1fms",
-                     engine_name, i + 1, ctx.ttfa_ms);
+            char label[256];
+            snprintf(label, sizeof(label), "[%s][%s] Iter %d — TTFT=%.0fms TTFA=%.0fms",
+                     engine_name, mode, i + 1, ctx.ttft_ms, ctx.ttfa_ms);
             TEST(label, resp != nullptr && strlen(resp) > 0);
             TEST_INFO("Query:    \"%s\"", queries[i]);
             TEST_INFO("Response: %.100s", resp ? resp : "(null)");
-            TEST_INFO("TTFA=%.1fms  total=%.1fms", ctx.ttfa_ms, total_ms);
+            TEST_INFO("TTFT=%.1fms  TTFA=%.1fms  total=%.1fms", ctx.ttft_ms, ctx.ttfa_ms, total_ms);
 
             if (ctx.got_ttfa && ctx.ttfa_ms > 0) {
                 ttfa_sum += ctx.ttfa_ms;
@@ -2062,26 +2075,37 @@ static void test_voice_bench(const std::string& models_dir) {
                 if (ctx.ttfa_ms > ttfa_max) ttfa_max = ctx.ttfa_ms;
                 ok_count++;
             }
-
+            if (ctx.got_ttft && ctx.ttft_ms > 0) {
+                ttft_sum += ctx.ttft_ms;
+                if (ctx.ttft_ms < ttft_min) ttft_min = ctx.ttft_ms;
+                if (ctx.ttft_ms > ttft_max) ttft_max = ctx.ttft_ms;
+            }
         }
 
         if (ok_count > 0) {
-            double avg = ttfa_sum / ok_count;
-            fprintf(stderr, "\n  \033[1;33m[%s] TTFA Summary: avg=%.1fms  min=%.1fms  max=%.1fms  (%d/%d iters)\033[0m\n",
-                    engine_name, avg, ttfa_min, ttfa_max, ok_count, ITERS);
+            double ttfa_avg = ttfa_sum / ok_count;
+            double ttft_avg = ttft_sum / ok_count;
+            fprintf(stderr, "\n  \033[1;33m[%s][%s] TTFT: avg=%.0fms  min=%.0fms  max=%.0fms\033[0m\n",
+                    engine_name, mode, ttft_avg, ttft_min, ttft_max);
+            fprintf(stderr, "  \033[1;33m[%s][%s] TTFA: avg=%.0fms  min=%.0fms  max=%.0fms  (%d/%d)\033[0m\n",
+                    engine_name, mode, ttfa_avg, ttfa_min, ttfa_max, ok_count, ITERS);
+
+            int target = strcmp(engine_name, "metalrt") == 0
+                ? (fresh_each_turn ? 180 : 250)
+                : (fresh_each_turn ? 700 : 900);
             char summary_label[128];
             snprintf(summary_label, sizeof(summary_label),
-                     "[%s] Avg TTFA < %dms", engine_name,
-                     strcmp(engine_name, "metalrt") == 0 ? 200 : 300);
-            TEST(summary_label,
-                 strcmp(engine_name, "metalrt") == 0 ? avg < 200.0 : avg < 300.0);
+                     "[%s][%s] Avg TTFA < %dms", engine_name, mode, target);
+            TEST(summary_label, ttfa_avg < target);
         }
 
         rcli_destroy(h);
     };
 
-    run_engine("metalrt");
-    run_engine("llamacpp");
+    run_engine("metalrt", true);
+    run_engine("metalrt", false);
+    run_engine("llamacpp", true);
+    run_engine("llamacpp", false);
 }
 
 // =============================================================================

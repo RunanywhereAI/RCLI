@@ -18,9 +18,11 @@ public:
     explicit SentenceDetector(SentenceCallback cb,
                               int min_words = 3,
                               int max_words_before_secondary_break = 25,
-                              int word_flush_threshold = 0)
+                              int word_flush_threshold = 0,
+                              int first_sentence_min_words = -1)
         : callback_(std::move(cb))
         , min_words_(min_words)
+        , first_min_words_(first_sentence_min_words >= 0 ? first_sentence_min_words : min_words)
         , max_words_secondary_(max_words_before_secondary_break)
         , word_flush_threshold_(word_flush_threshold) {}
 
@@ -45,6 +47,7 @@ private:
     std::string      buffer_;
     int              sentence_count_ = 0;
     int              min_words_;
+    int              first_min_words_;
     int              max_words_secondary_;
     int              word_flush_threshold_;
 };

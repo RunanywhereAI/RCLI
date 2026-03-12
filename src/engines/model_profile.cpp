@@ -455,6 +455,15 @@ std::string ModelProfile::build_tool_system_prompt(
 {
     std::string prompt = base_system_prompt;
     if (tool_defs_json.empty()) return prompt;
+    // Treat empty JSON arrays (with any whitespace) as no-tools for conversation mode
+    bool has_tool = false;
+    for (char c : tool_defs_json) {
+        if (c != '[' && c != ']' && c != ' ' && c != '\n' && c != '\r' && c != '\t') {
+            has_tool = true;
+            break;
+        }
+    }
+    if (!has_tool) return prompt;
 
     if (family == ModelFamily::QWEN3) {
         // Matches Qwen3's training format: tools wrapped in <tools></tools> XML

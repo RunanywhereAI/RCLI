@@ -33,7 +33,9 @@ void SentenceDetector::feed(const std::string& text) {
 
             // Primary breaks (. ! ? \n): require minimum word count
             // to avoid splitting on abbreviations like "Dr." or "U.S."
-            if (is_primary && words >= min_words_) {
+            // Use a lower threshold for the first sentence to minimize TTFA.
+            int effective_min = (sentence_count_ == 0) ? first_min_words_ : min_words_;
+            if (is_primary && words >= effective_min) {
                 if (!candidate.empty() && callback_) {
                     callback_(candidate);
                     sentence_count_++;
@@ -58,14 +60,18 @@ void SentenceDetector::feed(const std::string& text) {
     }
 
     // Word-level flush: if no sentence boundary found but enough words accumulated,
-    // emit at the last word boundary for earlier TTS start
-    if (word_flush_threshold_ > 0 && !buffer_.empty()) {
+    // emit at the last word boundary for earlier TTS start.
+    // For the first sentence, use a lower threshold to minimize TTFA.
+    int effective_word_flush = word_flush_threshold_;
+    if (sentence_count_ == 0 && first_min_words_ < min_words_)
+        effective_word_flush = std::max(effective_word_flush, 5);
+    if (effective_word_flush > 0 && !buffer_.empty()) {
         std::string trimmed = buffer_;
         size_t first = trimmed.find_first_not_of(" \n\r\t");
         if (first != std::string::npos) {
             trimmed = trimmed.substr(first);
         }
-        if (count_words(trimmed) >= word_flush_threshold_) {
+        if (count_words(trimmed) >= effective_word_flush) {
             // Find last space to emit a clean word boundary
             size_t last_space = buffer_.rfind(' ');
             if (last_space != std::string::npos && last_space > 0) {

@@ -205,6 +205,14 @@ public:
         screen_obj.TrackMouse(false);
         screen_ = &screen_obj;
 
+        // Seed context gauge so the first render shows the system-prompt footprint
+        if (engine_) {
+            int pt = 0, cs = 0;
+            rcli_get_context_info(engine_, &pt, &cs);
+            if (pt > 0) ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
+            if (cs > 0) ctx_size_.store(cs, std::memory_order_relaxed);
+        }
+
         // Tool trace callback: fires on the rcli_process_command() background thread,
         // so we guard chat_history_ with chat_mu_ and use Post(Event::Custom) to
         // kick the FTXUI render loop. The "~" prefix is a sentinel used in
@@ -285,7 +293,17 @@ public:
                 return true;
             }
             if (actions_mode_) {
-                if (event == Event::Escape) { actions_mode_ = false; return true; }
+                if (event == Event::Escape) {
+                    actions_mode_ = false;
+                    int n = 0;
+                    for (auto& e : actions_entries_)
+                        if (!e.is_header && e.enabled) n++;
+                    if (n > 0)
+                        add_system_message(std::to_string(n) + " actions enabled. Actions + conversation mode.");
+                    else
+                        add_system_message("No actions enabled. Conversation mode.");
+                    return true;
+                }
                 if (event == Event::ArrowUp) { actions_cursor_up(); return true; }
                 if (event == Event::ArrowDown) { actions_cursor_down(); return true; }
                 if (event == Event::Return) { actions_execute_selected(); return true; }
@@ -424,13 +442,23 @@ public:
 
                 if (c == "x" || c == "X") {
                     rcli_clear_history(engine_);
-                    ctx_prompt_tokens_.store(0, std::memory_order_relaxed);
+                    rcli_reset_actions_to_defaults(engine_);
                     last_ctx_pct_notified_ = 0;
                     {
                         std::lock_guard<std::mutex> lock(chat_mu_);
                         chat_history_.clear();
                     }
-                    add_system_message("Conversation cleared. Context reset.");
+                    refresh_ctx_gauge();
+                    int n = rcli_num_actions_enabled(engine_);
+                    add_system_message("Full reset. " + std::to_string(n) + " default actions restored.");
+                    screen_->Post(Event::Custom);
+                    return true;
+                }
+
+                if (c == "c" || c == "C") {
+                    rcli_disable_all_actions(engine_);
+                    refresh_ctx_gauge();
+                    add_system_message("Conversation mode. Actions disabled, compact prompt active.");
                     screen_->Post(Event::Custom);
                     return true;
                 }
@@ -568,10 +596,11 @@ private:
                 auto event_cb = [](const char* event, const char* data, void* ud) {
                     auto* app = static_cast<TuiApp*>(ud);
                     std::string ev(event);
-                    if (ev == "first_audio") {
+                    if (ev == "sentence_ready") {
+                        app->last_ttft_ms_.store(std::stod(data), std::memory_order_relaxed);
+                    } else if (ev == "first_audio") {
                         double ttfa = std::stod(data);
                         app->last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
-                        // Append TTFA to perf line now (no-op if "response" hasn't fired yet)
                         app->voice_state_ = VoiceState::SPEAKING;
                         app->screen_->Post(Event::Custom);
                     } else if (ev == "response") {
@@ -834,12 +863,27 @@ private:
             metrics.push_back(text(badge) | ftxui::bold | ftxui::color(badge_color));
         }
 
-        if (ttfa > 0) {
-            auto ttfa_color = (ttfa < 100) ? theme_.success
-                            : (ttfa < 300) ? theme_.warning : theme_.error;
+        double ttft = last_ttft_ms_.load(std::memory_order_relaxed);
+        if (ttft > 0) {
+            auto ttft_color = (ttft < 100) ? theme_.success
+                            : (ttft < 200) ? theme_.warning : theme_.error;
             std::ostringstream os;
-            os << std::fixed << std::setprecision(0) << "TTFA " << ttfa << "ms";
-            metrics.push_back(text("  " + os.str()) | ftxui::bold | ftxui::color(ttfa_color));
+            os << std::fixed << std::setprecision(0) << ttft << "ms";
+            metrics.push_back(hbox({
+                text("  TTFT ") | ftxui::bold | ftxui::color(theme_.text_normal),
+                text(os.str()) | ftxui::bold | ftxui::color(ttft_color),
+            }));
+        }
+
+        if (ttfa > 0) {
+            auto ttfa_color = (ttfa < 200) ? theme_.success
+                            : (ttfa < 400) ? theme_.warning : theme_.error;
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(0) << ttfa << "ms";
+            metrics.push_back(hbox({
+                text("  TTFA ") | ftxui::bold | ftxui::color(theme_.text_normal),
+                text(os.str()) | ftxui::bold | ftxui::color(ttfa_color),
+            }));
         }
 
         if (metrics.empty()) {
@@ -869,8 +913,8 @@ private:
                                   + "(" + std::to_string(ctx_used) + "/"
                                   + std::to_string(ctx_total) + " tok)";
             auto clear_hint = (ctx_pct >= 75)
-                ? text(" FULL — press [X] to clear ") | ftxui::bold | ftxui::color(theme_.error)
-                : text("[X] clear context") | dim;
+                ? text(" FULL — press [X] to reset ") | ftxui::bold | ftxui::color(theme_.error)
+                : text("[X] reset") | dim;
             ctx_row = hbox({
                 text(" ") | size(WIDTH, EQUAL, 9),
                 gauge(ctx_frac) | flex | ftxui::color(ctx_color),
@@ -886,14 +930,14 @@ private:
                 gauge(0.0f) | flex | ftxui::color(theme_.success),
                 text(" " + ctx_label + " ") | dim,
                 filler(),
-                text("[X] clear context") | dim,
+                text("[X] reset") | dim,
             });
         } else {
             ctx_row = hbox({
                 text(" ") | size(WIDTH, EQUAL, 9),
                 text("context: loading...") | dim,
                 filler(),
-                text("[X] clear context") | dim,
+                text("[X] reset") | dim,
             });
         }
 
@@ -991,7 +1035,7 @@ private:
             return hbox({
                 text(" Actions ") | ftxui::bold | ftxui::color(theme_.accent),
                 filler(),
-                text("[Up/Down] navigate  [Enter] run  [ESC] close ") | dim,
+                text("[SPACE] enable/disable  [Enter] run  [ESC] close ") | dim,
             });
         }
 
@@ -1011,17 +1055,25 @@ private:
         }
 
         bool trace_on = tool_trace_enabled_.load(std::memory_order_relaxed);
+        int actions_on = engine_ ? rcli_num_actions_enabled(engine_) : 0;
 
         Elements left;
         left.push_back(text(" Voice AI + RAG") | ftxui::bold);
         left.push_back(text("  \xE2\x80\xA2  ") | dim);
-        left.push_back(text("Powered by RunAnywhere") | dim);
+        if (actions_on > 0)
+            left.push_back(text("Actions ON (" + std::to_string(actions_on) + ")") |
+                ftxui::bold | ftxui::color(theme_.success));
+        else
+            left.push_back(text("Conversation mode") | dim);
 
         Elements right;
-        // Build shortcuts with color highlights for active toggles
         right.push_back(text("[SPACE] talk  ") | dim);
         right.push_back(text("[M] models  ") | dim);
-        right.push_back(text("[A] actions  ") | dim);
+        if (actions_on > 0)
+            right.push_back(text("[A] actions  ") | ftxui::color(theme_.success));
+        else
+            right.push_back(text("[A] actions  ") | dim);
+        right.push_back(text("[C] convo  ") | dim);
         right.push_back(text("[R] RAG  ") | dim);
         right.push_back(text("[P] personality  ") | dim);
         right.push_back(text("[D] cleanup  ") | dim);
@@ -1029,6 +1081,7 @@ private:
             right.push_back(text("[T] trace  ") | ftxui::color(theme_.info));
         else
             right.push_back(text("[T] trace  ") | dim);
+        right.push_back(text("[X] reset  ") | dim);
         right.push_back(text("[Q] quit") | dim);
 
         return hbox({
@@ -2119,12 +2172,12 @@ private:
             add_system_message("--- Shortcuts ---");
             add_system_message("  SPACE  Push-to-talk voice recording");
             add_system_message("  ESC    Stop processing (LLM / TTS / STT)");
-            add_system_message("  X      Clear conversation + reset context");
+            add_system_message("  C      Conversation mode (disable all actions)");
+            add_system_message("  X      Full reset (clear history + disable actions)");
             add_system_message("  Q      Quit");
             add_system_message("--- Panels ---");
             add_system_message("  M      Models (browse / switch / download)");
-            add_system_message("  A      Actions (browse / run macOS actions)");
-
+            add_system_message("  A      Actions (browse / enable / run macOS actions)");
             add_system_message("  P      Personality");
             add_system_message("  R      RAG panel");
             add_system_message("  D      Delete / cleanup models");
@@ -2309,44 +2362,83 @@ private:
         std::string input_copy = input;
         std::thread([this, input_copy]() {
             fprintf(stderr, "[TRACE] [tui-thread] START input='%.40s'\n", input_copy.c_str());
-            auto t_start = std::chrono::steady_clock::now();
-            fprintf(stderr, "[TRACE] [tui-thread] calling process_command ...\n");
-            const char* response = rag_loaded_
-                ? rcli_rag_query(engine_, input_copy.c_str())
-                : rcli_process_command(engine_, input_copy.c_str());
-            fprintf(stderr, "[TRACE] [tui-thread] process_command returned, response=%s\n",
-                     (response && response[0]) ? "non-empty" : "EMPTY");
-            if (response && response[0]) {
-                std::string perf = format_llm_perf(rag_loaded_.load());
 
-                int pt = 0, cs = 0;
-                rcli_get_context_info(engine_, &pt, &cs);
-                if (pt > 0) ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
-                if (cs > 0) ctx_size_.store(cs, std::memory_order_relaxed);
-
-                add_response(response, perf);
-                check_context_full();
-                screen_->Post(Event::Custom);
-
-                if (!args_.no_speak) {
-                    auto t_audio = std::chrono::steady_clock::now();
-                    double ttfa = std::chrono::duration<double, std::milli>(t_audio - t_start).count();
-                    last_ttfa_ms_.store(ttfa, std::memory_order_relaxed);
-
-                    voice_state_ = VoiceState::SPEAKING;
+            if (rag_loaded_) {
+                // RAG path: non-streaming LLM, then stream TTS for accurate TTFA
+                const char* response = rcli_rag_query(engine_, input_copy.c_str());
+                if (response && response[0]) {
+                    std::string perf = format_llm_perf(true);
+                    int pt = 0, cs = 0;
+                    rcli_get_context_info(engine_, &pt, &cs);
+                    if (pt > 0) ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
+                    if (cs > 0) ctx_size_.store(cs, std::memory_order_relaxed);
+                    add_response(response, perf);
+                    check_context_full();
                     screen_->Post(Event::Custom);
-                    fprintf(stderr, "[TRACE] [tui-thread] calling rcli_speak ...\n");
-                    rcli_speak(engine_, response);
-                    fprintf(stderr, "[TRACE] [tui-thread] rcli_speak returned\n");
 
-
-
-                    fprintf(stderr, "[TRACE] [tui-thread] entering wait_for_speech ...\n");
-                    wait_for_speech();
-                    fprintf(stderr, "[TRACE] [tui-thread] wait_for_speech done\n");
+                    if (!args_.no_speak) {
+                        voice_state_ = VoiceState::SPEAKING;
+                        screen_->Post(Event::Custom);
+                        auto rag_tts_cb = [](const char* event, const char* data, void* ud) {
+                            auto* app = static_cast<TuiApp*>(ud);
+                            std::string ev(event);
+                            if (ev == "first_audio") {
+                                app->last_ttfa_ms_.store(std::stod(data), std::memory_order_relaxed);
+                            }
+                        };
+                        rcli_speak_streaming(engine_, response, rag_tts_cb, this);
+                    }
+                } else {
+                    add_response("(no response)", "");
+                    screen_->Post(Event::Custom);
                 }
+            } else if (args_.no_speak) {
+                // No-speak mode: non-streaming LLM, no TTS
+                const char* response = rcli_process_command(engine_, input_copy.c_str());
+                if (response && response[0]) {
+                    std::string perf = format_llm_perf(false);
+                    int pt = 0, cs = 0;
+                    rcli_get_context_info(engine_, &pt, &cs);
+                    if (pt > 0) ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
+                    if (cs > 0) ctx_size_.store(cs, std::memory_order_relaxed);
+                    add_response(response, perf);
+                    check_context_full();
+                } else {
+                    add_response("(no response)", "");
+                }
+                screen_->Post(Event::Custom);
             } else {
-                add_response("(no response)", "");
+                // Streaming LLM + TTS for accurate TTFA measurement
+                auto event_cb = [](const char* event, const char* data, void* ud) {
+                    auto* app = static_cast<TuiApp*>(ud);
+                    std::string ev(event);
+                    if (ev == "sentence_ready") {
+                        app->last_ttft_ms_.store(std::stod(data), std::memory_order_relaxed);
+                    } else if (ev == "first_audio") {
+                        app->last_ttfa_ms_.store(std::stod(data), std::memory_order_relaxed);
+                        app->voice_state_ = VoiceState::SPEAKING;
+                        app->screen_->Post(Event::Custom);
+                    } else if (ev == "response") {
+                        std::string perf = app->format_llm_perf(false);
+                        int pt = 0, cs = 0;
+                        rcli_get_context_info(app->engine_, &pt, &cs);
+                        if (pt > 0) app->ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
+                        if (cs > 0) app->ctx_size_.store(cs, std::memory_order_relaxed);
+                        app->add_response(data, perf);
+                        app->check_context_full();
+                        app->screen_->Post(Event::Custom);
+                    }
+                };
+
+                fprintf(stderr, "[TRACE] [tui-thread] calling process_and_speak ...\n");
+                const char* response = rcli_process_and_speak(
+                    engine_, input_copy.c_str(), event_cb, this);
+                fprintf(stderr, "[TRACE] [tui-thread] process_and_speak returned\n");
+
+                if (!response || !response[0]) {
+                    add_response("(no response)", "");
+                    screen_->Post(Event::Custom);
+                }
             }
 
             fprintf(stderr, "[TRACE] [tui-thread] setting voice_state_ = IDLE\n");
@@ -2391,6 +2483,14 @@ private:
                 break;
             }
         }
+    }
+
+    void refresh_ctx_gauge() {
+        if (!engine_) return;
+        int pt = 0, cs = 0;
+        rcli_get_context_info(engine_, &pt, &cs);
+        if (pt >= 0) ctx_prompt_tokens_.store(pt, std::memory_order_relaxed);
+        if (cs > 0) ctx_size_.store(cs, std::memory_order_relaxed);
     }
 
     void check_context_full() {
@@ -2441,6 +2541,7 @@ private:
     std::atomic<bool> tool_trace_enabled_{false};
 
     std::atomic<double> last_ttfa_ms_{0.0};
+    std::atomic<double> last_ttft_ms_{0.0};
     std::atomic<int> ctx_prompt_tokens_{0};
     std::atomic<int> ctx_size_{0};
     int last_ctx_pct_notified_{0};

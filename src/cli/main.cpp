@@ -124,19 +124,17 @@ static int cmd_interactive(const Args& args) {
 
     fprintf(stderr, "%s%sdone!%s\n", color::bold, color::green, color::reset);
 
-    ActionRegistry count_reg;
-    count_reg.register_defaults();
     const char* stt_name = rcli_get_stt_model(g_engine);
     const char* llm_name = rcli_get_llm_model(g_engine);
     const char* tts_name_live = rcli_get_tts_model(g_engine);
 
-    fprintf(stderr, "  %s%sRCLI%s %s%s%s  %s·%s  %s%s%s  %s·%s  %s%d actions%s",
+    fprintf(stderr, "  %s%sRCLI%s %s%s%s  %s·%s  %s%s%s  %s·%s  %sconversation mode%s",
             color::bold, color::orange, color::reset,
             color::dim, RA_VERSION, color::reset,
             color::dim, color::reset,
             color::dim, stt_name, color::reset,
             color::dim, color::reset,
-            color::dim, count_reg.num_actions(), color::reset);
+            color::dim, color::reset);
     if (rag_loaded)
         fprintf(stderr, "  %s·%s  %s%sRAG active%s", color::dim, color::reset, color::bold, color::green, color::reset);
     fprintf(stderr, "\n");

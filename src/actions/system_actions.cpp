@@ -258,7 +258,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"get_battery", "Get battery percentage and charging status",
          "{}",
-         true,
+         false,
          "system",
          "What's my battery level?",
          "rcli action get_battery '{}'"},
@@ -267,7 +267,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"get_wifi", "Get the current Wi-Fi network name",
          "{}",
-         true,
+         false,
          "system",
          "What Wi-Fi am I connected to?",
          "rcli action get_wifi '{}'"},
@@ -312,7 +312,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"empty_trash", "Empty the Trash",
          "{}",
-         true,
+         false,
          "system",
          "Empty my trash",
          "rcli action empty_trash '{}'"},
@@ -330,7 +330,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"set_brightness", "Set screen brightness (0-100)",
          "{\"level\": \"0-100\"}",
-         true,
+         false,
          "system",
          "Set brightness to 50 percent",
          "rcli action set_brightness '{\"level\": \"50\"}'"},
@@ -339,7 +339,7 @@ void register_system_actions(ActionRegistry& registry) {
     registry.register_action(
         {"toggle_do_not_disturb", "Toggle Do Not Disturb / Focus mode",
          "{}",
-         true,
+         false,
          "system",
          "Turn on do not disturb",
          "rcli action toggle_do_not_disturb '{}'"},

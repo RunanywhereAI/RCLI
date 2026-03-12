@@ -51,6 +51,8 @@ public:
 
     // Enable/disable actions for LLM visibility
     void set_enabled(const std::string& name, bool enabled);
+    void disable_all();
+    void reset_to_defaults();
     bool is_enabled(const std::string& name) const;
     std::vector<std::string> list_enabled_actions() const;
     int num_enabled() const;
