@@ -6,6 +6,7 @@
 #include "core/ring_buffer.h"
 #include "engines/stt_engine.h"
 #include "engines/llm_engine.h"
+#include "engines/vlm_engine.h"
 #include "engines/metalrt_engine.h"
 #include "engines/metalrt_stt_engine.h"
 #include "engines/metalrt_tts_engine.h"
@@ -93,6 +94,7 @@ public:
     VadEngine&  vad()  { return vad_; }
     ToolEngine& tools() { return tools_; }
     AudioIO&    audio() { return audio_; }
+    VlmEngine&  vlm()   { return vlm_; }
     RingBuffer<float>* playback_ring_buffer() { return playback_rb_.get(); }
 
     // Active LLM backend
@@ -168,6 +170,7 @@ private:
     SttEngine        stt_;
     OfflineSttEngine offline_stt_;  // Whisper for file pipeline
     LlmEngine        llm_;
+    VlmEngine        vlm_;
     MetalRTEngine    metalrt_;
     MetalRTSttEngine metalrt_stt_;
     MetalRTTtsEngine metalrt_tts_;

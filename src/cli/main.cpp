@@ -27,6 +27,9 @@
 #include "audio/mic_permission.h"
 #include "core/personality.h"
 #include "llama.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
+#include "audio/camera_capture.h"
 
 // Defined in cli_common.h as a forward declaration; implemented here because
 // it depends on the Objective-C mic_permission bridge compiled into this TU.
@@ -421,6 +424,138 @@ static int cmd_ask(const Args& args) {
         if (!args.no_speak) {
             rcli_speak(g_engine, response);
         }
+    }
+
+    rcli_destroy(g_engine);
+    return 0;
+}
+
+// =============================================================================
+// VLM subcommand
+// =============================================================================
+
+static int cmd_vlm(const Args& args) {
+    if (args.arg1.empty() || args.help) {
+        fprintf(stderr, "\n  Usage: rcli vlm <image_path> [prompt]\n\n");
+        fprintf(stderr, "  Analyze an image using a Vision Language Model.\n\n");
+        fprintf(stderr, "  Examples:\n");
+        fprintf(stderr, "    rcli vlm photo.jpg\n");
+        fprintf(stderr, "    rcli vlm screenshot.png \"What text do you see?\"\n");
+        fprintf(stderr, "    rcli vlm diagram.jpg \"Explain this diagram\"\n\n");
+        return args.help ? 0 : 1;
+    }
+
+    // Resolve image path
+    std::string image_path = args.arg1;
+    if (!image_path.empty() && image_path[0] == '~') {
+        if (const char* home = getenv("HOME"))
+            image_path = std::string(home) + image_path.substr(1);
+    }
+    // Make relative paths absolute
+    if (!image_path.empty() && image_path[0] != '/') {
+        char cwd[4096];
+        if (getcwd(cwd, sizeof(cwd)))
+            image_path = std::string(cwd) + "/" + image_path;
+    }
+
+    struct stat st;
+    if (stat(image_path.c_str(), &st) != 0) {
+        fprintf(stderr, "%s%sError: Image not found: %s%s\n",
+                color::bold, color::red, image_path.c_str(), color::reset);
+        return 1;
+    }
+
+    if (!rastack::VlmEngine::is_supported_image(image_path)) {
+        fprintf(stderr, "%s%sError: Unsupported image format. Supported: jpg, png, bmp, gif, webp, tga%s\n",
+                color::bold, color::red, color::reset);
+        return 1;
+    }
+
+    std::string prompt = args.arg2.empty() ? "Describe this image in detail." : args.arg2;
+
+    // Create engine with models_dir set (we only need VLM, not the full pipeline)
+    std::string config_json = "{\"models_dir\": \"" + args.models_dir + "\"}";
+    g_engine = rcli_create(config_json.c_str());
+    if (!g_engine) return 1;
+
+    // Initialize VLM
+    fprintf(stderr, "%sInitializing VLM...%s\n", color::dim, color::reset);
+    if (rcli_vlm_init(g_engine) != 0) {
+        fprintf(stderr, "%s%sError: Failed to initialize VLM engine%s\n",
+                color::bold, color::red, color::reset);
+        rcli_destroy(g_engine);
+        return 1;
+    }
+
+    fprintf(stderr, "%sAnalyzing image: %s%s\n", color::dim, image_path.c_str(), color::reset);
+
+    const char* response = rcli_vlm_analyze(g_engine, image_path.c_str(), prompt.c_str());
+    if (response && response[0]) {
+        fprintf(stdout, "%s\n", response);
+        // Print performance stats
+        RCLIVlmStats stats;
+        if (rcli_vlm_get_stats(g_engine, &stats) == 0) {
+            fprintf(stderr, "\n%s⚡ %.1f tok/s  (%d tokens, %.1fs total, first token %.0fms)%s\n",
+                    color::dim, stats.gen_tok_per_sec, stats.generated_tokens,
+                    stats.total_time_sec, stats.first_token_ms, color::reset);
+        }
+    } else {
+        fprintf(stderr, "%s%sError: VLM analysis failed%s\n",
+                color::bold, color::red, color::reset);
+        rcli_destroy(g_engine);
+        return 1;
+    }
+
+    rcli_destroy(g_engine);
+    return 0;
+}
+
+// =============================================================================
+// Camera subcommand — capture + analyze
+// =============================================================================
+
+static int cmd_camera(const Args& args) {
+    std::string prompt = args.arg1.empty() ? "Describe what you see in this photo in detail." : args.arg1;
+
+    fprintf(stderr, "%sCapturing photo from camera...%s\n", color::dim, color::reset);
+    std::string photo_path = "/tmp/rcli_camera.jpg";
+
+    int rc = camera_capture_photo(photo_path.c_str());
+    if (rc != 0) {
+        fprintf(stderr, "%s%sError: Camera capture failed. Check camera permissions.%s\n",
+                color::bold, color::red, color::reset);
+        return 1;
+    }
+    fprintf(stderr, "%sPhoto captured! Analyzing with VLM...%s\n", color::dim, color::reset);
+
+    std::string config_json = "{\"models_dir\": \"" + args.models_dir + "\"}";
+    g_engine = rcli_create(config_json.c_str());
+    if (!g_engine) return 1;
+
+    if (rcli_vlm_init(g_engine) != 0) {
+        fprintf(stderr, "%s%sError: Failed to initialize VLM engine%s\n",
+                color::bold, color::red, color::reset);
+        rcli_destroy(g_engine);
+        return 1;
+    }
+
+    const char* response = rcli_vlm_analyze(g_engine, photo_path.c_str(), prompt.c_str());
+    if (response && response[0]) {
+        fprintf(stdout, "%s\n", response);
+        // Print performance stats
+        RCLIVlmStats stats;
+        if (rcli_vlm_get_stats(g_engine, &stats) == 0) {
+            fprintf(stderr, "\n%s⚡ %.1f tok/s  (%d tokens, %.1fs total, first token %.0fms)%s\n",
+                    color::dim, stats.gen_tok_per_sec, stats.generated_tokens,
+                    stats.total_time_sec, stats.first_token_ms, color::reset);
+        }
+        // Open the captured photo in Preview so user can see what was captured
+        system(("open '" + photo_path + "'").c_str());
+    } else {
+        fprintf(stderr, "%s%sError: VLM analysis failed%s\n",
+                color::bold, color::red, color::reset);
+        rcli_destroy(g_engine);
+        return 1;
     }
 
     rcli_destroy(g_engine);
@@ -917,6 +1052,7 @@ int main(int argc, char** argv) {
 
     if (!args.verbose) {
         llama_log_set([](enum ggml_log_level, const char*, void*) {}, nullptr);
+        mtmd_helper_log_set([](enum ggml_log_level, const char*, void*) {}, nullptr);
     }
 
     if (args.command.empty()) {
@@ -930,6 +1066,8 @@ int main(int argc, char** argv) {
     if (args.command == "actions")     return cmd_actions(args);
     if (args.command == "action")      return cmd_action(args);
     if (args.command == "rag")         return cmd_rag(args);
+    if (args.command == "vlm")         return cmd_vlm(args);
+    if (args.command == "camera")      return cmd_camera(args);
     if (args.command == "setup")       return cmd_setup(args);
     if (args.command == "models")      return cmd_models(args);
     if (args.command == "voices")      return cmd_voices(args);

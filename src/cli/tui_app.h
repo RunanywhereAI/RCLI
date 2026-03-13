@@ -12,6 +12,9 @@
 #include "models/stt_model_registry.h"
 #include "actions/action_registry.h"
 #include "engines/metalrt_loader.h"
+#include "engines/vlm_engine.h"
+#include "audio/camera_capture.h"
+#include "models/vlm_model_registry.h"
 #include "core/log.h"
 #include "core/personality.h"
 
@@ -432,7 +435,11 @@ public:
                 if (c == "r" || c == "R") { enter_rag_mode(); return true; }
                 if (c == "d" || c == "D") { close_all_panels(); enter_cleanup_mode(); return true; }
                 if (c == "p" || c == "P") { enter_personality_mode(); return true; }
-                // V key: voice mode removed — push-to-talk via SPACE is always active
+                // V key: capture photo from camera and analyze with VLM
+                if (c == "v" || c == "V") {
+                    run_camera_vlm("Describe what you see in this photo in detail.");
+                    return true;
+                }
                 if (c == "t" || c == "T") {
                     tool_trace_enabled_ = !tool_trace_enabled_.load(std::memory_order_relaxed);
                     add_system_message(tool_trace_enabled_ ? "Tool call trace: ON" : "Tool call trace: OFF");
@@ -1069,6 +1076,7 @@ private:
         else
             right.push_back(text("[A] actions  ") | dim);
         right.push_back(text("[C] convo  ") | dim);
+        right.push_back(text("[V] camera  ") | dim);
         right.push_back(text("[R] RAG  ") | dim);
         right.push_back(text("[P] personality  ") | dim);
         right.push_back(text("[D] cleanup  ") | dim);
@@ -1501,6 +1509,21 @@ private:
                 e.archive_dir = v.archive_dir;
                 models_entries_.push_back(e);
             }
+
+            // VLM models (vision)
+            auto vlm_all = rcli::all_vlm_models();
+            { ModelEntry h; h.name = "VLM Models (Vision)"; h.is_header = true; models_entries_.push_back(h); }
+            for (auto& m : vlm_all) {
+                ModelEntry e;
+                e.name = m.name; e.id = m.id; e.modality = "VLM";
+                e.size_mb = m.model_size_mb + m.mmproj_size_mb;
+                e.installed = rcli::is_vlm_model_installed(dir, m);
+                e.is_active = false; // VLM is lazy-loaded, no "active" concept
+                e.is_default = m.is_default; e.is_recommended = m.is_default;
+                e.description = m.description;
+                e.url = m.model_url; e.filename = m.model_filename; e.is_archive = false;
+                models_entries_.push_back(e);
+            }
         }
 
         for (int i = 0; i < (int)models_entries_.size(); i++) {
@@ -1666,7 +1689,20 @@ private:
             bool archive = e.is_archive;
 
             std::string archive_dir_name = e.archive_dir;
-            std::thread([this, idx, dir, url, fname, mod, id, nm, archive, archive_dir_name]() {
+            // For VLM, also capture the mmproj URL
+            std::string vlm_mmproj_url, vlm_mmproj_fname;
+            if (mod == "VLM") {
+                auto vlm_models = rcli::all_vlm_models();
+                for (auto& vm : vlm_models) {
+                    if (vm.id == id) {
+                        vlm_mmproj_url = vm.mmproj_url;
+                        vlm_mmproj_fname = vm.mmproj_filename;
+                        break;
+                    }
+                }
+            }
+            std::thread([this, idx, dir, url, fname, mod, id, nm, archive, archive_dir_name,
+                         vlm_mmproj_url, vlm_mmproj_fname]() {
                 int rc;
                 if (archive) {
                     rc = system(("curl -sL '" + url + "' | tar xj -C '" + dir + "' 2>/dev/null").c_str());
@@ -1676,6 +1712,12 @@ private:
                         struct stat st;
                         if (stat(src.c_str(), &st) == 0 && stat(dst.c_str(), &st) != 0)
                             rename(src.c_str(), dst.c_str());
+                    }
+                } else if (mod == "VLM" && !vlm_mmproj_url.empty()) {
+                    // VLM needs two files: language model + mmproj
+                    rc = system(("curl -sL -o '" + dir + "/" + fname + "' '" + url + "' 2>/dev/null").c_str());
+                    if (rc == 0) {
+                        rc = system(("curl -sL -o '" + dir + "/" + vlm_mmproj_fname + "' '" + vlm_mmproj_url + "' 2>/dev/null").c_str());
                     }
                 } else {
                     rc = system(("curl -sL -o '" + dir + "/" + fname + "' '" + url + "' 2>/dev/null").c_str());
@@ -1698,6 +1740,9 @@ private:
                     } else {
                         if (mod == "STT") rcli::write_selected_stt_id(id);
                         else if (mod == "TTS") rcli::write_selected_tts_id(id);
+                        else if (mod == "VLM") {
+                            // VLM doesn't need selection — just mark installed
+                        }
                         models_message_ = "Downloaded & selected: " + nm + ". Restart RCLI to apply.";
                         models_msg_color_ = theme_.success;
                     }
@@ -2143,6 +2188,44 @@ private:
     // process_input
     // ====================================================================
 
+    void run_camera_vlm(const std::string& prompt) {
+        add_system_message("Capturing photo from camera...");
+        voice_state_ = VoiceState::THINKING;
+        std::string prompt_copy = prompt;
+        std::thread([this, prompt_copy]() {
+            std::string photo_path = "/tmp/rcli_camera_" +
+                std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".jpg";
+            int rc = camera_capture_photo(photo_path.c_str());
+            if (rc != 0) {
+                add_response("(Camera capture failed. Check camera permissions in System Settings > Privacy & Security > Camera.)", "");
+                voice_state_ = VoiceState::IDLE;
+                screen_->Post(Event::Custom);
+                return;
+            }
+            add_system_message("Photo captured! Analyzing with VLM...");
+            screen_->Post(Event::Custom);
+            const char* response = rcli_vlm_analyze(
+                engine_, photo_path.c_str(), prompt_copy.c_str());
+            if (response && response[0]) {
+                add_response(response, "VLM");
+                // Show performance stats
+                RCLIVlmStats stats;
+                if (rcli_vlm_get_stats(engine_, &stats) == 0) {
+                    char buf[128];
+                    snprintf(buf, sizeof(buf), "⚡ %.1f tok/s  |  %d tokens  |  %.1fs total",
+                             stats.gen_tok_per_sec, stats.generated_tokens, stats.total_time_sec);
+                    add_system_message(buf);
+                }
+            } else {
+                add_response("(VLM analysis failed. Install a VLM model: rcli models vlm)", "");
+            }
+            voice_state_ = VoiceState::IDLE;
+            // Open the captured photo in Preview
+            system(("open '" + photo_path + "' &").c_str());
+            screen_->Post(Event::Custom);
+        }).detach();
+    }
+
     void process_input(const std::string& input) {
         if (input.empty()) return;
 
@@ -2202,6 +2285,10 @@ private:
             return;
         }
 
+        if (cmd == "camera" || cmd == "photo" || cmd == "webcam") {
+            run_camera_vlm("Describe what you see in this photo in detail.");
+            return;
+        }
 
         if (!engine_) {
             add_response("Engine not initialized.", "");
@@ -2340,6 +2427,34 @@ private:
 
             struct stat path_st;
             if (!resolved.empty() && resolved[0] == '/' && stat(resolved.c_str(), &path_st) == 0) {
+                // Check if this is an image file → route to VLM analysis
+                if (S_ISREG(path_st.st_mode) && rastack::VlmEngine::is_supported_image(resolved)) {
+                    add_system_message("Image detected: " + resolved);
+                    add_system_message("Analyzing image with VLM...");
+                    voice_state_ = VoiceState::THINKING;
+                    std::string path_copy = resolved;
+                    std::thread([this, path_copy]() {
+                        const char* response = rcli_vlm_analyze(
+                            engine_, path_copy.c_str(), "Describe this image in detail.");
+                        if (response && response[0]) {
+                            add_response(response, "VLM");
+                            RCLIVlmStats stats;
+                            if (rcli_vlm_get_stats(engine_, &stats) == 0) {
+                                char buf[128];
+                                snprintf(buf, sizeof(buf), "⚡ %.1f tok/s  |  %d tokens  |  %.1fs total",
+                                         stats.gen_tok_per_sec, stats.generated_tokens, stats.total_time_sec);
+                                add_system_message(buf);
+                            }
+                        } else {
+                            add_response("(VLM analysis failed)", "");
+                        }
+                        voice_state_ = VoiceState::IDLE;
+                        screen_->Post(Event::Custom);
+                    }).detach();
+                    return;
+                }
+
+                // Non-image path → RAG ingest
                 add_system_message("Detected path: " + resolved);
                 add_system_message("Indexing for RAG... this may take a moment.");
                 std::string path_copy = resolved;

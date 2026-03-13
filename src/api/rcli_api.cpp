@@ -35,6 +35,8 @@
 
 #include "actions/action_registry.h"
 #include "actions/macos_actions.h"
+#include "engines/vlm_engine.h"
+#include "models/vlm_model_registry.h"
 
 using namespace rastack;
 
@@ -108,6 +110,11 @@ struct RCLIEngine {
     // Updated only from the primary inference call, NOT from tool-call summary/retry prompts,
     // so the context gauge shows stable, meaningful usage.
     int ctx_main_prompt_tokens = 0;
+
+    // VLM (Vision Language Model) subsystem
+    VlmEngine vlm_engine;
+    bool vlm_initialized = false;
+    std::string last_vlm_response;
 
     std::mutex mutex;
     bool initialized = false;
@@ -2743,6 +2750,143 @@ void rcli_get_context_info(RCLIHandle handle, int* out_prompt_tokens, int* out_c
             *out_ctx_size = engine->pipeline.llm().context_size();
         }
     }
+}
+
+// =============================================================================
+// VLM (Vision Language Model)
+// =============================================================================
+
+static bool download_vlm_model(const std::string& url, const std::string& dest) {
+    // Check if already exists
+    if (access(dest.c_str(), R_OK) == 0) return true;
+
+    LOG_INFO("VLM", "Downloading: %s", dest.c_str());
+
+    // Ensure parent directory exists
+    std::string dir = dest.substr(0, dest.rfind('/'));
+    std::string mkdir_cmd = "mkdir -p '" + dir + "'";
+    (void)system(mkdir_cmd.c_str());
+
+    // Download with curl (progress bar)
+    std::string cmd = "curl -L --progress-bar -o '" + dest + "' '" + url + "'";
+    int rc = system(cmd.c_str());
+    if (rc != 0) {
+        LOG_ERROR("VLM", "Download failed (exit=%d)", rc);
+        unlink(dest.c_str());
+        return false;
+    }
+    return true;
+}
+
+int rcli_vlm_init(RCLIHandle handle) {
+    if (!handle) return -1;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+
+    if (engine->vlm_initialized) return 0;
+
+    // Fallback to default models dir if not set
+    if (engine->models_dir.empty()) {
+        if (const char* home = getenv("HOME"))
+            engine->models_dir = std::string(home) + "/Library/RCLI/models";
+        else
+            engine->models_dir = "./models";
+    }
+
+    // Find or download VLM model
+    auto vlm_models = rcli::all_vlm_models();
+    rcli::VlmModelDef model_def;
+    bool found = false;
+
+    // Check if any VLM model is installed
+    for (auto& m : vlm_models) {
+        if (rcli::is_vlm_model_installed(engine->models_dir, m)) {
+            model_def = m;
+            found = true;
+            break;
+        }
+    }
+
+    // If no model installed, download default
+    if (!found) {
+        auto [has_default, def] = rcli::get_default_vlm_model();
+        if (!has_default) {
+            LOG_ERROR("VLM", "No VLM model defined in registry");
+            return -1;
+        }
+        model_def = def;
+
+        std::string model_path = engine->models_dir + "/" + model_def.model_filename;
+        std::string mmproj_path = engine->models_dir + "/" + model_def.mmproj_filename;
+
+        if (!download_vlm_model(model_def.model_url, model_path)) return -1;
+        if (!download_vlm_model(model_def.mmproj_url, mmproj_path)) return -1;
+    }
+
+    // Initialize VLM engine
+    VlmConfig config;
+    config.model_path  = engine->models_dir + "/" + model_def.model_filename;
+    config.mmproj_path = engine->models_dir + "/" + model_def.mmproj_filename;
+    config.n_gpu_layers = 99;
+    config.n_ctx        = 4096;
+    config.n_batch      = 512;
+    config.n_threads       = 1;
+    config.n_threads_batch = 8;
+    config.flash_attn   = true;
+
+    if (!engine->vlm_engine.init(config)) {
+        LOG_ERROR("VLM", "Failed to initialize VLM engine");
+        return -1;
+    }
+
+    engine->vlm_initialized = true;
+    LOG_INFO("VLM", "VLM engine ready (%s)", model_def.name.c_str());
+    return 0;
+}
+
+const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const char* prompt) {
+    if (!handle || !image_path) return "";
+    auto* engine = static_cast<RCLIEngine*>(handle);
+
+    if (!engine->vlm_initialized) {
+        if (rcli_vlm_init(handle) != 0) {
+            engine->last_vlm_response = "Error: VLM engine failed to initialize.";
+            return engine->last_vlm_response.c_str();
+        }
+    }
+
+    std::string text_prompt = prompt && prompt[0]
+        ? std::string(prompt)
+        : "Describe this image in detail.";
+
+    std::string result = engine->vlm_engine.analyze_image(
+        std::string(image_path), text_prompt, nullptr);
+
+    if (result.empty()) {
+        engine->last_vlm_response = "Error: Failed to analyze image.";
+    } else {
+        engine->last_vlm_response = result;
+    }
+    return engine->last_vlm_response.c_str();
+}
+
+int rcli_vlm_is_ready(RCLIHandle handle) {
+    if (!handle) return 0;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    return engine->vlm_initialized ? 1 : 0;
+}
+
+int rcli_vlm_get_stats(RCLIHandle handle, RCLIVlmStats* out_stats) {
+    if (!handle || !out_stats) return -1;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    if (!engine->vlm_initialized) return -1;
+
+    auto& s = engine->vlm_engine.last_stats();
+    out_stats->gen_tok_per_sec  = s.gen_tps();
+    out_stats->generated_tokens = static_cast<int>(s.generated_tokens);
+    out_stats->total_time_sec   = (s.image_encode_us + s.generation_us) / 1e6;
+    out_stats->image_encode_ms  = s.image_encode_us / 1000.0;
+    out_stats->first_token_ms   = s.first_token_us / 1000.0;
+    return 0;
 }
 
 } // extern "C"
