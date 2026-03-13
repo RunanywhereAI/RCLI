@@ -30,6 +30,10 @@
 #include "mtmd.h"
 #include "mtmd-helper.h"
 #include "audio/camera_capture.h"
+#include "audio/screen_capture.h"
+#include <spawn.h>
+
+extern char** environ;
 
 // Defined in cli_common.h as a forward declaration; implemented here because
 // it depends on the Objective-C mic_permission bridge compiled into this TU.
@@ -542,6 +546,10 @@ static int cmd_camera(const Args& args) {
     const char* response = rcli_vlm_analyze(g_engine, photo_path.c_str(), prompt.c_str());
     if (response && response[0]) {
         fprintf(stdout, "%s\n", response);
+        if (!args.no_speak) {
+            rcli_init(g_engine, args.models_dir.c_str(), args.gpu_layers);
+            rcli_speak(g_engine, response);
+        }
         // Print performance stats
         RCLIVlmStats stats;
         if (rcli_vlm_get_stats(g_engine, &stats) == 0) {
@@ -550,7 +558,66 @@ static int cmd_camera(const Args& args) {
                     stats.total_time_sec, stats.first_token_ms, color::reset);
         }
         // Open the captured photo in Preview so user can see what was captured
-        system(("open '" + photo_path + "'").c_str());
+        {
+            pid_t pid;
+            const char* argv[] = {"open", photo_path.c_str(), nullptr};
+            posix_spawnp(&pid, "open", nullptr, nullptr,
+                         const_cast<char* const*>(argv), environ);
+        }
+    } else {
+        fprintf(stderr, "%s%sError: VLM analysis failed%s\n",
+                color::bold, color::red, color::reset);
+        rcli_destroy(g_engine);
+        return 1;
+    }
+
+    rcli_destroy(g_engine);
+    return 0;
+}
+
+// =============================================================================
+// Screen subcommand — screenshot + analyze
+// =============================================================================
+
+static int cmd_screen(const Args& args) {
+    std::string prompt = args.arg1.empty()
+        ? "Describe what you see on this screen in detail." : args.arg1;
+
+    fprintf(stderr, "%sCapturing screenshot...%s\n", color::dim, color::reset);
+    std::string screen_path = "/tmp/rcli_screen.jpg";
+
+    int rc = screen_capture_screenshot(screen_path.c_str());
+    if (rc != 0) {
+        fprintf(stderr, "%s%sError: Screen capture failed. Check screen recording permissions.%s\n",
+                color::bold, color::red, color::reset);
+        return 1;
+    }
+    fprintf(stderr, "%sScreenshot captured! Analyzing with VLM...%s\n", color::dim, color::reset);
+
+    std::string config_json = "{\"models_dir\": \"" + args.models_dir + "\"}";
+    g_engine = rcli_create(config_json.c_str());
+    if (!g_engine) return 1;
+
+    if (rcli_vlm_init(g_engine) != 0) {
+        fprintf(stderr, "%s%sError: Failed to initialize VLM engine%s\n",
+                color::bold, color::red, color::reset);
+        rcli_destroy(g_engine);
+        return 1;
+    }
+
+    const char* response = rcli_vlm_analyze(g_engine, screen_path.c_str(), prompt.c_str());
+    if (response && response[0]) {
+        fprintf(stdout, "%s\n", response);
+        if (!args.no_speak) {
+            rcli_init(g_engine, args.models_dir.c_str(), args.gpu_layers);
+            rcli_speak(g_engine, response);
+        }
+        RCLIVlmStats stats;
+        if (rcli_vlm_get_stats(g_engine, &stats) == 0) {
+            fprintf(stderr, "\n%s⚡ %.1f tok/s  (%d tokens, %.1fs total, first token %.0fms)%s\n",
+                    color::dim, stats.gen_tok_per_sec, stats.generated_tokens,
+                    stats.total_time_sec, stats.first_token_ms, color::reset);
+        }
     } else {
         fprintf(stderr, "%s%sError: VLM analysis failed%s\n",
                 color::bold, color::red, color::reset);
@@ -1068,6 +1135,7 @@ int main(int argc, char** argv) {
     if (args.command == "rag")         return cmd_rag(args);
     if (args.command == "vlm")         return cmd_vlm(args);
     if (args.command == "camera")      return cmd_camera(args);
+    if (args.command == "screen")      return cmd_screen(args);
     if (args.command == "setup")       return cmd_setup(args);
     if (args.command == "models")      return cmd_models(args);
     if (args.command == "voices")      return cmd_voices(args);
