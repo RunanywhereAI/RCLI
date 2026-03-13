@@ -16,6 +16,7 @@
 #include "rag/index_builder.h"
 #include "pipeline/text_sanitizer.h"
 #include "pipeline/sentence_detector.h"
+#include "audio/screen_capture.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -32,6 +33,10 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <spawn.h>
+#include <cerrno>
+
+extern char** environ;
 
 #include "actions/action_registry.h"
 #include "actions/macos_actions.h"
@@ -976,6 +981,111 @@ static std::vector<rastack::ToolCall> try_parse_bare_tool_calls(
     return calls;
 }
 
+// Forward declaration (defined later in VLM section)
+static int vlm_init_locked(RCLIEngine* engine);
+
+// =============================================================================
+// Screen intent detection — intercept voice commands about the user's screen
+// =============================================================================
+
+static bool has_word(const std::string& text, const char* word) {
+    return text.find(word) != std::string::npos;
+}
+
+static bool is_screen_intent(const std::string& input) {
+    // Normalize to lowercase for matching
+    std::string lower = input;
+    for (auto& c : lower) c = (char)std::tolower((unsigned char)c);
+
+    // --- Tier 1: explicit screenshot keywords (always trigger) ---
+    if (has_word(lower, "screenshot") || has_word(lower, "screen capture") ||
+        has_word(lower, "screen shot"))
+        return true;
+
+    // --- Tier 2: "screen" + any vision/action verb ---
+    bool has_screen = has_word(lower, "screen");
+    if (has_screen) {
+        static const char* screen_verbs[] = {
+            "look", "see", "show", "what", "tell", "describe", "explain",
+            "check", "analyze", "read", "capture", "going on", "happening",
+        };
+        for (const auto* v : screen_verbs) {
+            if (has_word(lower, v)) return true;
+        }
+    }
+
+    // --- Tier 3: visual context phrases (no "screen" needed) ---
+    // "does this look good/right/ok", "how does this look", etc.
+    if (has_word(lower, "does this look") || has_word(lower, "how does this look"))
+        return true;
+    // "what am I looking at"
+    if (has_word(lower, "looking at") && has_word(lower, "what"))
+        return true;
+    // "can you see this/that", "what do you see", "what can you see"
+    if ((has_word(lower, "can you see") || has_word(lower, "do you see")) &&
+        !has_word(lower, "file") && !has_word(lower, "code") && !has_word(lower, "error"))
+        return true;
+    // "what's happening here", "explain what's happening"
+    if (has_word(lower, "happening here") || has_word(lower, "happening on"))
+        return true;
+
+    return false;
+}
+
+// Capture active window + analyze with VLM. Returns response or empty on failure.
+// Caller must hold engine->mutex.
+static std::string handle_screen_intent(RCLIEngine* engine, const std::string& user_text) {
+    // Generate a temp path
+    auto ts = std::chrono::system_clock::now().time_since_epoch().count();
+    std::string path = "/tmp/rcli_screen_" + std::to_string(ts) + ".jpg";
+
+    int rc;
+    const char* capture_source;
+    if (screen_capture_overlay_active()) {
+        // Visual mode: capture the overlay region
+        capture_source = "visual frame";
+        rc = screen_capture_overlay_region(path.c_str());
+    } else {
+        // Fallback: capture the previously active app's window
+        char target_app[256];
+        screen_capture_target_app_name(target_app, sizeof(target_app));
+        capture_source = target_app;
+        rc = screen_capture_behind_terminal(path.c_str());
+    }
+    LOG_INFO("RCLI", "[screen_intent] Capturing %s → %s", capture_source, path.c_str());
+    if (rc != 0) {
+        LOG_ERROR("RCLI", "[screen_intent] Screen capture failed");
+        return "I couldn't capture your screen. Please check screen recording permissions "
+               "in System Settings > Privacy & Security > Screen Recording.";
+    }
+
+    // Initialize VLM if needed
+    if (!engine->vlm_initialized) {
+        if (vlm_init_locked(engine) != 0) {
+            return "I can see you're asking about your screen, but the VLM model isn't available. "
+                   "Install one with: rcli models vlm";
+        }
+    }
+
+    // Build a natural prompt from the user's words
+    std::string vlm_prompt = user_text;
+    if (vlm_prompt.empty()) {
+        vlm_prompt = "Describe what you see on this screen in detail.";
+    }
+
+    std::string result = engine->vlm_engine.analyze_image(path, vlm_prompt, nullptr);
+    if (result.empty()) {
+        return "I captured your screen but the analysis failed. Please try again.";
+    }
+
+    // Prepend which app was captured so the user knows
+    std::string prefixed = "[Captured: " + std::string(capture_source) + "]\n" + result;
+
+    // Store for stats retrieval
+    engine->last_vlm_response = prefixed;
+    return prefixed;
+}
+
 // =============================================================================
 // Process command entry points
 // =============================================================================
@@ -990,6 +1100,14 @@ const char* rcli_process_command(RCLIHandle handle, const char* text) {
     std::lock_guard<std::mutex> lock(engine->mutex);
     LOG_TRACE("RCLI", "[process_command] engine->mutex acquired, input='%.40s'", text);
     std::string input(text);
+
+    // --- Screen intent intercept: capture active window + VLM ---
+    if (is_screen_intent(input)) {
+        engine->last_response = handle_screen_intent(engine, input);
+        engine->conversation_history.emplace_back("user", input);
+        engine->conversation_history.emplace_back("assistant", engine->last_response);
+        return engine->last_response.c_str();
+    }
 
     // --- MetalRT path: tool-aware inference via generate_raw (pre-formatted prompt) ---
     if (engine->pipeline.using_metalrt()) {
@@ -1505,6 +1623,92 @@ const char* rcli_process_and_speak(RCLIHandle handle, const char* text,
     std::lock_guard<std::mutex> lock(engine->mutex);
     engine->streaming_cancelled.store(false, std::memory_order_release);
     std::string input(text);
+
+    // --- Screen intent intercept: capture + VLM + sentence-streamed TTS ---
+    if (is_screen_intent(input)) {
+        auto t_start_screen = std::chrono::steady_clock::now();
+        std::string response = handle_screen_intent(engine, input);
+        engine->last_response = response;
+        engine->conversation_history.emplace_back("user", input);
+        engine->conversation_history.emplace_back("assistant", response);
+
+        // Fire "response" callback so TUI displays the text
+        if (callback) {
+            callback("response", response.c_str(), user_data);
+        }
+
+        // Sentence-streamed TTS (same pattern as LLM path for low TTFA)
+        std::string clean_text = rastack::sanitize_for_tts(response);
+        if (!clean_text.empty()) {
+            if (!engine->pipeline.audio().is_running()) {
+                engine->pipeline.audio().start();
+            }
+            auto* rb = engine->pipeline.playback_ring_buffer();
+            if (rb) {
+                rb->clear();
+
+                // Split into sentences and synthesize each one
+                std::vector<std::string> sentences;
+                rastack::SentenceDetector splitter([&](const std::string& s) {
+                    sentences.push_back(s);
+                }, /*min_words=*/3);
+                // Feed the entire text token-by-token (word by word)
+                for (size_t i = 0; i < clean_text.size(); ) {
+                    size_t end = clean_text.find(' ', i);
+                    if (end == std::string::npos) end = clean_text.size();
+                    else end++; // include space
+                    splitter.feed(clean_text.substr(i, end - i));
+                    i = end;
+                }
+                splitter.flush();
+
+                bool first_audio = false;
+                for (auto& sentence : sentences) {
+                    if (engine->streaming_cancelled.load(std::memory_order_acquire)) break;
+
+                    std::vector<float> samples;
+                    if (engine->pipeline.using_metalrt_tts()) {
+                        samples = engine->pipeline.metalrt_tts().synthesize(sentence);
+                    } else {
+                        samples = engine->pipeline.tts().synthesize(sentence);
+                    }
+
+                    // Write with backpressure
+                    size_t offset = 0;
+                    while (offset < samples.size() &&
+                           !engine->streaming_cancelled.load(std::memory_order_acquire)) {
+                        size_t written = rb->write(samples.data() + offset, samples.size() - offset);
+                        offset += written;
+                        if (offset < samples.size()) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        }
+                    }
+
+                    if (!first_audio) {
+                        first_audio = true;
+                        if (callback) {
+                            auto now = std::chrono::steady_clock::now();
+                            double ttfa_ms = std::chrono::duration<double, std::milli>(now - t_start_screen).count();
+                            char buf[32];
+                            snprintf(buf, sizeof(buf), "%.1f", ttfa_ms);
+                            callback("first_audio", buf, user_data);
+                        }
+                    }
+                }
+
+                // Wait for playback to drain
+                size_t samples_per_frame = 256;
+                while (rb->available_read() > samples_per_frame &&
+                       !engine->streaming_cancelled.load(std::memory_order_acquire)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
+        }
+
+        if (callback) callback("complete", "{}", user_data);
+        return engine->last_response.c_str();
+    }
 
     auto t_start = std::chrono::steady_clock::now();
 
@@ -2756,6 +2960,37 @@ void rcli_get_context_info(RCLIHandle handle, int* out_prompt_tokens, int* out_c
 // VLM (Vision Language Model)
 // =============================================================================
 
+// Recursively create directories (like mkdir -p)
+static bool mkdirs(const std::string& path) {
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0) return S_ISDIR(st.st_mode);
+    // Recurse to create parent
+    auto slash = path.rfind('/');
+    if (slash != std::string::npos && slash > 0) {
+        if (!mkdirs(path.substr(0, slash))) return false;
+    }
+    return mkdir(path.c_str(), 0755) == 0 || errno == EEXIST;
+}
+
+// Download a file using fork/exec to avoid shell injection
+static bool safe_download(const std::string& url, const std::string& dest) {
+    pid_t pid;
+    const char* argv[] = {
+        "curl", "-L", "--progress-bar", "-o", dest.c_str(), url.c_str(), nullptr
+    };
+    int status = 0;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (posix_spawnp(&pid, "curl", &actions, nullptr,
+                     const_cast<char* const*>(argv), environ) != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        return false;
+    }
+    posix_spawn_file_actions_destroy(&actions);
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 static bool download_vlm_model(const std::string& url, const std::string& dest) {
     // Check if already exists
     if (access(dest.c_str(), R_OK) == 0) return true;
@@ -2764,24 +2999,22 @@ static bool download_vlm_model(const std::string& url, const std::string& dest) 
 
     // Ensure parent directory exists
     std::string dir = dest.substr(0, dest.rfind('/'));
-    std::string mkdir_cmd = "mkdir -p '" + dir + "'";
-    (void)system(mkdir_cmd.c_str());
+    if (!mkdirs(dir)) {
+        LOG_ERROR("VLM", "Failed to create directory: %s", dir.c_str());
+        return false;
+    }
 
-    // Download with curl (progress bar)
-    std::string cmd = "curl -L --progress-bar -o '" + dest + "' '" + url + "'";
-    int rc = system(cmd.c_str());
-    if (rc != 0) {
-        LOG_ERROR("VLM", "Download failed (exit=%d)", rc);
+    // Download with curl (no shell interpolation)
+    if (!safe_download(url, dest)) {
+        LOG_ERROR("VLM", "Download failed");
         unlink(dest.c_str());
         return false;
     }
     return true;
 }
 
-int rcli_vlm_init(RCLIHandle handle) {
-    if (!handle) return -1;
-    auto* engine = static_cast<RCLIEngine*>(handle);
-
+// Internal init (caller must hold engine->mutex)
+static int vlm_init_locked(RCLIEngine* engine) {
     if (engine->vlm_initialized) return 0;
 
     // Fallback to default models dir if not set
@@ -2843,12 +3076,20 @@ int rcli_vlm_init(RCLIHandle handle) {
     return 0;
 }
 
+int rcli_vlm_init(RCLIHandle handle) {
+    if (!handle) return -1;
+    auto* engine = static_cast<RCLIEngine*>(handle);
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    return vlm_init_locked(engine);
+}
+
 const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const char* prompt) {
     if (!handle || !image_path) return "";
     auto* engine = static_cast<RCLIEngine*>(handle);
+    std::lock_guard<std::mutex> lock(engine->mutex);
 
     if (!engine->vlm_initialized) {
-        if (rcli_vlm_init(handle) != 0) {
+        if (vlm_init_locked(engine) != 0) {
             engine->last_vlm_response = "Error: VLM engine failed to initialize.";
             return engine->last_vlm_response.c_str();
         }
