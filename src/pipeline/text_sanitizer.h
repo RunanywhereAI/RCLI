@@ -73,6 +73,33 @@ inline std::string sanitize_for_tts(const std::string& text) {
         out = std::move(cleaned);
     }
 
+    // 4b. Strip emote/action markers like *laughs*, *sighs*, *smiles*, etc.
+    //     These are non-speakable stage directions that LLMs often generate.
+    {
+        std::string cleaned;
+        cleaned.reserve(out.size());
+        for (size_t i = 0; i < out.size(); i++) {
+            if (out[i] == '*') {
+                size_t close = out.find('*', i + 1);
+                if (close != std::string::npos && close - i <= 30) {
+                    // Check it looks like an emote (single word or short phrase, no nested formatting)
+                    bool is_emote = true;
+                    for (size_t j = i + 1; j < close; j++) {
+                        if (out[j] == '*' || out[j] == '\n') { is_emote = false; break; }
+                    }
+                    if (is_emote) {
+                        i = close; // skip past closing *
+                        // Also skip trailing space if present
+                        if (i + 1 < out.size() && out[i + 1] == ' ') i++;
+                        continue;
+                    }
+                }
+            }
+            cleaned += out[i];
+        }
+        out = std::move(cleaned);
+    }
+
     // 5. Strip markdown symbols and non-speakable formatting
     {
         std::string cleaned;
@@ -213,6 +240,84 @@ inline std::string sanitize_for_tts(const std::string& text) {
                 }
             }
         }
+    }
+
+    // 6c. Replace brand names / proper nouns that G2P spells letter-by-letter
+    //     with phonetic approximations so TTS pronounces them naturally.
+    {
+        struct Phonetic { const char* from; const char* to; };
+        static const Phonetic table[] = {
+            {"Spotify",  "Spotifye"},
+            {"spotify",  "spotifye"},
+            {"SPOTIFY",  "Spotifye"},
+            {"YouTube",  "You Tube"},
+            {"Youtube",  "You Tube"},
+            {"youtube",  "you tube"},
+            {"YOUTUBE",  "You Tube"},
+            {"WiFi",     "Why Fye"},
+            {"wifi",     "why fye"},
+            {"WIFI",     "Why Fye"},
+            {"Wi-Fi",    "Why Fye"},
+            {"iPhone",   "eye phone"},
+            {"iphone",   "eye phone"},
+            {"IPHONE",   "eye phone"},
+            {"iPad",     "eye pad"},
+            {"ipad",     "eye pad"},
+            {"IPAD",     "eye pad"},
+            {"macOS",    "mac O S"},
+            {"MacOS",    "mac O S"},
+            {"iOS",      "eye O S"},
+            {"AirPods",  "Air Pods"},
+            {"airpods",  "air pods"},
+            {"AIRPODS",  "Air Pods"},
+            {"ChatGPT",  "Chat G P T"},
+            {"WhatsApp", "Whats App"},
+            {"whatsapp", "whats app"},
+            {"WHATSAPP", "Whats App"},
+            {"TikTok",   "Tick Tock"},
+            {"tiktok",   "tick tock"},
+            {"TIKTOK",   "Tick Tock"},
+            {"LinkedIn", "Linked In"},
+            {"linkedin", "linked in"},
+            {"LINKEDIN", "Linked In"},
+        };
+        for (auto& p : table) {
+            std::string needle(p.from);
+            std::string replacement(p.to);
+            size_t pos = 0;
+            while ((pos = out.find(needle, pos)) != std::string::npos) {
+                bool left_ok = (pos == 0 || out[pos - 1] == ' ' || out[pos - 1] == '\n' ||
+                                out[pos - 1] == '"' || out[pos - 1] == '\'');
+                size_t end = pos + needle.size();
+                bool right_ok = (end >= out.size() || out[end] == ' ' || out[end] == ',' ||
+                                 out[end] == '.' || out[end] == '!' || out[end] == '?' ||
+                                 out[end] == '\n' || out[end] == ';' || out[end] == ':' ||
+                                 out[end] == '\'' || out[end] == '"');
+                if (left_ok && right_ok) {
+                    out.replace(pos, needle.size(), replacement);
+                    pos += replacement.size();
+                } else {
+                    pos += needle.size();
+                }
+            }
+        }
+    }
+
+    // 6d. Replace hyphens between letters/words with spaces so G2P does not
+    //     spell out hyphenated compounds (e.g. "well-known" → "well known").
+    {
+        std::string cleaned;
+        cleaned.reserve(out.size());
+        for (size_t i = 0; i < out.size(); i++) {
+            if (out[i] == '-' && i > 0 && i + 1 < out.size() &&
+                std::isalpha((unsigned char)out[i - 1]) &&
+                std::isalpha((unsigned char)out[i + 1])) {
+                cleaned += ' ';
+            } else {
+                cleaned += out[i];
+            }
+        }
+        out = std::move(cleaned);
     }
 
     // 7. Collapse multiple whitespace to single space, trim

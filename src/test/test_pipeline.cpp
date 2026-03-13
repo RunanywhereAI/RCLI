@@ -783,31 +783,36 @@ static void test_metalrt_llm(const std::string& models_dir) {
     engine.reset_conversation();
     engine.generate("hi");
 
-    // Benchmark 3 prompts
-    const char* prompts[] = {
-        "What is 2+2?",
-        "Write a haiku about the sea.",
-        "Explain gravity in one sentence.",
-    };
+    // Benchmark across max_tokens sweep: 64, 128, 256, 512, 1024, 2048
+    const int token_limits[] = { 64, 128, 256, 512, 1024, 2048 };
+    const char* prompt = "Write a detailed essay about the history and future of artificial intelligence, "
+                         "covering early pioneers, neural networks, deep learning breakthroughs, "
+                         "large language models, and predictions for the next decade.";
 
-    TEST_SECTION("MetalRT LLM Inference (Metal GPU)");
-    for (int i = 0; i < 3; i++) {
+    TEST_SECTION("MetalRT LLM Token Sweep Benchmark (Metal GPU)");
+    fprintf(stderr, "\n    \033[1;33m%-12s %8s %12s %10s %12s %10s %10s\033[0m\n",
+            "max_tokens", "gen_tok", "decode_ms", "tok/s", "prefill_ms", "pf_tok/s", "wall_ms");
+    fprintf(stderr, "    \033[33m%s\033[0m\n",
+            "------------ -------- ------------ ---------- ------------ ---------- ----------");
+
+    for (int limit : token_limits) {
+        engine.set_max_tokens(limit);
+        engine.set_ignore_eos(true);
         engine.reset_conversation();
+
         t0 = std::chrono::steady_clock::now();
-        std::string result = engine.generate(prompts[i]);
+        std::string result = engine.generate(prompt);
         double gen_ms = elapsed_ms(t0);
 
         const auto& stats = engine.last_stats();
-        TEST_INFO("--- Run %d ---", i + 1);
-        TEST_INFO("  Prompt:   \"%s\"", prompts[i]);
-        TEST_INFO("  Response: \"%.*s%s\"", (int)std::min(result.size(), (size_t)80),
-                  result.c_str(), result.size() > 80 ? "..." : "");
-        TEST_INFO("  Backend:  MetalRT (Metal GPU)");
-        TEST_INFO("  Prefill:  %.1f ms (%d tokens, %.0f tok/s)",
-                  stats.prompt_eval_us / 1000.0, stats.prompt_tokens, stats.prompt_tps());
-        TEST_INFO("  Decode:   %.1f ms (%d tokens, %.0f tok/s)",
-                  stats.generation_us / 1000.0, stats.generated_tokens, stats.gen_tps());
-        TEST_INFO("  Wall:     %.1f ms", gen_ms);
+        fprintf(stderr, "    %-12d %8d %10.1f ms %8.1f %10.1f ms %8.0f %8.1f ms\n",
+                limit,
+                stats.generated_tokens,
+                stats.generation_us / 1000.0,
+                stats.gen_tps(),
+                stats.prompt_eval_us / 1000.0,
+                stats.prompt_tps(),
+                gen_ms);
         TEST("run produces output", !result.empty());
     }
 }

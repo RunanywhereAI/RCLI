@@ -77,8 +77,25 @@ bool TtsEngine::init(const TtsConfig& config) {
     return true;
 }
 
+bool TtsEngine::reinit() {
+    if (!initialized_) return false;
+    LOG_DEBUG("TTS", "Reinitializing ONNX session to prevent audio degradation");
+    if (tts_) {
+        SherpaOnnxDestroyOfflineTts(tts_);
+        tts_ = nullptr;
+    }
+    initialized_ = false;
+    synth_count_ = 0;
+    return init(config_);
+}
+
 std::vector<float> TtsEngine::synthesize(const std::string& text) {
     if (!initialized_ || !tts_) return {};
+
+    // Periodically reinit to prevent audio quality degradation
+    if (++synth_count_ >= kReinitInterval) {
+        reinit();
+    }
 
     stats_ = TtsStats{};
     int64_t t_start = now_us();

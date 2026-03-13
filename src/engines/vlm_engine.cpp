@@ -7,6 +7,7 @@
 #include "mtmd-helper.h"
 #include <cstring>
 #include <algorithm>
+#include <mutex>
 
 namespace rastack {
 
@@ -32,8 +33,9 @@ bool VlmEngine::init(const VlmConfig& config) {
 
     config_ = config;
 
-    // Initialize backend (loads Metal, etc.)
-    ggml_backend_load_all();
+    // Initialize backend (loads Metal, etc.) — safe to call multiple times
+    static std::once_flag backend_init_flag;
+    std::call_once(backend_init_flag, [] { ggml_backend_load_all(); });
 
     // Load language model
     llama_model_params model_params = llama_model_default_params();
