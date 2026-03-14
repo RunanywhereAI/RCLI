@@ -128,6 +128,47 @@ public:
     TtsFreeAudioFn     tts_free_audio   = nullptr;
     TtsSampleRateFn    tts_sample_rate  = nullptr;
 
+    // --- Vision (VLM) function pointers ---
+
+    struct MetalRTVisionResult {
+        const char* text;
+        const char* thinking;
+        const char* response;
+        int prompt_tokens;
+        int generated_tokens;
+        double vision_encode_ms;
+        double prefill_ms;
+        double decode_ms;
+        double tps;
+    };
+
+    struct MetalRTVisionOptions {
+        int max_tokens;
+        int top_k;
+        float temperature;
+        bool think;
+    };
+
+    using VisionAnalyzeFn     = MetalRTVisionResult (*)(void*, const char*, const char*, const MetalRTVisionOptions*);
+    using VisionAnalyzeStreamFn = MetalRTVisionResult (*)(void*, const char*, const char*, MetalRTStreamCb, void*, const MetalRTVisionOptions*);
+    using VisionGenerateFn    = MetalRTVisionResult (*)(void*, const char*, const MetalRTVisionOptions*);
+    using VisionGenerateStreamFn = MetalRTVisionResult (*)(void*, const char*, MetalRTStreamCb, void*, const MetalRTVisionOptions*);
+    using VisionFreeResultFn  = void (*)(MetalRTVisionResult);
+
+    CreateFn               vision_create        = nullptr;
+    DestroyFn              vision_destroy       = nullptr;
+    LoadFn                 vision_load          = nullptr;
+    VisionAnalyzeFn        vision_analyze       = nullptr;
+    VisionAnalyzeStreamFn  vision_analyze_stream = nullptr;
+    VisionGenerateFn       vision_generate      = nullptr;
+    VisionGenerateStreamFn vision_generate_stream = nullptr;
+    ResetFn                vision_reset         = nullptr;
+    ModelNameFn            vision_model_name    = nullptr;
+    DeviceNameFn           vision_device_name   = nullptr;
+    VisionFreeResultFn     vision_free_result   = nullptr;
+
+    bool has_vision() const { return vision_create != nullptr && vision_analyze != nullptr; }
+
     // --- Install / remove / version management ---
 
     static bool install(const std::string& version = "latest");

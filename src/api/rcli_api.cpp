@@ -119,7 +119,19 @@ struct RCLIEngine {
     // VLM (Vision Language Model) subsystem
     VlmEngine vlm_engine;
     bool vlm_initialized = false;
+    bool using_metalrt_vlm = false;       // true when VLM is running on MetalRT backend
+    void* metalrt_vision_handle = nullptr; // opaque handle from metalrt_vision_create()
     std::string last_vlm_response;
+
+    // MetalRT VLM stats (filled after each analyze call)
+    struct {
+        double vision_encode_ms = 0;
+        double prefill_ms = 0;
+        double decode_ms = 0;
+        double tps = 0;
+        int prompt_tokens = 0;
+        int generated_tokens = 0;
+    } metalrt_vlm_stats;
 
     std::mutex mutex;
     bool initialized = false;
@@ -205,6 +217,13 @@ void rcli_destroy(RCLIHandle handle) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (engine->initialized) {
         engine->pipeline.stop_live();
+    }
+    // Destroy MetalRT vision handle if loaded
+    if (engine->metalrt_vision_handle) {
+        auto& loader = rastack::MetalRTLoader::instance();
+        if (loader.vision_destroy)
+            loader.vision_destroy(engine->metalrt_vision_handle);
+        engine->metalrt_vision_handle = nullptr;
     }
     delete engine;
 }
@@ -1073,7 +1092,27 @@ static std::string handle_screen_intent(RCLIEngine* engine, const std::string& u
         vlm_prompt = "Describe what you see on this screen in detail.";
     }
 
-    std::string result = engine->vlm_engine.analyze_image(path, vlm_prompt, nullptr);
+    std::string result;
+    if (engine->using_metalrt_vlm && engine->metalrt_vision_handle) {
+        auto& loader = rastack::MetalRTLoader::instance();
+        rastack::MetalRTLoader::MetalRTVisionOptions opts{};
+        opts.max_tokens = 512;
+        opts.top_k = 40;
+        opts.temperature = 0.0f;
+        opts.think = false;
+
+        rastack::MetalRTLoader::MetalRTVisionResult vr;
+        {
+            std::lock_guard<std::mutex> gpu_lock(loader.gpu_mutex());
+            vr = loader.vision_analyze(engine->metalrt_vision_handle,
+                                        path.c_str(), vlm_prompt.c_str(), &opts);
+        }
+        result = vr.response ? std::string(vr.response) : (vr.text ? std::string(vr.text) : "");
+        if (loader.vision_free_result) loader.vision_free_result(vr);
+    } else {
+        result = engine->vlm_engine.analyze_image(path, vlm_prompt, nullptr);
+    }
+
     if (result.empty()) {
         return "I captured your screen but the analysis failed. Please try again.";
     }
@@ -3025,6 +3064,34 @@ static int vlm_init_locked(RCLIEngine* engine) {
             engine->models_dir = "./models";
     }
 
+    // --- Try MetalRT vision backend first (if dylib loaded and VLM model installed) ---
+    auto& mrt_loader = rastack::MetalRTLoader::instance();
+    if (mrt_loader.is_loaded() && mrt_loader.has_vision()) {
+        // Look for Qwen3-VL-2B safetensors model in MetalRT models dir
+        std::string vlm_dir = rcli::metalrt_models_dir() + "/Qwen3-VL-2B-MLX-4bit";
+        std::string safetensors = vlm_dir + "/model.safetensors";
+        if (access(safetensors.c_str(), R_OK) == 0) {
+            LOG_INFO("VLM", "MetalRT VLM model found at %s", vlm_dir.c_str());
+            void* handle = mrt_loader.vision_create();
+            if (handle) {
+                std::lock_guard<std::mutex> gpu_lock(mrt_loader.gpu_mutex());
+                if (mrt_loader.vision_load(handle, vlm_dir.c_str())) {
+                    engine->metalrt_vision_handle = handle;
+                    engine->using_metalrt_vlm = true;
+                    engine->vlm_initialized = true;
+                    const char* mname = mrt_loader.vision_model_name
+                        ? mrt_loader.vision_model_name(handle) : "Qwen3-VL-2B";
+                    LOG_INFO("VLM", "MetalRT VLM engine ready (%s)", mname);
+                    return 0;
+                }
+                LOG_WARN("VLM", "MetalRT vision_load failed, falling back to llama.cpp");
+                mrt_loader.vision_destroy(handle);
+            }
+        }
+    }
+
+    // --- Fallback: llama.cpp VLM backend ---
+
     // Find or download VLM model
     auto vlm_models = rcli::all_vlm_models();
     rcli::VlmModelDef model_def;
@@ -3099,13 +3166,57 @@ const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const ch
         ? std::string(prompt)
         : "Describe this image in detail.";
 
-    std::string result = engine->vlm_engine.analyze_image(
-        std::string(image_path), text_prompt, nullptr);
+    if (engine->using_metalrt_vlm && engine->metalrt_vision_handle) {
+        // MetalRT vision backend — stream tokens to build result
+        auto& loader = rastack::MetalRTLoader::instance();
+        std::string accumulated;
 
-    if (result.empty()) {
-        engine->last_vlm_response = "Error: Failed to analyze image.";
+        rastack::MetalRTLoader::MetalRTVisionOptions opts{};
+        opts.max_tokens = 512;
+        opts.top_k = 40;
+        opts.temperature = 0.0f;
+        opts.think = false;
+
+        rastack::MetalRTStreamCb stream_cb = [](const char* piece, void* ud) -> bool {
+            auto* out = static_cast<std::string*>(ud);
+            out->append(piece);
+            return true;
+        };
+
+        rastack::MetalRTLoader::MetalRTVisionResult vr;
+        {
+            std::lock_guard<std::mutex> gpu_lock(loader.gpu_mutex());
+            vr = loader.vision_analyze_stream(engine->metalrt_vision_handle,
+                                               image_path, text_prompt.c_str(),
+                                               stream_cb, &accumulated, &opts);
+        }
+
+        // Store stats
+        engine->metalrt_vlm_stats.vision_encode_ms = vr.vision_encode_ms;
+        engine->metalrt_vlm_stats.prefill_ms = vr.prefill_ms;
+        engine->metalrt_vlm_stats.decode_ms = vr.decode_ms;
+        engine->metalrt_vlm_stats.tps = vr.tps;
+        engine->metalrt_vlm_stats.prompt_tokens = vr.prompt_tokens;
+        engine->metalrt_vlm_stats.generated_tokens = vr.generated_tokens;
+
+        std::string result = vr.response ? std::string(vr.response) : accumulated;
+        if (loader.vision_free_result) loader.vision_free_result(vr);
+
+        if (result.empty()) {
+            engine->last_vlm_response = "Error: Failed to analyze image.";
+        } else {
+            engine->last_vlm_response = result;
+        }
     } else {
-        engine->last_vlm_response = result;
+        // llama.cpp VLM backend
+        std::string result = engine->vlm_engine.analyze_image(
+            std::string(image_path), text_prompt, nullptr);
+
+        if (result.empty()) {
+            engine->last_vlm_response = "Error: Failed to analyze image.";
+        } else {
+            engine->last_vlm_response = result;
+        }
     }
     return engine->last_vlm_response.c_str();
 }
@@ -3121,12 +3232,21 @@ int rcli_vlm_get_stats(RCLIHandle handle, RCLIVlmStats* out_stats) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->vlm_initialized) return -1;
 
-    auto& s = engine->vlm_engine.last_stats();
-    out_stats->gen_tok_per_sec  = s.gen_tps();
-    out_stats->generated_tokens = static_cast<int>(s.generated_tokens);
-    out_stats->total_time_sec   = (s.image_encode_us + s.generation_us) / 1e6;
-    out_stats->image_encode_ms  = s.image_encode_us / 1000.0;
-    out_stats->first_token_ms   = s.first_token_us / 1000.0;
+    if (engine->using_metalrt_vlm) {
+        auto& s = engine->metalrt_vlm_stats;
+        out_stats->gen_tok_per_sec  = s.tps;
+        out_stats->generated_tokens = s.generated_tokens;
+        out_stats->total_time_sec   = (s.vision_encode_ms + s.prefill_ms + s.decode_ms) / 1000.0;
+        out_stats->image_encode_ms  = s.vision_encode_ms;
+        out_stats->first_token_ms   = s.prefill_ms;
+    } else {
+        auto& s = engine->vlm_engine.last_stats();
+        out_stats->gen_tok_per_sec  = s.gen_tps();
+        out_stats->generated_tokens = static_cast<int>(s.generated_tokens);
+        out_stats->total_time_sec   = (s.image_encode_us + s.generation_us) / 1e6;
+        out_stats->image_encode_ms  = s.image_encode_us / 1000.0;
+        out_stats->first_token_ms   = s.first_token_us / 1000.0;
+    }
     return 0;
 }
 
