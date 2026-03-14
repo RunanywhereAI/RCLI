@@ -444,14 +444,31 @@ public:
                     run_camera_vlm("Describe what you see in this photo in detail.");
                     return true;
                 }
-                // S key: toggle visual mode (overlay frame for screen capture)
+                // S key: toggle visual mode (swap LLM ↔ VLM on GPU)
                 if (c == "s" || c == "S") {
                     if (screen_capture_overlay_active()) {
+                        // Exit visual mode: hide overlay, swap VLM → LLM
                         screen_capture_hide_overlay();
-                        add_system_message("Visual mode OFF");
+                        add_system_message("Exiting visual mode, restoring LLM...");
+                        screen_->Post(Event::Custom);
+                        std::thread([this]() {
+                            rcli_vlm_exit(engine_);
+                            add_system_message("Visual mode OFF — LLM restored");
+                            screen_->Post(Event::Custom);
+                        }).detach();
                     } else {
-                        screen_capture_show_overlay(0, 0, 0, 0);
-                        add_system_message("Visual mode ON — drag/resize the green frame over content, then ask a question");
+                        // Enter visual mode: swap LLM → VLM, show overlay
+                        add_system_message("Entering visual mode, loading VLM...");
+                        screen_->Post(Event::Custom);
+                        std::thread([this]() {
+                            if (rcli_vlm_enter(engine_) == 0) {
+                                screen_capture_show_overlay(0, 0, 0, 0);
+                                add_system_message("Visual mode ON — drag/resize the green frame, then ask a question");
+                            } else {
+                                add_system_message("Failed to load VLM model");
+                            }
+                            screen_->Post(Event::Custom);
+                        }).detach();
                     }
                     return true;
                 }
@@ -560,6 +577,11 @@ private:
             std::string user_text = transcript;
             add_user_message(user_text);
 
+            // Visual mode: route voice to VLM screen analysis instead of LLM
+            if (screen_capture_overlay_active()) {
+                run_screen_vlm(user_text);
+                return;
+            }
 
             voice_state_ = VoiceState::THINKING;
             screen_->Post(Event::Custom);
@@ -2265,21 +2287,31 @@ private:
                 std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".jpg";
             int rc = screen_capture_screenshot(screen_path.c_str());
             if (rc != 0) {
-                add_response("(Screen capture failed. Check screen recording permissions in System Settings > Privacy & Security > Screen Recording.)", "");
+                add_response("(Screen capture failed. Check screen recording permissions.)", "");
                 voice_state_ = VoiceState::IDLE;
                 screen_->Post(Event::Custom);
                 return;
             }
-            add_system_message("Screenshot captured! Analyzing with VLM...");
+            add_system_message("Analyzing with VLM...");
             screen_->Post(Event::Custom);
-            const char* response = rcli_vlm_analyze(
-                engine_, screen_path.c_str(), prompt_copy.c_str());
-            if (response && response[0]) {
-                add_response(response, "VLM");
-                // Speak via sentence-streamed TTS through ring buffer
+
+            // Streaming VLM analysis — accumulate response for display + TTS
+            std::string accumulated;
+            auto stream_cb = [](const char* event, const char* data, void* ud) {
+                auto* accum = static_cast<std::string*>(ud);
+                if (std::strcmp(event, "token") == 0) {
+                    accum->append(data);
+                }
+            };
+            int vlm_rc = rcli_vlm_analyze_stream(engine_, screen_path.c_str(),
+                                                  prompt_copy.c_str(), stream_cb, &accumulated);
+
+            if (vlm_rc == 0 && !accumulated.empty()) {
+                add_response(accumulated, "VLM");
+                // Speak via sentence-streamed TTS
                 voice_state_ = VoiceState::SPEAKING;
                 screen_->Post(Event::Custom);
-                rcli_speak_streaming(engine_, response, nullptr, nullptr);
+                rcli_speak_streaming(engine_, accumulated.c_str(), nullptr, nullptr);
                 RCLIVlmStats stats;
                 if (rcli_vlm_get_stats(engine_, &stats) == 0) {
                     char buf[128];
@@ -2288,7 +2320,7 @@ private:
                     add_system_message(buf);
                 }
             } else {
-                add_response("(VLM analysis failed. Install a VLM model: rcli models vlm)", "");
+                add_response("(VLM analysis failed)", "");
             }
             voice_state_ = VoiceState::IDLE;
             screen_->Post(Event::Custom);

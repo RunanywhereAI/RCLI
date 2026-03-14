@@ -101,6 +101,9 @@ public:
     LlmBackend active_llm_backend() const { return active_backend_; }
     bool using_metalrt() const { return active_backend_ == LlmBackend::METALRT; }
 
+    // Access the pipeline config (e.g. for MetalRT model dir during VLM swap)
+    const PipelineConfig& config() const { return config_; }
+
     // Update the base system prompt (e.g. when personality changes)
     void set_system_prompt(const std::string& prompt) { config_.system_prompt = prompt; }
 

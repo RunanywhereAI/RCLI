@@ -291,6 +291,23 @@ typedef struct {
 // Get stats from the last VLM analysis. Returns 0 on success.
 int rcli_vlm_get_stats(RCLIHandle handle, RCLIVlmStats* out_stats);
 
+// Swap MetalRT LLM out and VLM in on the GPU (for visual mode).
+// Unloads the LLM model, loads the MetalRT VLM model.
+// Returns 0 on success, -1 on failure.
+int rcli_vlm_enter(RCLIHandle handle);
+
+// Swap MetalRT VLM out and LLM back in on the GPU (exit visual mode).
+// Unloads the VLM model, reloads the LLM and re-caches the system prompt.
+// Returns 0 on success, -1 on failure.
+int rcli_vlm_exit(RCLIHandle handle);
+
+// Streaming VLM image analysis (use after rcli_vlm_enter).
+// Fires callback with events: "token", "response", "stats".
+// Returns 0 on success, -1 on failure.
+int rcli_vlm_analyze_stream(RCLIHandle handle, const char* image_path,
+                            const char* prompt,
+                            RCLIEventCallback callback, void* user_data);
+
 #ifdef __cplusplus
 }
 #endif
