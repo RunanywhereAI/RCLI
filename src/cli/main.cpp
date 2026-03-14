@@ -856,16 +856,17 @@ static int cmd_metalrt(const Args& args) {
                     inst ? color::reset : "");
         }
 
-        // STT/TTS component models
+        // STT/TTS/VLM component models
         size_t offset = mrt_models.size();
-        fprintf(stderr, "\n  %s— STT/TTS Components —%s\n", color::bold, color::reset);
+        fprintf(stderr, "\n  %s— STT/TTS/VLM Components —%s\n", color::bold, color::reset);
         fprintf(stderr, "  %s#  %-28s  %-8s  %-5s  Status%s\n",
                 color::bold, "Model", "Size", "Type", color::reset);
 
         for (size_t i = 0; i < comp_models.size(); i++) {
             auto& cm = comp_models[i];
             bool inst = rcli::is_metalrt_component_installed(cm);
-            std::string type_label = (cm.component == "stt") ? "STT" : "TTS";
+            std::string type_label = (cm.component == "stt") ? "STT"
+                                   : (cm.component == "vlm") ? "VLM" : "TTS";
             fprintf(stderr, "  %s%zu%s  %-28s  %-8s  %-5s  %s%s%s\n",
                     color::bold, offset + i + 1, color::reset,
                     cm.name.c_str(),

@@ -3067,9 +3067,24 @@ static int vlm_init_locked(RCLIEngine* engine) {
     // --- Try MetalRT vision backend first (if dylib loaded and VLM model installed) ---
     auto& mrt_loader = rastack::MetalRTLoader::instance();
     if (mrt_loader.is_loaded() && mrt_loader.has_vision()) {
-        // Look for Qwen3-VL-2B safetensors model in MetalRT models dir
         std::string vlm_dir = rcli::metalrt_models_dir() + "/Qwen3-VL-2B-MLX-4bit";
         std::string safetensors = vlm_dir + "/model.safetensors";
+
+        // Auto-download VLM model if not installed
+        if (access(safetensors.c_str(), R_OK) != 0) {
+            LOG_INFO("VLM", "MetalRT VLM model not found, downloading...");
+            std::string hf_base = "https://huggingface.co/runanywhere/Qwen3-VL-2B-Instruct-4bit/resolve/main/";
+            std::string dl_cmd = "bash -c '"
+                "set -e; mkdir -p \"" + vlm_dir + "\"; "
+                "curl -fL -# -o \"" + vlm_dir + "/config.json\" \"" + hf_base + "config.json\"; "
+                "curl -fL -# -o \"" + vlm_dir + "/model.safetensors\" \"" + hf_base + "model.safetensors\"; "
+                "curl -fL -# -o \"" + vlm_dir + "/tokenizer.json\" \"" + hf_base + "tokenizer.json\"; "
+                "'";
+            if (system(dl_cmd.c_str()) != 0) {
+                LOG_WARN("VLM", "MetalRT VLM model download failed");
+            }
+        }
+
         if (access(safetensors.c_str(), R_OK) == 0) {
             LOG_INFO("VLM", "MetalRT VLM model found at %s", vlm_dir.c_str());
             void* handle = mrt_loader.vision_create();

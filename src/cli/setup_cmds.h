@@ -178,13 +178,15 @@ inline int cmd_setup(const Args& args) {
                 if (!cm.default_install) continue;
                 std::string cm_dir = rcli::metalrt_models_dir() + "/" + cm.dir_name;
                 if (rcli::is_metalrt_component_installed(cm)) {
-                    std::string skip_label = (cm.component == "stt") ? "STT" : "TTS";
+                    std::string skip_label = (cm.component == "stt") ? "STT"
+                                           : (cm.component == "vlm") ? "VLM" : "TTS";
                     fprintf(stderr, "  %s%sMetalRT %s already installed:%s %s\n",
                             color::bold, color::green, skip_label.c_str(), color::reset, cm.name.c_str());
                     continue;
                 }
 
-                std::string type_label = (cm.component == "stt") ? "STT" : "TTS";
+                std::string type_label = (cm.component == "stt") ? "STT"
+                                       : (cm.component == "vlm") ? "VLM" : "TTS";
                 fprintf(stderr, "  %sDownloading MetalRT %s: %s (~%s)...%s\n",
                         color::dim, type_label.c_str(), cm.name.c_str(),
                         rcli::format_size(cm.size_mb).c_str(), color::reset);
