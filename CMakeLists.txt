@@ -103,6 +103,7 @@ add_library(rcli STATIC
     src/engines/metalrt_engine.cpp
     src/engines/metalrt_stt_engine.cpp
     src/engines/metalrt_tts_engine.cpp
+    src/engines/metalrt_vlm_engine.cpp
     src/engines/vlm_engine.cpp
     src/audio/audio_io.cpp
     src/audio/mic_permission.mm
