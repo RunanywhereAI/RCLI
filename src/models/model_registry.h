@@ -287,7 +287,7 @@ inline bool is_metalrt_model_installed(const LlmModelDef& m) {
 struct MetalRTComponentModel {
     std::string id;
     std::string name;
-    std::string component;       // "stt" or "tts"
+    std::string component;       // "stt", "tts", or "vlm"
     std::string hf_repo;         // HuggingFace repo path (org/repo)
     std::string hf_subdir;       // subdirectory within repo (empty for flat repos)
     std::string dir_name;        // local dir under metalrt_models_dir()
@@ -349,6 +349,7 @@ inline std::vector<MetalRTComponentModel> metalrt_component_models() {
         },
     };
 }
+
 
 inline bool is_metalrt_component_installed(const MetalRTComponentModel& m) {
     std::string dir = metalrt_models_dir() + "/" + m.dir_name;

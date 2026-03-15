@@ -6,6 +6,7 @@
 #include "core/ring_buffer.h"
 #include "engines/stt_engine.h"
 #include "engines/llm_engine.h"
+#include "engines/vlm_engine.h"
 #include "engines/metalrt_engine.h"
 #include "engines/metalrt_stt_engine.h"
 #include "engines/metalrt_tts_engine.h"
@@ -93,11 +94,15 @@ public:
     VadEngine&  vad()  { return vad_; }
     ToolEngine& tools() { return tools_; }
     AudioIO&    audio() { return audio_; }
+    VlmEngine&  vlm()   { return vlm_; }
     RingBuffer<float>* playback_ring_buffer() { return playback_rb_.get(); }
 
     // Active LLM backend
     LlmBackend active_llm_backend() const { return active_backend_; }
     bool using_metalrt() const { return active_backend_ == LlmBackend::METALRT; }
+
+    // Access the pipeline config (e.g. for MetalRT model dir during VLM swap)
+    const PipelineConfig& config() const { return config_; }
 
     // Update the base system prompt (e.g. when personality changes)
     void set_system_prompt(const std::string& prompt) { config_.system_prompt = prompt; }
@@ -168,6 +173,7 @@ private:
     SttEngine        stt_;
     OfflineSttEngine offline_stt_;  // Whisper for file pipeline
     LlmEngine        llm_;
+    VlmEngine        vlm_;
     MetalRTEngine    metalrt_;
     MetalRTSttEngine metalrt_stt_;
     MetalRTTtsEngine metalrt_tts_;

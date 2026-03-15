@@ -46,6 +46,10 @@ set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 add_subdirectory(deps/llama.cpp ${CMAKE_BINARY_DIR}/llama.cpp EXCLUDE_FROM_ALL)
 
+# --- libmtmd (multimodal/vision support from llama.cpp) ---
+set(LLAMA_INSTALL_VERSION "0.0.0" CACHE STRING "" FORCE)
+add_subdirectory(deps/llama.cpp/tools/mtmd ${CMAKE_BINARY_DIR}/mtmd EXCLUDE_FROM_ALL)
+
 # --- sherpa-onnx (STT + TTS + VAD) ---
 set(SHERPA_ONNX_ENABLE_C_API ON CACHE BOOL "Enable C API" FORCE)
 set(SHERPA_ONNX_ENABLE_BINARY OFF CACHE BOOL "" FORCE)
@@ -99,8 +103,11 @@ add_library(rcli STATIC
     src/engines/metalrt_engine.cpp
     src/engines/metalrt_stt_engine.cpp
     src/engines/metalrt_tts_engine.cpp
+    src/engines/vlm_engine.cpp
     src/audio/audio_io.cpp
     src/audio/mic_permission.mm
+    src/audio/camera_capture.mm
+    src/audio/screen_capture.mm
     src/pipeline/orchestrator.cpp
     src/pipeline/sentence_detector.cpp
     src/tools/tool_engine.cpp
@@ -133,13 +140,14 @@ add_library(rcli STATIC
     src/api/rcli_api.cpp
 )
 
-set_source_files_properties(src/audio/mic_permission.mm
+set_source_files_properties(src/audio/mic_permission.mm src/audio/camera_capture.mm src/audio/screen_capture.mm
     PROPERTIES LANGUAGE CXX)
 
 target_include_directories(rcli PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/llama.cpp/include
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/llama.cpp/ggml/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/llama.cpp/tools/mtmd
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/sherpa-onnx/sherpa-onnx/c-api
     ${usearch_SOURCE_DIR}/include
 )
@@ -147,12 +155,18 @@ target_include_directories(rcli PUBLIC
 target_link_libraries(rcli PUBLIC
     llama
     ggml
+    mtmd
     sherpa-onnx-c-api
     "-framework CoreAudio"
     "-framework AudioToolbox"
     "-framework AudioUnit"
     "-framework Foundation"
     "-framework AVFoundation"
+    "-framework AppKit"
+    "-framework CoreImage"
+    "-framework CoreMedia"
+    "-framework CoreVideo"
+    "-framework CoreGraphics"
     "-framework IOKit"
 )
 
@@ -184,6 +198,27 @@ target_compile_options(rcli_cli PRIVATE
 
 target_compile_definitions(rcli_cli PRIVATE
     RCLI_VERSION="${PROJECT_VERSION}"
+)
+
+# =============================================================================
+# rcli_overlay — standalone Cocoa helper for visual overlay window
+# =============================================================================
+add_executable(rcli_overlay
+    src/audio/rcli_overlay.m
+)
+
+set_source_files_properties(src/audio/rcli_overlay.m PROPERTIES LANGUAGE CXX)
+
+target_compile_options(rcli_overlay PRIVATE -x objective-c++)
+
+target_link_libraries(rcli_overlay PRIVATE
+    "-framework AppKit"
+    "-framework CoreGraphics"
+)
+
+set_target_properties(rcli_overlay PROPERTIES
+    OUTPUT_NAME "rcli_overlay"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
 # =============================================================================

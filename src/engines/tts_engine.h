@@ -63,12 +63,18 @@ public:
     // Change speaker at runtime (Kokoro multi-voice)
     void set_speaker_id(int id) { config_.speaker_id = id; }
 
+    // Reinitialize the ONNX Runtime session to flush accumulated state.
+    // Call periodically to prevent audio degradation over long sessions.
+    bool reinit();
+
 private:
     const SherpaOnnxOfflineTts* tts_ = nullptr;
     TtsConfig config_;
     TtsStats  stats_;
     int       sample_rate_ = 22050;
     bool      initialized_ = false;
+    int       synth_count_  = 0;        // synthesis calls since last reinit
+    static constexpr int kReinitInterval = 20; // reinit every N calls
 };
 
 } // namespace rastack

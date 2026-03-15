@@ -19,6 +19,8 @@ inline void print_usage(const char* argv0) {
         "    %sask%s <text>         One-shot text command\n"
         "    %sactions%s [name]     List all actions, or show detail for one\n"
         "    %saction%s <n> [json]  Execute a named action directly\n"
+        "    %svlm%s <img> [prompt]  Analyze image with Vision Language Model\n"
+        "    %sscreen%s [prompt]    Capture screenshot & analyze with VLM\n"
         "    %srag%s <sub>          RAG: ingest docs, query, status\n"
         "    %ssetup%s              Download AI models (~1GB)\n"
         "    %smodels%s             Manage all AI models (LLM, STT, TTS)\n"
@@ -45,12 +47,18 @@ inline void print_usage(const char* argv0) {
         "    rcli ask \"open Safari\"                  # one-shot command\n"
         "    rcli ask \"create a note called Ideas\"   # triggers action\n"
         "    rcli actions                            # see all actions\n"
+        "    rcli vlm photo.jpg                      # analyze an image\n"
+        "    rcli vlm photo.jpg \"What is this?\"     # image with custom prompt\n"
+        "    rcli screen                             # capture & analyze screen\n"
+        "    rcli screen \"What app is open?\"         # screen with custom prompt\n"
         "    rcli actions create_note                # action detail\n"
         "    rcli setup                              # download models\n\n",
         color::bold, color::orange, color::reset,
         color::bold, color::reset,
         argv0,
         color::bold, color::reset,
+        color::green, color::reset,
+        color::green, color::reset,
         color::green, color::reset,
         color::green, color::reset,
         color::green, color::reset,
@@ -130,7 +138,13 @@ inline void print_help_interactive() {
     fprintf(stderr, "  %sdo <action> [text]%s    execute action directly (no JSON needed)\n", color::bold, color::reset);
     fprintf(stderr, "  %srag status%s            show indexed documents\n", color::bold, color::reset);
     fprintf(stderr, "  %srag ingest <path>%s     index docs for Q&A\n", color::bold, color::reset);
+    fprintf(stderr, "  %scamera%s                capture photo from webcam & analyze\n", color::bold, color::reset);
+    fprintf(stderr, "  %sscreen%s                capture screenshot & analyze\n", color::bold, color::reset);
     fprintf(stderr, "  %squit%s                  exit\n\n", color::bold, color::reset);
+    fprintf(stderr, "  %s%s  Vision:%s\n", color::bold, color::orange, color::reset);
+    fprintf(stderr, "  Drag & drop an image file to analyze it with the VLM.\n");
+    fprintf(stderr, "  Type %scamera%s to capture a photo from your webcam.\n", color::bold, color::reset);
+    fprintf(stderr, "  Type %sscreen%s to capture and analyze your screen.\n\n", color::bold, color::reset);
     fprintf(stderr, "  %s%s  Try:%s\n", color::bold, color::orange, color::reset);
     fprintf(stderr, "  %s\"Open Safari\"  \"What's on my calendar?\"  \"Set volume to 50\"%s\n\n",
             color::dim, color::reset);

@@ -12,6 +12,7 @@
 #include "models/model_registry.h"
 #include "models/tts_model_registry.h"
 #include "models/stt_model_registry.h"
+#include "models/vlm_model_registry.h"
 #include "engines/metalrt_loader.h"
 
 // =============================================================================
@@ -408,6 +409,83 @@ inline int pick_metalrt_stt() {
 }
 
 // =============================================================================
+// VLM picker
+// =============================================================================
+
+inline int pick_vlm(const std::string& models_dir) {
+    auto all = rcli::all_vlm_models();
+
+    fprintf(stderr, "\n  %s%s  VLM Models (Vision \xC2\xB7 llama.cpp)%s\n\n", color::bold, color::orange, color::reset);
+
+    fprintf(stderr, "    %s#  %-30s  %-12s  %s%s\n",
+            color::bold, "Model", "Size", "Status", color::reset);
+    fprintf(stderr, "    %s──  %-30s  %-12s  %s%s\n",
+            color::dim, "──────────────────────────────", "────────────", "──────────", color::reset);
+
+    for (size_t i = 0; i < all.size(); i++) {
+        auto& m = all[i];
+        bool installed = rcli::is_vlm_model_installed(models_dir, m);
+        std::string status;
+        if (installed)  status = "\033[32minstalled\033[0m";
+        else            status = "\033[2mnot installed\033[0m";
+        std::string label = m.name;
+        if (m.is_default) label += " (default)";
+        char size_str[32];
+        int total_mb = m.model_size_mb + m.mmproj_size_mb;
+        if (total_mb >= 1024)
+            snprintf(size_str, sizeof(size_str), "%.1f GB", total_mb / 1024.0);
+        else
+            snprintf(size_str, sizeof(size_str), "%d MB", total_mb);
+        fprintf(stderr, "    %s%-2zu%s %-30s  %-12s  %s\n",
+                installed ? "\033[32m" : "", i + 1, installed ? "\033[0m" : "",
+                label.c_str(), size_str, status.c_str());
+    }
+    fprintf(stderr, "\n  %sCommands:%s  [1-%zu] download/select  |  q cancel\n  Choice: ",
+            color::bold, color::reset, all.size());
+    fflush(stderr);
+
+    int choice = read_picker_choice();
+    if (choice == 0 || choice == -1) { picker_no_changes(); return 0; }
+    if (choice < 1 || choice > (int)all.size()) { fprintf(stderr, "\n  Invalid choice.\n\n"); return 1; }
+
+    auto& sel = all[choice - 1];
+    bool installed = rcli::is_vlm_model_installed(models_dir, sel);
+    if (installed) {
+        fprintf(stderr, "\n  %s%s%s is already installed.%s\n\n",
+                color::bold, color::green, sel.name.c_str(), color::reset);
+        return 0;
+    }
+
+    int total_mb = sel.model_size_mb + sel.mmproj_size_mb;
+    char size_str[32];
+    if (total_mb >= 1024)
+        snprintf(size_str, sizeof(size_str), "%.1f GB", total_mb / 1024.0);
+    else
+        snprintf(size_str, sizeof(size_str), "%d MB", total_mb);
+    fprintf(stderr, "\n  %s%s%s%s is not installed (%s). Download? [Y/n]: ",
+            color::bold, color::yellow, sel.name.c_str(), color::reset, size_str);
+    fflush(stderr);
+    if (!confirm_download()) { picker_cancelled(); return 0; }
+
+    std::string model_path = models_dir + "/" + sel.model_filename;
+    std::string mmproj_path = models_dir + "/" + sel.mmproj_filename;
+    std::string cmd = "bash -c '"
+        "set -e; echo \"  Downloading " + sel.name + " model...\"; echo \"\"; "
+        "curl -L -# -o \"" + model_path + "\" \"" + sel.model_url + "\"; "
+        "echo \"\"; echo \"  Downloading vision projector...\"; echo \"\"; "
+        "curl -L -# -o \"" + mmproj_path + "\" \"" + sel.mmproj_url + "\"; "
+        "echo \"\"; echo \"  Done!\"; '";
+    fprintf(stderr, "\n");
+    if (system(cmd.c_str()) != 0) {
+        fprintf(stderr, "\n  %s%sDownload failed.%s\n\n", color::bold, color::red, color::reset);
+        return 1;
+    }
+    fprintf(stderr, "\n  %s%sInstalled: %s%s\n  Use: rcli vlm <image> [prompt]\n\n",
+            color::bold, color::green, sel.name.c_str(), color::reset);
+    return 0;
+}
+
+// =============================================================================
 // Unified models dashboard
 // =============================================================================
 
@@ -417,6 +495,7 @@ inline int cmd_models(const Args& args) {
     if (args.arg1 == "llm") return pick_llm(models_dir);
     if (args.arg1 == "stt") return pick_stt(models_dir);
     if (args.arg1 == "tts") return pick_tts(models_dir);
+    if (args.arg1 == "vlm") return pick_vlm(models_dir);
     if (args.arg1 == "metalrt-stt" || args.arg1 == "whisper") return pick_metalrt_stt();
 
     if (args.help) {
@@ -426,12 +505,14 @@ inline int cmd_models(const Args& args) {
             "    models              Unified model dashboard\n"
             "    models llm          LLM model picker\n"
             "    models stt          STT model picker\n"
-            "    models tts          TTS voice picker\n\n"
+            "    models tts          TTS voice picker\n"
+            "    models vlm          VLM (vision) model picker\n\n"
             "  %sEXAMPLES%s\n"
             "    rcli models              # dashboard — pick a modality\n"
             "    rcli models llm          # switch LLM directly\n"
             "    rcli models stt          # switch offline STT directly\n"
-            "    rcli models tts          # switch TTS voice directly\n\n",
+            "    rcli models tts          # switch TTS voice directly\n"
+            "    rcli models vlm          # manage VLM models for image analysis\n\n",
             color::bold, color::orange, color::reset,
             color::bold, color::reset,
             color::bold, color::reset);
@@ -483,6 +564,21 @@ inline int cmd_models(const Args& args) {
             color::green, tts_name.c_str(), color::reset,
             tts_inst, tts_all.size());
 
+    // VLM row
+    auto vlm_all = rcli::all_vlm_models();
+    int vlm_inst = 0;
+    std::string vlm_name = "not installed";
+    for (auto& m : vlm_all) {
+        if (rcli::is_vlm_model_installed(models_dir, m)) {
+            vlm_inst++;
+            if (vlm_name == "not installed") vlm_name = m.name;
+        }
+    }
+    fprintf(stderr, "    %s4%s  %sVLM (vision)%s   %s%-28s%s  %d / %zu\n",
+            color::green, color::reset, color::bold, color::reset,
+            vlm_inst > 0 ? color::green : color::dim, vlm_name.c_str(), color::reset,
+            vlm_inst, vlm_all.size());
+
     // MetalRT Whisper row
     auto mrt_comps = rcli::metalrt_component_models();
     std::string mrt_stt_pref = rcli::read_selected_metalrt_stt_id();
@@ -498,7 +594,7 @@ inline int cmd_models(const Args& args) {
         }
     }
     if (mrt_stt_pref.empty() && mrt_stt_inst > 0) mrt_stt_name = "auto (first installed)";
-    fprintf(stderr, "    %s4%s  %sMetalRT STT%s    %s%-28s%s  %d / %d\n",
+    fprintf(stderr, "    %s5%s  %sMetalRT STT%s    %s%-28s%s  %d / %d\n",
             color::green, color::reset, color::bold, color::reset,
             color::green, mrt_stt_name.c_str(), color::reset,
             mrt_stt_inst, mrt_stt_total);
@@ -521,7 +617,7 @@ inline int cmd_models(const Args& args) {
     }
     fprintf(stderr, "  %sNote: STT streaming (Zipformer) is always active for live mic.%s\n\n",
             color::dim, color::reset);
-    fprintf(stderr, "  %sSelect modality:%s  1 LLM  |  2 STT  |  3 TTS  |  4 MetalRT STT  |  q cancel\n  Choice: ",
+    fprintf(stderr, "  %sSelect modality:%s  1 LLM  |  2 STT  |  3 TTS  |  4 VLM  |  5 MetalRT STT  |  q cancel\n  Choice: ",
             color::bold, color::reset);
     fflush(stderr);
 
@@ -530,7 +626,8 @@ inline int cmd_models(const Args& args) {
     if (choice == 1 || choice == -2) return pick_llm(models_dir); // -2 (a) → LLM as first
     if (choice == 2) return pick_stt(models_dir);
     if (choice == 3) return pick_tts(models_dir);
-    if (choice == 4) return pick_metalrt_stt();
+    if (choice == 4) return pick_vlm(models_dir);
+    if (choice == 5) return pick_metalrt_stt();
 
     fprintf(stderr, "\n  Invalid choice.\n\n");
     return 1;
@@ -595,10 +692,20 @@ inline int cmd_info() {
         ? "MetalRT (Metal GPU — LLM, STT, TTS on-device)"
         : "llama.cpp + sherpa-onnx (ONNX Runtime)";
 
+    auto vlm_all_info = rcli::all_vlm_models();
+    auto [vlm_found, vlm_def] = rcli::find_installed_vlm(models_dir);
+    std::string vlm_info;
+    if (vlm_found) {
+        vlm_info = vlm_def.name + " (llama.cpp, Metal GPU)";
+    } else {
+        vlm_info = "not installed — run: rcli models vlm";
+    }
+
     fprintf(stdout,
         "\n%s%s  RCLI%s %s%s%s\n\n"
         "  %sEngine:%s       %s\n"
         "  %sLLM:%s          %s\n"
+        "  %sVLM:%s          %s\n"
         "  %sSTT:%s          %s\n"
         "  %sTTS:%s          %s\n"
         "  %sVAD:%s          Silero VAD\n"
@@ -610,6 +717,7 @@ inline int cmd_info() {
         color::dim, RA_VERSION, color::reset,
         color::bold, color::reset, engine_info.c_str(),
         color::bold, color::reset, llm_info.c_str(),
+        color::bold, color::reset, vlm_info.c_str(),
         color::bold, color::reset, stt_info.c_str(),
         color::bold, color::reset, tts_info.c_str(),
         color::bold, color::reset,
@@ -675,6 +783,25 @@ inline int cmd_info() {
         }
     }
     if (!any_tts) fprintf(stdout, "    (none — run: rcli setup)\n");
+    fprintf(stdout, "\n");
+
+    // Installed VLM
+    fprintf(stdout, "  %sInstalled VLM:%s\n", color::bold, color::reset);
+    bool any_vlm = false;
+    for (auto& m : vlm_all_info) {
+        if (rcli::is_vlm_model_installed(models_dir, m)) {
+            char size_str[32];
+            int total_mb = m.model_size_mb + m.mmproj_size_mb;
+            if (total_mb >= 1024)
+                snprintf(size_str, sizeof(size_str), "%.1f GB", total_mb / 1024.0);
+            else
+                snprintf(size_str, sizeof(size_str), "%d MB", total_mb);
+            fprintf(stdout, "    %-28s  %-7s  installed\n",
+                    m.name.c_str(), size_str);
+            any_vlm = true;
+        }
+    }
+    if (!any_vlm) fprintf(stdout, "    (none — run: rcli models vlm)\n");
     fprintf(stdout, "\n");
 
     return 0;

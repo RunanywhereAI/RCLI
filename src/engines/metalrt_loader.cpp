@@ -186,6 +186,22 @@ bool MetalRTLoader::load() {
     LOG_DEBUG("MetalRT", "TTS symbols: tts_create=%p tts_synthesize=%p tts_sample_rate=%p",
               (void*)tts_create, (void*)tts_synthesize, (void*)tts_sample_rate);
 
+    // Vision (VLM) symbols (optional)
+    vision_create        = resolve<CreateFn>("metalrt_vision_create");
+    vision_destroy       = resolve<DestroyFn>("metalrt_vision_destroy");
+    vision_load          = resolve<LoadFn>("metalrt_vision_load");
+    vision_analyze       = resolve<VisionAnalyzeFn>("metalrt_vision_analyze");
+    vision_analyze_stream = resolve<VisionAnalyzeStreamFn>("metalrt_vision_analyze_stream");
+    vision_generate      = resolve<VisionGenerateFn>("metalrt_vision_generate");
+    vision_generate_stream = resolve<VisionGenerateStreamFn>("metalrt_vision_generate_stream");
+    vision_reset         = resolve<ResetFn>("metalrt_vision_reset");
+    vision_model_name    = resolve<ModelNameFn>("metalrt_vision_model_name");
+    vision_device_name   = resolve<DeviceNameFn>("metalrt_vision_device_name");
+    vision_free_result   = resolve<VisionFreeResultFn>("metalrt_vision_free_result");
+
+    LOG_DEBUG("MetalRT", "VLM symbols: vision_create=%p vision_analyze=%p vision_stream=%p",
+              (void*)vision_create, (void*)vision_analyze, (void*)vision_analyze_stream);
+
     if (!fn_abi_version_ || !create || !destroy || !load_model || !generate) {
         LOG_ERROR("MetalRT", "dylib missing required LLM symbols: abi=%p create=%p destroy=%p load=%p gen=%p",
                   (void*)fn_abi_version_, (void*)create, (void*)destroy, (void*)load_model, (void*)generate);

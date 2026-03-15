@@ -262,6 +262,60 @@ const char* rcli_get_stt_model(RCLIHandle handle);
 // Both output pointers are optional (pass NULL to skip).
 void rcli_get_context_info(RCLIHandle handle, int* out_prompt_tokens, int* out_ctx_size);
 
+// --- VLM (Vision Language Model) ---
+
+// Initialize the VLM engine with the default VLM model.
+// Lazily downloads the model if not present. Thread-safe.
+// Returns 0 on success, -1 on failure.
+int rcli_vlm_init(RCLIHandle handle);
+
+// Analyze an image with an optional text prompt.
+// image_path: absolute path to an image file (jpg, png, bmp, gif, webp, tga).
+// prompt: text prompt (e.g. "Describe this image"). NULL defaults to "Describe this image in detail."
+// Returns the analysis text. Caller must NOT free the returned pointer.
+const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const char* prompt);
+
+// Check if the VLM engine is initialized and ready for image analysis.
+// Returns 1 if ready, 0 if not.
+int rcli_vlm_is_ready(RCLIHandle handle);
+
+// Get the name of the active VLM backend (e.g. "llama.cpp (Metal GPU)" or "MetalRT").
+// Returns "" if VLM is not initialized.
+const char* rcli_vlm_backend_name(RCLIHandle handle);
+
+// Get the name of the active VLM model (e.g. "Qwen3 VL 2B Instruct").
+// Returns "" if VLM is not initialized.
+const char* rcli_vlm_model_name(RCLIHandle handle);
+
+// VLM performance stats from the last analysis call.
+typedef struct {
+    double   gen_tok_per_sec;     // Generation tokens/second
+    int      generated_tokens;    // Total tokens generated
+    double   total_time_sec;      // Total wall time (image encode + prompt eval + generation)
+    double   image_encode_ms;     // Time to encode image through vision projector
+    double   first_token_ms;      // Time-to-first-token (prompt eval + image encode)
+} RCLIVlmStats;
+
+// Get stats from the last VLM analysis. Returns 0 on success.
+int rcli_vlm_get_stats(RCLIHandle handle, RCLIVlmStats* out_stats);
+
+// Swap MetalRT LLM out and VLM in on the GPU (for visual mode).
+// Unloads the LLM model, loads the MetalRT VLM model.
+// Returns 0 on success, -1 on failure.
+int rcli_vlm_enter(RCLIHandle handle);
+
+// Swap MetalRT VLM out and LLM back in on the GPU (exit visual mode).
+// Unloads the VLM model, reloads the LLM and re-caches the system prompt.
+// Returns 0 on success, -1 on failure.
+int rcli_vlm_exit(RCLIHandle handle);
+
+// Streaming VLM image analysis (use after rcli_vlm_enter).
+// Fires callback with events: "token", "response", "stats".
+// Returns 0 on success, -1 on failure.
+int rcli_vlm_analyze_stream(RCLIHandle handle, const char* image_path,
+                            const char* prompt,
+                            RCLIEventCallback callback, void* user_data);
+
 #ifdef __cplusplus
 }
 #endif
