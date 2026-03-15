@@ -21,8 +21,12 @@ echo ""
 rm -rf "$PROJECT_DIR/dist"
 mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
 
-# --- Collect binary ---
+# --- Collect binaries ---
 cp "$BUILD_DIR/rcli" "$DIST_DIR/bin/rcli"
+if [ -f "$BUILD_DIR/rcli_overlay" ]; then
+    cp "$BUILD_DIR/rcli_overlay" "$DIST_DIR/bin/rcli_overlay"
+    echo "  + bin/rcli_overlay"
+fi
 
 # --- Collect dylibs ---
 DYLIBS=(
@@ -148,6 +152,9 @@ done
 echo ""
 echo "Codesigning..."
 codesign --force --sign - "$BINARY"
+if [ -f "$DIST_DIR/bin/rcli_overlay" ]; then
+    codesign --force --sign - "$DIST_DIR/bin/rcli_overlay"
+fi
 for lib in "$DIST_DIR/lib/"*.dylib; do
     codesign --force --sign - "$lib"
 done

@@ -69,6 +69,7 @@ else
     rm -rf "$CELLAR" 2>/dev/null || sudo rm -rf "$CELLAR"
     mkdir -p "$CELLAR/bin" "$CELLAR/lib" 2>/dev/null || sudo mkdir -p "$CELLAR/bin" "$CELLAR/lib"
     cp "$WORKDIR"/rcli-*/bin/rcli "$CELLAR/bin/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/bin/rcli "$CELLAR/bin/"
+    cp "$WORKDIR"/rcli-*/bin/rcli_overlay "$CELLAR/bin/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/bin/rcli_overlay "$CELLAR/bin/" 2>/dev/null || true
     cp "$WORKDIR"/rcli-*/lib/*.dylib "$CELLAR/lib/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/lib/*.dylib "$CELLAR/lib/"
 
     brew link --overwrite "$FORMULA" 2>/dev/null || sudo brew link --overwrite "$FORMULA"
