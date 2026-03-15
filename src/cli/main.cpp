@@ -485,8 +485,10 @@ static int cmd_vlm(const Args& args) {
     // Initialize VLM
     fprintf(stderr, "%sInitializing VLM...%s\n", color::dim, color::reset);
     if (rcli_vlm_init(g_engine) != 0) {
-        fprintf(stderr, "%s%sError: Failed to initialize VLM engine%s\n",
-                color::bold, color::red, color::reset);
+        fprintf(stderr, "\n%s%s  VLM not available.%s\n\n", color::bold, color::red, color::reset);
+        fprintf(stderr, "  VLM requires the llama.cpp engine and a VLM model.\n");
+        fprintf(stderr, "  Switch engine:  %srcli engine llamacpp%s\n", color::bold, color::reset);
+        fprintf(stderr, "  Download model: %srcli models vlm%s\n\n", color::bold, color::reset);
         rcli_destroy(g_engine);
         return 1;
     }
@@ -545,8 +547,10 @@ static int cmd_camera(const Args& args) {
     if (!g_engine) return 1;
 
     if (rcli_vlm_init(g_engine) != 0) {
-        fprintf(stderr, "%s%sError: Failed to initialize VLM engine%s\n",
-                color::bold, color::red, color::reset);
+        fprintf(stderr, "\n%s%s  VLM not available.%s\n\n", color::bold, color::red, color::reset);
+        fprintf(stderr, "  VLM requires the llama.cpp engine and a VLM model.\n");
+        fprintf(stderr, "  Switch engine:  %srcli engine llamacpp%s\n", color::bold, color::reset);
+        fprintf(stderr, "  Download model: %srcli models vlm%s\n\n", color::bold, color::reset);
         rcli_destroy(g_engine);
         return 1;
     }
@@ -613,8 +617,10 @@ static int cmd_screen(const Args& args) {
     if (!g_engine) return 1;
 
     if (rcli_vlm_init(g_engine) != 0) {
-        fprintf(stderr, "%s%sError: Failed to initialize VLM engine%s\n",
-                color::bold, color::red, color::reset);
+        fprintf(stderr, "\n%s%s  VLM not available.%s\n\n", color::bold, color::red, color::reset);
+        fprintf(stderr, "  VLM requires the llama.cpp engine and a VLM model.\n");
+        fprintf(stderr, "  Switch engine:  %srcli engine llamacpp%s\n", color::bold, color::reset);
+        fprintf(stderr, "  Download model: %srcli models vlm%s\n\n", color::bold, color::reset);
         rcli_destroy(g_engine);
         return 1;
     }

@@ -347,26 +347,9 @@ inline std::vector<MetalRTComponentModel> metalrt_component_models() {
             "",
             true,
         },
-        {
-            "metalrt-qwen3-vl-2b",
-            "Qwen3-VL 2B (MLX 4-bit)",
-            "vlm",
-            "runanywhere/Qwen3-VL-2B-Instruct-4bit",
-            "",
-            "Qwen3-VL-2B-MLX-4bit",
-            1200,
-            "Qwen3 Vision-Language model for image understanding",
-            "",
-            true,
-        },
     };
 }
 
-inline bool is_metalrt_vlm_installed() {
-    std::string dir = metalrt_models_dir() + "/Qwen3-VL-2B-MLX-4bit";
-    std::string safetensors = dir + "/model.safetensors";
-    return access(safetensors.c_str(), R_OK) == 0;
-}
 
 inline bool is_metalrt_component_installed(const MetalRTComponentModel& m) {
     std::string dir = metalrt_models_dir() + "/" + m.dir_name;

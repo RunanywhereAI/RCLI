@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
 </p>
 
-**RCLI** is an on-device voice AI for macOS. A complete STT + LLM + TTS pipeline running natively on Apple Silicon — 38 macOS actions via voice, local RAG over your documents, sub-200ms end-to-end latency. No cloud, no API keys.
+**RCLI** is an on-device voice AI for macOS. A complete STT + LLM + TTS + VLM pipeline running natively on Apple Silicon — 40 macOS actions via voice, local RAG over your documents, on-device vision (camera & screen analysis), sub-200ms end-to-end latency. No cloud, no API keys.
 
 Powered by [MetalRT](#metalrt-gpu-engine), a proprietary GPU inference engine built by [RunAnywhere, Inc.](https://runanywhere.ai) specifically for Apple Silicon.
 
@@ -112,6 +112,9 @@ rcli                             # interactive TUI (push-to-talk + text)
 rcli listen                      # continuous voice mode
 rcli ask "open Safari"           # one-shot command
 rcli ask "play some jazz on Spotify"
+rcli vlm photo.jpg "what's in this image?"  # vision analysis
+rcli camera                      # live camera VLM
+rcli screen                      # screen capture VLM
 rcli metalrt                     # MetalRT GPU engine management
 rcli llamacpp                    # llama.cpp engine management
 ```
@@ -149,7 +152,18 @@ A full STT + LLM + TTS pipeline running on Metal GPU with three concurrent threa
 - **Tool Calling** — LLM-native tool call formats (Qwen3, LFM2, etc.)
 - **Multi-turn Memory** — Sliding window conversation history with token-budget trimming
 
-### 38 macOS Actions
+### Vision (VLM)
+
+Analyze images, camera captures, and screen regions using on-device vision-language models. VLM runs on the llama.cpp engine via Metal GPU — no cloud.
+
+- **Image Analysis** — `rcli vlm photo.jpg "describe this"` for single-image queries
+- **Camera** — Press **V** in the TUI or run `rcli camera` for live camera analysis
+- **Screen Capture** — Press **S** in the TUI or run `rcli screen` to analyze screen regions
+- **Models** — Qwen3 VL 2B, Liquid LFM2 VL 1.6B, SmolVLM 500M — download on demand via `rcli models vlm`
+
+> **Note:** VLM is currently available on the llama.cpp engine. MetalRT VLM support is coming soon.
+
+### 40 macOS Actions
 
 Control your Mac by voice or text. The LLM routes intent to actions executed locally via AppleScript and shell commands.
 
@@ -161,7 +175,7 @@ Control your Mac by voice or text. The LLM routes intent to actions executed loc
 | **System** | `open_app`, `quit_app`, `set_volume`, `toggle_dark_mode`, `screenshot`, `lock_screen` |
 | **Web** | `search_web`, `search_youtube`, `open_url`, `open_maps` |
 
-Run `rcli actions` to see all 38, or toggle them on/off in the TUI Actions panel.
+Run `rcli actions` to see all 40, or toggle them on/off in the TUI Actions panel.
 
 > **Tip:** If tool calling feels unreliable, press **X** in the TUI to clear the conversation and reset context. With small LLMs, accumulated context can degrade tool-calling accuracy — a fresh context often fixes it.
 
@@ -181,7 +195,9 @@ A terminal dashboard with push-to-talk, live hardware monitoring, model manageme
 | Key | Action |
 |-----|--------|
 | **SPACE** | Push-to-talk |
-| **M** | Models — browse, download, hot-swap LLM/STT/TTS |
+| **V** | Camera — capture and analyze with VLM |
+| **S** | Screen — capture and analyze a screen region with VLM |
+| **M** | Models — browse, download, hot-swap LLM/STT/TTS/VLM |
 | **A** | Actions — browse, enable/disable macOS actions |
 | **R** | RAG — ingest documents |
 | **X** | Clear conversation and reset context |
@@ -207,7 +223,7 @@ MetalRT is distributed under a [proprietary license](https://github.com/Runanywh
 
 ## Supported Models
 
-RCLI supports 20+ models across LLM, STT, TTS, VAD, and embeddings. All run locally on Apple Silicon. Use `rcli models` to browse, download, or switch.
+RCLI supports 20+ models across LLM, STT, TTS, VLM, VAD, and embeddings. All run locally on Apple Silicon. Use `rcli models` to browse, download, or switch.
 
 **LLM:** LFM2 1.2B (default), LFM2 350M, LFM2.5 1.2B, LFM2 2.6B, Qwen3 0.6B, Qwen3.5 0.8B/2B/4B, Qwen3 4B
 
@@ -215,10 +231,13 @@ RCLI supports 20+ models across LLM, STT, TTS, VAD, and embeddings. All run loca
 
 **TTS:** Piper Lessac/Amy, KittenTTS Nano, Matcha LJSpeech, Kokoro English/Multi-lang
 
-**Default install** (`rcli setup`): ~1GB — LFM2 1.2B + Whisper + Piper + Silero VAD + Snowflake embeddings.
+**VLM:** Qwen3 VL 2B, Liquid LFM2 VL 1.6B, SmolVLM 500M — on-demand download via `rcli models vlm` (llama.cpp engine only)
+
+**Default install** (`rcli setup`): ~1GB — LFM2 1.2B + Whisper + Piper + Silero VAD + Snowflake embeddings. VLM models are downloaded on demand.
 
 ```bash
 rcli models                  # interactive model management
+rcli models vlm              # download/manage VLM models
 rcli upgrade-llm             # guided LLM upgrade
 rcli voices                  # browse and switch TTS voices
 rcli cleanup                 # remove unused models
@@ -247,10 +266,13 @@ All dependencies are vendored or CMake-fetched. Requires CMake 3.15+ and Apple C
 rcli                          Interactive TUI (push-to-talk + text + trace)
 rcli listen                   Continuous voice mode
 rcli ask <text>               One-shot text command
+rcli vlm <image> [prompt]     Analyze an image with VLM
+rcli camera [prompt]          Live camera capture + VLM analysis
+rcli screen [prompt]          Screen capture + VLM analysis
 rcli actions [name]           List actions or show detail
 rcli rag ingest <dir>         Index documents for RAG
 rcli rag query <text>         Query indexed documents
-rcli models [llm|stt|tts]    Manage AI models
+rcli models [llm|stt|tts|vlm] Manage AI models
 rcli voices                   Manage TTS voices
 rcli metalrt                  MetalRT GPU engine management
 rcli llamacpp                 llama.cpp engine management

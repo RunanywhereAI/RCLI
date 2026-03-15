@@ -415,7 +415,7 @@ inline int pick_metalrt_stt() {
 inline int pick_vlm(const std::string& models_dir) {
     auto all = rcli::all_vlm_models();
 
-    fprintf(stderr, "\n  %s%s  VLM Models (Vision)%s\n\n", color::bold, color::orange, color::reset);
+    fprintf(stderr, "\n  %s%s  VLM Models (Vision \xC2\xB7 llama.cpp)%s\n\n", color::bold, color::orange, color::reset);
 
     fprintf(stderr, "    %s#  %-30s  %-12s  %s%s\n",
             color::bold, "Model", "Size", "Status", color::reset);

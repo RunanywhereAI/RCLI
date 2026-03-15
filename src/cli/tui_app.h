@@ -444,29 +444,22 @@ public:
                     run_camera_vlm("Describe what you see in this photo in detail.");
                     return true;
                 }
-                // S key: toggle visual mode (swap LLM ↔ VLM on GPU)
+                // S key: toggle visual mode (VLM only on llama.cpp engine)
                 if (c == "s" || c == "S") {
                     if (screen_capture_overlay_active()) {
                         screen_capture_hide_overlay();
-                        add_system_message("Exiting visual mode, restoring LLM...");
+                        add_system_message("Exiting visual mode...");
                         screen_->Post(Event::Custom);
                         std::thread([this]() {
                             rcli_vlm_exit(engine_);
-                            add_system_message("Visual mode OFF — LLM restored");
+                            add_system_message("Visual mode OFF");
                             screen_->Post(Event::Custom);
                         }).detach();
                     } else {
                         add_system_message("Entering visual mode, loading VLM...");
                         screen_->Post(Event::Custom);
                         std::thread([this]() {
-                            // Try MetalRT VLM first; if unavailable, lazily init llama.cpp VLM
-                            bool ready = false;
-                            if (rcli_vlm_enter(engine_) == 0) {
-                                ready = true;
-                            } else if (rcli_vlm_init(engine_) == 0) {
-                                ready = true;
-                            }
-                            if (ready) {
+                            if (rcli_vlm_init(engine_) == 0) {
                                 const char* vbe = rcli_vlm_backend_name(engine_);
                                 const char* vmodel = rcli_vlm_model_name(engine_);
                                 screen_capture_show_overlay(0, 0, 0, 0);
@@ -476,7 +469,7 @@ public:
                                 msg += ". Drag/resize the green frame, then ask a question";
                                 add_system_message(msg);
                             } else {
-                                add_system_message("Failed to load VLM model. Install one: rcli models vlm");
+                                add_system_message("VLM requires the llama.cpp engine. Switch with: rcli engine llamacpp, then download a model via [M] \xe2\x86\x92 VLM Models");
                             }
                             screen_->Post(Event::Custom);
                         }).detach();
@@ -1518,6 +1511,7 @@ private:
                 e.is_archive = false;
                 models_entries_.push_back(e);
             }
+
         } else {
             // ---- llama.cpp engine: show GGUF models only ----
             const auto* llm_active = rcli::resolve_active_model(dir, llm_all);
@@ -1564,7 +1558,7 @@ private:
 
             // VLM models (vision)
             auto vlm_all = rcli::all_vlm_models();
-            { ModelEntry h; h.name = "VLM Models (Vision)"; h.is_header = true; models_entries_.push_back(h); }
+            { ModelEntry h; h.name = "VLM Models (Vision \xC2\xB7 llama.cpp)"; h.is_header = true; models_entries_.push_back(h); }
             for (auto& m : vlm_all) {
                 ModelEntry e;
                 e.name = m.name; e.id = m.id; e.modality = "VLM";
@@ -2281,7 +2275,7 @@ private:
                     add_system_message(buf);
                 }
             } else {
-                add_response("(VLM analysis failed. Install a VLM model: rcli models vlm)", "");
+                add_response("(VLM not available. Requires llama.cpp engine and a VLM model. Use [M] → VLM Models to download.)", "");
             }
             voice_state_ = VoiceState::IDLE;
             {
@@ -2344,7 +2338,7 @@ private:
                     add_system_message(buf);
                 }
             } else {
-                add_response("(VLM analysis failed)", "");
+                add_response("(VLM not available. Requires llama.cpp engine and a VLM model. Use [M] → VLM Models to download.)", "");
             }
             voice_state_ = VoiceState::IDLE;
             screen_->Post(Event::Custom);
@@ -2587,7 +2581,7 @@ private:
                                 add_system_message(buf);
                             }
                         } else {
-                            add_response("(VLM analysis failed)", "");
+                            add_response("(VLM not available. Requires llama.cpp engine and a VLM model. Use [M] → VLM Models to download.)", "");
                         }
                         voice_state_ = VoiceState::IDLE;
                         screen_->Post(Event::Custom);

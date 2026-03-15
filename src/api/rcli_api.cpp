@@ -119,21 +119,9 @@ struct RCLIEngine {
     // VLM (Vision Language Model) subsystem
     VlmEngine vlm_engine;
     bool vlm_initialized = false;
-    bool using_metalrt_vlm = false;       // true when VLM is running on MetalRT backend
-    void* metalrt_vision_handle = nullptr; // opaque handle from metalrt_vision_create()
     std::string last_vlm_response;
     std::string vlm_backend_name;         // "llama.cpp (Metal GPU)" or "MetalRT"
     std::string vlm_model_name;           // e.g. "Qwen3 VL 2B"
-
-    // MetalRT VLM stats (filled after each analyze call)
-    struct {
-        double vision_encode_ms = 0;
-        double prefill_ms = 0;
-        double decode_ms = 0;
-        double tps = 0;
-        int prompt_tokens = 0;
-        int generated_tokens = 0;
-    } metalrt_vlm_stats;
 
     std::mutex mutex;
     bool initialized = false;
@@ -219,13 +207,6 @@ void rcli_destroy(RCLIHandle handle) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (engine->initialized) {
         engine->pipeline.stop_live();
-    }
-    // Destroy MetalRT vision handle if loaded
-    if (engine->metalrt_vision_handle) {
-        auto& loader = rastack::MetalRTLoader::instance();
-        if (loader.vision_destroy)
-            loader.vision_destroy(engine->metalrt_vision_handle);
-        engine->metalrt_vision_handle = nullptr;
     }
     delete engine;
 }
@@ -1083,8 +1064,9 @@ static std::string handle_screen_intent(RCLIEngine* engine, const std::string& u
     // Initialize VLM if needed
     if (!engine->vlm_initialized) {
         if (vlm_init_locked(engine) != 0) {
-            return "I can see you're asking about your screen, but the VLM model isn't available. "
-                   "Install one with: rcli models vlm";
+            return "I can see you're asking about your screen, but VLM isn't available. "
+                   "It requires the llama.cpp engine and a VLM model. "
+                   "Switch with: rcli engine llamacpp, then download a model: rcli models vlm";
         }
     }
 
@@ -1094,26 +1076,7 @@ static std::string handle_screen_intent(RCLIEngine* engine, const std::string& u
         vlm_prompt = "Describe what you see on this screen in detail.";
     }
 
-    std::string result;
-    if (engine->using_metalrt_vlm && engine->metalrt_vision_handle) {
-        auto& loader = rastack::MetalRTLoader::instance();
-        rastack::MetalRTLoader::MetalRTVisionOptions opts{};
-        opts.max_tokens = 512;
-        opts.top_k = 40;
-        opts.temperature = 0.0f;
-        opts.think = false;
-
-        rastack::MetalRTLoader::MetalRTVisionResult vr;
-        {
-            std::lock_guard<std::mutex> gpu_lock(loader.gpu_mutex());
-            vr = loader.vision_analyze(engine->metalrt_vision_handle,
-                                        path.c_str(), vlm_prompt.c_str(), &opts);
-        }
-        result = vr.response ? std::string(vr.response) : (vr.text ? std::string(vr.text) : "");
-        if (loader.vision_free_result) loader.vision_free_result(vr);
-    } else {
-        result = engine->vlm_engine.analyze_image(path, vlm_prompt, nullptr);
-    }
+    std::string result = engine->vlm_engine.analyze_image(path, vlm_prompt, nullptr);
 
     if (result.empty()) {
         return "I captured your screen but the analysis failed. Please try again.";
@@ -3020,33 +2983,11 @@ static bool safe_download(const std::string& url, const std::string& dest) {
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static bool download_vlm_model(const std::string& url, const std::string& dest) {
-    // Check if already exists
-    if (access(dest.c_str(), R_OK) == 0) return true;
-
-    LOG_INFO("VLM", "Downloading: %s", dest.c_str());
-
-    // Ensure parent directory exists
-    std::string dir = dest.substr(0, dest.rfind('/'));
-    if (!mkdirs(dir)) {
-        LOG_ERROR("VLM", "Failed to create directory: %s", dir.c_str());
-        return false;
-    }
-
-    // Download with curl (no shell interpolation)
-    if (!safe_download(url, dest)) {
-        LOG_ERROR("VLM", "Download failed");
-        unlink(dest.c_str());
-        return false;
-    }
-    return true;
-}
-
 // Internal init (caller must hold engine->mutex)
+// VLM is only available on the llama.cpp engine. MetalRT VLM support coming soon.
 static int vlm_init_locked(RCLIEngine* engine) {
     if (engine->vlm_initialized) return 0;
 
-    // Fallback to default models dir if not set
     if (engine->models_dir.empty()) {
         if (const char* home = getenv("HOME"))
             engine->models_dir = std::string(home) + "/Library/RCLI/models";
@@ -3054,62 +2995,17 @@ static int vlm_init_locked(RCLIEngine* engine) {
             engine->models_dir = "./models";
     }
 
-    // --- Try MetalRT vision backend first (if dylib loaded and VLM model installed) ---
-    auto& mrt_loader = rastack::MetalRTLoader::instance();
-    if (mrt_loader.is_loaded() && mrt_loader.has_vision()) {
-        std::string vlm_dir = rcli::metalrt_models_dir() + "/Qwen3-VL-2B-MLX-4bit";
-        std::string safetensors = vlm_dir + "/model.safetensors";
-
-        // Auto-download VLM model if not installed
-        if (access(safetensors.c_str(), R_OK) != 0) {
-            LOG_INFO("VLM", "MetalRT VLM model not found, downloading...");
-            std::string hf_base = "https://huggingface.co/runanywhere/Qwen3-VL-2B-Instruct-4bit/resolve/main/";
-            std::string dl_cmd = "bash -c '"
-                "set -e; mkdir -p \"" + vlm_dir + "\"; "
-                "curl -fL -# -o \"" + vlm_dir + "/config.json\" \"" + hf_base + "config.json\"; "
-                "curl -fL -# -o \"" + vlm_dir + "/model.safetensors\" \"" + hf_base + "model.safetensors\"; "
-                "curl -fL -# -o \"" + vlm_dir + "/tokenizer.json\" \"" + hf_base + "tokenizer.json\"; "
-                "'";
-            if (system(dl_cmd.c_str()) != 0) {
-                LOG_WARN("VLM", "MetalRT VLM model download failed");
-            }
-        }
-
-        if (access(safetensors.c_str(), R_OK) == 0) {
-            LOG_INFO("VLM", "MetalRT VLM model found at %s", vlm_dir.c_str());
-            void* handle = mrt_loader.vision_create();
-            if (handle) {
-                std::lock_guard<std::mutex> gpu_lock(mrt_loader.gpu_mutex());
-                if (mrt_loader.vision_load(handle, vlm_dir.c_str())) {
-                    engine->metalrt_vision_handle = handle;
-                    engine->using_metalrt_vlm = true;
-                    engine->vlm_initialized = true;
-                    const char* mname = mrt_loader.vision_model_name
-                        ? mrt_loader.vision_model_name(handle) : "Qwen3-VL-2B";
-                    engine->vlm_backend_name = "MetalRT";
-                    engine->vlm_model_name = mname;
-                    LOG_INFO("VLM", "MetalRT VLM engine ready (%s)", mname);
-                    return 0;
-                }
-                LOG_WARN("VLM", "MetalRT vision_load failed, falling back to llama.cpp");
-                mrt_loader.vision_destroy(handle);
-            }
-        }
+    // VLM requires the llama.cpp engine
+    if (engine->initialized && engine->pipeline.using_metalrt()) {
+        LOG_ERROR("VLM", "VLM is currently available with the llama.cpp engine. Switch with: rcli engine llamacpp");
+        return -1;
     }
 
-    // --- Fallback: llama.cpp VLM backend ---
-    // MetalRT dylib either not loaded, or doesn't export vision symbols yet.
-    // Use llama.cpp with GGUF models — still runs on Metal GPU via ggml-metal.
-    if (mrt_loader.is_loaded() && !mrt_loader.has_vision()) {
-        LOG_INFO("VLM", "MetalRT engine active but VLM not yet supported in dylib — using llama.cpp for vision");
-    }
-
-    // Find or download VLM model
+    // Check if any VLM model is installed (on-demand, no auto-download)
     auto vlm_models = rcli::all_vlm_models();
     rcli::VlmModelDef model_def;
     bool found = false;
 
-    // Check if any VLM model is installed
     for (auto& m : vlm_models) {
         if (rcli::is_vlm_model_installed(engine->models_dir, m)) {
             model_def = m;
@@ -3118,23 +3014,12 @@ static int vlm_init_locked(RCLIEngine* engine) {
         }
     }
 
-    // If no model installed, download default
     if (!found) {
-        auto [has_default, def] = rcli::get_default_vlm_model();
-        if (!has_default) {
-            LOG_ERROR("VLM", "No VLM model defined in registry");
-            return -1;
-        }
-        model_def = def;
-
-        std::string model_path = engine->models_dir + "/" + model_def.model_filename;
-        std::string mmproj_path = engine->models_dir + "/" + model_def.mmproj_filename;
-
-        if (!download_vlm_model(model_def.model_url, model_path)) return -1;
-        if (!download_vlm_model(model_def.mmproj_url, mmproj_path)) return -1;
+        LOG_ERROR("VLM", "No VLM model installed. Download one with: rcli models vlm");
+        return -1;
     }
 
-    // Initialize VLM engine
+    // Initialize VLM engine with the installed model
     VlmConfig config;
     config.model_path  = engine->models_dir + "/" + model_def.model_filename;
     config.mmproj_path = engine->models_dir + "/" + model_def.mmproj_filename;
@@ -3151,7 +3036,6 @@ static int vlm_init_locked(RCLIEngine* engine) {
     }
 
     engine->vlm_initialized = true;
-    engine->using_metalrt_vlm = false;
     engine->vlm_backend_name = "llama.cpp (Metal GPU)";
     engine->vlm_model_name = model_def.name;
     LOG_INFO("VLM", "VLM engine ready — %s via llama.cpp (Metal GPU)", model_def.name.c_str());
@@ -3172,7 +3056,7 @@ const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const ch
 
     if (!engine->vlm_initialized) {
         if (vlm_init_locked(engine) != 0) {
-            engine->last_vlm_response = "Error: VLM engine failed to initialize.";
+            engine->last_vlm_response = "VLM not available. Requires llama.cpp engine (rcli engine llamacpp) and a VLM model (rcli models vlm).";
             return engine->last_vlm_response.c_str();
         }
     }
@@ -3181,49 +3065,7 @@ const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const ch
         ? std::string(prompt)
         : "Describe this image in detail.";
 
-    if (engine->using_metalrt_vlm && engine->metalrt_vision_handle) {
-        // MetalRT vision backend — stream tokens to build result
-        auto& loader = rastack::MetalRTLoader::instance();
-        std::string accumulated;
-
-        rastack::MetalRTLoader::MetalRTVisionOptions opts{};
-        opts.max_tokens = 512;
-        opts.top_k = 40;
-        opts.temperature = 0.0f;
-        opts.think = false;
-
-        rastack::MetalRTStreamCb stream_cb = [](const char* piece, void* ud) -> bool {
-            auto* out = static_cast<std::string*>(ud);
-            out->append(piece);
-            return true;
-        };
-
-        rastack::MetalRTLoader::MetalRTVisionResult vr;
-        {
-            std::lock_guard<std::mutex> gpu_lock(loader.gpu_mutex());
-            vr = loader.vision_analyze_stream(engine->metalrt_vision_handle,
-                                               image_path, text_prompt.c_str(),
-                                               stream_cb, &accumulated, &opts);
-        }
-
-        // Store stats
-        engine->metalrt_vlm_stats.vision_encode_ms = vr.vision_encode_ms;
-        engine->metalrt_vlm_stats.prefill_ms = vr.prefill_ms;
-        engine->metalrt_vlm_stats.decode_ms = vr.decode_ms;
-        engine->metalrt_vlm_stats.tps = vr.tps;
-        engine->metalrt_vlm_stats.prompt_tokens = vr.prompt_tokens;
-        engine->metalrt_vlm_stats.generated_tokens = vr.generated_tokens;
-
-        std::string result = vr.response ? std::string(vr.response) : accumulated;
-        if (loader.vision_free_result) loader.vision_free_result(vr);
-
-        if (result.empty()) {
-            engine->last_vlm_response = "Error: Failed to analyze image.";
-        } else {
-            engine->last_vlm_response = result;
-        }
-    } else {
-        // llama.cpp VLM backend
+    {
         std::string result = engine->vlm_engine.analyze_image(
             std::string(image_path), text_prompt, nullptr);
 
@@ -3259,21 +3101,12 @@ int rcli_vlm_get_stats(RCLIHandle handle, RCLIVlmStats* out_stats) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->vlm_initialized) return -1;
 
-    if (engine->using_metalrt_vlm) {
-        auto& s = engine->metalrt_vlm_stats;
-        out_stats->gen_tok_per_sec  = s.tps;
-        out_stats->generated_tokens = s.generated_tokens;
-        out_stats->total_time_sec   = (s.vision_encode_ms + s.prefill_ms + s.decode_ms) / 1000.0;
-        out_stats->image_encode_ms  = s.vision_encode_ms;
-        out_stats->first_token_ms   = s.prefill_ms;
-    } else {
-        auto& s = engine->vlm_engine.last_stats();
-        out_stats->gen_tok_per_sec  = s.gen_tps();
-        out_stats->generated_tokens = static_cast<int>(s.generated_tokens);
-        out_stats->total_time_sec   = (s.image_encode_us + s.generation_us) / 1e6;
-        out_stats->image_encode_ms  = s.image_encode_us / 1000.0;
-        out_stats->first_token_ms   = s.first_token_us / 1000.0;
-    }
+    auto& s = engine->vlm_engine.last_stats();
+    out_stats->gen_tok_per_sec  = s.gen_tps();
+    out_stats->generated_tokens = static_cast<int>(s.generated_tokens);
+    out_stats->total_time_sec   = (s.image_encode_us + s.generation_us) / 1e6;
+    out_stats->image_encode_ms  = s.image_encode_us / 1000.0;
+    out_stats->first_token_ms   = s.first_token_us / 1000.0;
     return 0;
 }
 
@@ -3286,49 +3119,8 @@ int rcli_vlm_enter(RCLIHandle handle) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     std::lock_guard<std::mutex> lock(engine->mutex);
 
-    // Already in VLM mode?
-    if (engine->using_metalrt_vlm && engine->metalrt_vision_handle) return 0;
-
-    auto& loader = rastack::MetalRTLoader::instance();
-    if (!loader.is_loaded() || !loader.has_vision()) return -1;
-
-    // Check VLM model is installed
-    std::string vlm_dir = rcli::metalrt_models_dir() + "/Qwen3-VL-2B-MLX-4bit";
-    if (access((vlm_dir + "/model.safetensors").c_str(), R_OK) != 0) {
-        LOG_ERROR("VLM", "MetalRT VLM model not installed at %s", vlm_dir.c_str());
-        return -1;
-    }
-
-    // Unload MetalRT LLM to free GPU
-    if (engine->pipeline.using_metalrt()) {
-        LOG_INFO("VLM", "Unloading MetalRT LLM to make room for VLM...");
-        engine->pipeline.metalrt_llm().shutdown();
-    }
-
-    // Load MetalRT VLM
-    void* vhandle = loader.vision_create();
-    if (!vhandle) {
-        LOG_ERROR("VLM", "vision_create() failed");
-        // Try to restore LLM
-        engine->pipeline.metalrt_llm().init(engine->pipeline.config().metalrt);
-        return -1;
-    }
-
-    {
-        std::lock_guard<std::mutex> gpu_lock(loader.gpu_mutex());
-        if (!loader.vision_load(vhandle, vlm_dir.c_str())) {
-            LOG_ERROR("VLM", "vision_load() failed");
-            loader.vision_destroy(vhandle);
-            engine->pipeline.metalrt_llm().init(engine->pipeline.config().metalrt);
-            return -1;
-        }
-    }
-
-    engine->metalrt_vision_handle = vhandle;
-    engine->using_metalrt_vlm = true;
-    engine->vlm_initialized = true;
-    LOG_INFO("VLM", "MetalRT VLM loaded (LLM swapped out)");
-    return 0;
+    if (engine->vlm_initialized) return 0;
+    return vlm_init_locked(engine);
 }
 
 int rcli_vlm_exit(RCLIHandle handle) {
@@ -3336,43 +3128,14 @@ int rcli_vlm_exit(RCLIHandle handle) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     std::lock_guard<std::mutex> lock(engine->mutex);
 
-    // Unload MetalRT VLM if active
-    if (engine->metalrt_vision_handle) {
-        auto& loader = rastack::MetalRTLoader::instance();
-        if (loader.vision_destroy)
-            loader.vision_destroy(engine->metalrt_vision_handle);
-        engine->metalrt_vision_handle = nullptr;
-    }
-
-    // Shutdown llama.cpp VLM if it was the active backend
-    if (!engine->using_metalrt_vlm && engine->vlm_engine.is_initialized()) {
+    if (engine->vlm_engine.is_initialized()) {
         engine->vlm_engine.shutdown();
     }
 
-    engine->using_metalrt_vlm = false;
     engine->vlm_initialized = false;
     engine->vlm_backend_name.clear();
     engine->vlm_model_name.clear();
     LOG_INFO("VLM", "VLM unloaded");
-
-    // Reload MetalRT LLM
-    if (engine->pipeline.using_metalrt()) {
-        auto& mrt = engine->pipeline.metalrt_llm();
-        const auto& cfg = engine->pipeline.config();
-        if (mrt.init(cfg.metalrt)) {
-            // Re-cache system prompt
-            std::string sys = mrt.profile().build_tool_system_prompt(
-                cfg.system_prompt, engine->pipeline.tools().get_tool_definitions_json());
-            std::string prefix = mrt.profile().build_system_prefix(sys);
-            mrt.cache_system_prompt(prefix);
-            mrt.set_system_prompt(sys);
-            engine->metalrt_kv_continuation_len = 0;
-            LOG_INFO("VLM", "MetalRT LLM restored");
-        } else {
-            LOG_ERROR("VLM", "Failed to restore MetalRT LLM!");
-            return -1;
-        }
-    }
     return 0;
 }
 
@@ -3394,85 +3157,29 @@ int rcli_vlm_analyze_stream(RCLIHandle handle, const char* image_path,
     std::string text_prompt = (prompt && prompt[0])
         ? std::string(prompt) : "Describe this image in detail.";
 
-    if (engine->using_metalrt_vlm && engine->metalrt_vision_handle) {
-        // --- MetalRT VLM streaming path ---
-        auto& loader = rastack::MetalRTLoader::instance();
-        std::string accumulated;
-
-        struct StreamCtx {
-            RCLIEventCallback cb;
-            void* ud;
-            std::string* accum;
+    // llama.cpp VLM streaming path
+    rastack::TokenCallback token_cb = nullptr;
+    if (callback) {
+        token_cb = [callback, user_data](const rastack::TokenOutput& tok) {
+            if (!tok.text.empty()) {
+                callback("token", tok.text.c_str(), user_data);
+            }
         };
-        StreamCtx sctx{callback, user_data, &accumulated};
+    }
 
-        rastack::MetalRTStreamCb stream_cb = [](const char* piece, void* ud) -> bool {
-            auto* ctx = static_cast<StreamCtx*>(ud);
-            if (std::strstr(piece, "<|im_end|>") || std::strstr(piece, "<|im_start|>"))
-                return true;
-            ctx->accum->append(piece);
-            if (ctx->cb) ctx->cb("token", piece, ctx->ud);
-            return true;
-        };
+    std::string result = engine->vlm_engine.analyze_image(
+        std::string(image_path), text_prompt, token_cb);
 
-        rastack::MetalRTLoader::MetalRTVisionOptions opts{};
-        opts.max_tokens = 512;
-        opts.top_k = 40;
-        opts.temperature = 0.0f;
-        opts.think = false;
+    engine->last_vlm_response = result.empty() ? "Error: Failed to analyze image." : result;
 
-        rastack::MetalRTLoader::MetalRTVisionResult vr;
-        {
-            std::lock_guard<std::mutex> gpu_lock(loader.gpu_mutex());
-            vr = loader.vision_analyze_stream(engine->metalrt_vision_handle,
-                                               image_path, text_prompt.c_str(),
-                                               stream_cb, &sctx, &opts);
-        }
-
-        engine->metalrt_vlm_stats.vision_encode_ms = vr.vision_encode_ms;
-        engine->metalrt_vlm_stats.prefill_ms = vr.prefill_ms;
-        engine->metalrt_vlm_stats.decode_ms = vr.decode_ms;
-        engine->metalrt_vlm_stats.tps = vr.tps;
-        engine->metalrt_vlm_stats.prompt_tokens = vr.prompt_tokens;
-        engine->metalrt_vlm_stats.generated_tokens = vr.generated_tokens;
-
-        std::string result = vr.response ? std::string(vr.response) : accumulated;
-        if (loader.vision_free_result) loader.vision_free_result(vr);
-        engine->last_vlm_response = result.empty() ? "Error: Failed to analyze image." : result;
-
-        if (callback) {
-            callback("response", engine->last_vlm_response.c_str(), user_data);
-            char stats_buf[256];
-            snprintf(stats_buf, sizeof(stats_buf),
-                     "{\"tps\":%.1f,\"tokens\":%d,\"vision_encode_ms\":%.1f}",
-                     vr.tps, vr.generated_tokens, vr.vision_encode_ms);
-            callback("stats", stats_buf, user_data);
-        }
-    } else {
-        // --- llama.cpp VLM streaming path ---
-        rastack::TokenCallback token_cb = nullptr;
-        if (callback) {
-            token_cb = [callback, user_data](const rastack::TokenOutput& tok) {
-                if (!tok.text.empty()) {
-                    callback("token", tok.text.c_str(), user_data);
-                }
-            };
-        }
-
-        std::string result = engine->vlm_engine.analyze_image(
-            std::string(image_path), text_prompt, token_cb);
-
-        engine->last_vlm_response = result.empty() ? "Error: Failed to analyze image." : result;
-
-        if (callback) {
-            callback("response", engine->last_vlm_response.c_str(), user_data);
-            auto& s = engine->vlm_engine.last_stats();
-            char stats_buf[256];
-            snprintf(stats_buf, sizeof(stats_buf),
-                     "{\"tps\":%.1f,\"tokens\":%lld,\"vision_encode_ms\":%.1f}",
-                     s.gen_tps(), s.generated_tokens, s.image_encode_us / 1000.0);
-            callback("stats", stats_buf, user_data);
-        }
+    if (callback) {
+        callback("response", engine->last_vlm_response.c_str(), user_data);
+        auto& s = engine->vlm_engine.last_stats();
+        char stats_buf[256];
+        snprintf(stats_buf, sizeof(stats_buf),
+                 "{\"tps\":%.1f,\"tokens\":%lld,\"vision_encode_ms\":%.1f}",
+                 s.gen_tps(), s.generated_tokens, s.image_encode_us / 1000.0);
+        callback("stats", stats_buf, user_data);
     }
 
     return engine->last_vlm_response.find("Error:") == 0 ? -1 : 0;
