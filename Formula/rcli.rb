@@ -12,6 +12,7 @@ class Rcli < Formula
   def install
     bin.install "bin/rcli"
     bin.install "bin/rcli_overlay" if File.exist? "bin/rcli_overlay"
+    bin.install "bin/rcli_camera_preview" if File.exist? "bin/rcli_camera_preview"
     lib.install Dir["lib/*.dylib"]
   end
 

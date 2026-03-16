@@ -41,6 +41,7 @@ extern char** environ;
 #include "actions/action_registry.h"
 #include "actions/macos_actions.h"
 #include "engines/vlm_engine.h"
+#include "engines/metalrt_vlm_engine.h"
 #include "models/vlm_model_registry.h"
 
 using namespace rastack;
@@ -117,10 +118,12 @@ struct RCLIEngine {
     int ctx_main_prompt_tokens = 0;
 
     // VLM (Vision Language Model) subsystem
-    VlmEngine vlm_engine;
+    VlmEngine vlm_engine;                 // llama.cpp backend
+    MetalRTVlmEngine metalrt_vlm_engine;  // MetalRT backend
     bool vlm_initialized = false;
+    bool vlm_use_metalrt = false;         // which backend is active
     std::string last_vlm_response;
-    std::string vlm_backend_name;         // "llama.cpp (Metal GPU)" or "MetalRT"
+    std::string vlm_backend_name;         // "llama.cpp (Metal GPU)" or "MetalRT (Metal GPU)"
     std::string vlm_model_name;           // e.g. "Qwen3 VL 2B"
 
     std::mutex mutex;
@@ -1065,8 +1068,7 @@ static std::string handle_screen_intent(RCLIEngine* engine, const std::string& u
     if (!engine->vlm_initialized) {
         if (vlm_init_locked(engine) != 0) {
             return "I can see you're asking about your screen, but VLM isn't available. "
-                   "It requires the llama.cpp engine and a VLM model. "
-                   "Switch with: rcli engine llamacpp, then download a model: rcli models vlm";
+                   "Download a VLM model with: rcli models vlm";
         }
     }
 
@@ -1076,7 +1078,12 @@ static std::string handle_screen_intent(RCLIEngine* engine, const std::string& u
         vlm_prompt = "Describe what you see on this screen in detail.";
     }
 
-    std::string result = engine->vlm_engine.analyze_image(path, vlm_prompt, nullptr);
+    std::string result;
+    if (engine->vlm_use_metalrt) {
+        result = engine->metalrt_vlm_engine.analyze_image(path, vlm_prompt);
+    } else {
+        result = engine->vlm_engine.analyze_image(path, vlm_prompt, nullptr);
+    }
 
     if (result.empty()) {
         return "I captured your screen but the analysis failed. Please try again.";
@@ -2983,8 +2990,47 @@ static bool safe_download(const std::string& url, const std::string& dest) {
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+// Find a MetalRT VLM model directory (MLX-format weights).
+// Searches HuggingFace cache for known models.
+static std::string find_metalrt_vlm_model_dir() {
+    const char* home = getenv("HOME");
+    if (!home) return "";
+
+    static const char* hf_repos[] = {
+        "models--mlx-community--Qwen3-VL-2B-Instruct-4bit",
+        "models--mlx-community--LFM2.5-VL-1.6B-MLX-6bit",
+    };
+
+    struct stat st;
+    std::string hf_base = std::string(home) + "/.cache/huggingface/hub";
+
+    for (const char* repo : hf_repos) {
+        std::string snapshots_dir = hf_base + "/" + repo + "/snapshots";
+        if (stat(snapshots_dir.c_str(), &st) != 0) continue;
+
+        FILE* p = popen(("ls -1t '" + snapshots_dir + "' 2>/dev/null | head -1").c_str(), "r");
+        if (!p) continue;
+        char buf[256];
+        if (!fgets(buf, sizeof(buf), p)) { pclose(p); continue; }
+        pclose(p);
+
+        std::string snap(buf);
+        while (!snap.empty() && (snap.back() == '\n' || snap.back() == '\r'))
+            snap.pop_back();
+        if (snap.empty()) continue;
+
+        std::string model_dir = snapshots_dir + "/" + snap;
+        std::string safetensors = model_dir + "/model.safetensors";
+        if (stat(safetensors.c_str(), &st) == 0) {
+            LOG_DEBUG("VLM", "Found MetalRT VLM model at %s", model_dir.c_str());
+            return model_dir;
+        }
+    }
+
+    return "";
+}
+
 // Internal init (caller must hold engine->mutex)
-// VLM is only available on the llama.cpp engine. MetalRT VLM support coming soon.
 static int vlm_init_locked(RCLIEngine* engine) {
     if (engine->vlm_initialized) return 0;
 
@@ -2995,13 +3041,34 @@ static int vlm_init_locked(RCLIEngine* engine) {
             engine->models_dir = "./models";
     }
 
-    // VLM requires the llama.cpp engine
+    // --- Try MetalRT VLM backend first (when on MetalRT engine) ---
     if (engine->initialized && engine->pipeline.using_metalrt()) {
-        LOG_ERROR("VLM", "VLM is currently available with the llama.cpp engine. Switch with: rcli engine llamacpp");
-        return -1;
+        auto& loader = MetalRTLoader::instance();
+        if (loader.is_loaded() && loader.has_vision()) {
+            std::string model_dir = find_metalrt_vlm_model_dir();
+            if (!model_dir.empty()) {
+                MetalRTVlmConfig mrt_config;
+                mrt_config.model_dir = model_dir;
+                if (engine->metalrt_vlm_engine.init(mrt_config)) {
+                    engine->vlm_initialized = true;
+                    engine->vlm_use_metalrt = true;
+                    engine->vlm_backend_name = "MetalRT (Metal GPU)";
+                    engine->vlm_model_name = engine->metalrt_vlm_engine.model_name();
+                    if (engine->vlm_model_name.empty())
+                        engine->vlm_model_name = "Qwen3 VL 2B";
+                    LOG_INFO("VLM", "VLM engine ready — %s via MetalRT (Metal GPU)",
+                             engine->vlm_model_name.c_str());
+                    return 0;
+                }
+                LOG_WARN("VLM", "MetalRT VLM init failed, falling back to llama.cpp");
+            } else {
+                LOG_WARN("VLM", "No MetalRT VLM model found in HF cache, falling back to llama.cpp");
+            }
+        }
+        // Fall through to llama.cpp instead of hard-failing
     }
 
-    // Check if any VLM model is installed (on-demand, no auto-download)
+    // --- llama.cpp VLM backend ---
     auto vlm_models = rcli::all_vlm_models();
     rcli::VlmModelDef model_def;
     bool found = false;
@@ -3019,7 +3086,6 @@ static int vlm_init_locked(RCLIEngine* engine) {
         return -1;
     }
 
-    // Initialize VLM engine with the installed model
     VlmConfig config;
     config.model_path  = engine->models_dir + "/" + model_def.model_filename;
     config.mmproj_path = engine->models_dir + "/" + model_def.mmproj_filename;
@@ -3036,6 +3102,7 @@ static int vlm_init_locked(RCLIEngine* engine) {
     }
 
     engine->vlm_initialized = true;
+    engine->vlm_use_metalrt = false;
     engine->vlm_backend_name = "llama.cpp (Metal GPU)";
     engine->vlm_model_name = model_def.name;
     LOG_INFO("VLM", "VLM engine ready — %s via llama.cpp (Metal GPU)", model_def.name.c_str());
@@ -3056,7 +3123,7 @@ const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const ch
 
     if (!engine->vlm_initialized) {
         if (vlm_init_locked(engine) != 0) {
-            engine->last_vlm_response = "VLM not available. Requires llama.cpp engine (rcli engine llamacpp) and a VLM model (rcli models vlm).";
+            engine->last_vlm_response = "VLM not available. Download a VLM model with: rcli models vlm";
             return engine->last_vlm_response.c_str();
         }
     }
@@ -3065,16 +3132,17 @@ const char* rcli_vlm_analyze(RCLIHandle handle, const char* image_path, const ch
         ? std::string(prompt)
         : "Describe this image in detail.";
 
-    {
-        std::string result = engine->vlm_engine.analyze_image(
+    std::string result;
+    if (engine->vlm_use_metalrt) {
+        result = engine->metalrt_vlm_engine.analyze_image(
+            std::string(image_path), text_prompt);
+    } else {
+        result = engine->vlm_engine.analyze_image(
             std::string(image_path), text_prompt, nullptr);
-
-        if (result.empty()) {
-            engine->last_vlm_response = "Error: Failed to analyze image.";
-        } else {
-            engine->last_vlm_response = result;
-        }
     }
+
+    engine->last_vlm_response = result.empty()
+        ? "Error: Failed to analyze image." : result;
     return engine->last_vlm_response.c_str();
 }
 
@@ -3101,12 +3169,21 @@ int rcli_vlm_get_stats(RCLIHandle handle, RCLIVlmStats* out_stats) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     if (!engine->vlm_initialized) return -1;
 
-    auto& s = engine->vlm_engine.last_stats();
-    out_stats->gen_tok_per_sec  = s.gen_tps();
-    out_stats->generated_tokens = static_cast<int>(s.generated_tokens);
-    out_stats->total_time_sec   = (s.image_encode_us + s.generation_us) / 1e6;
-    out_stats->image_encode_ms  = s.image_encode_us / 1000.0;
-    out_stats->first_token_ms   = s.first_token_us / 1000.0;
+    if (engine->vlm_use_metalrt) {
+        auto& s = engine->metalrt_vlm_engine.last_stats();
+        out_stats->gen_tok_per_sec  = s.tps;
+        out_stats->generated_tokens = s.generated_tokens;
+        out_stats->total_time_sec   = (s.vision_encode_ms + s.prefill_ms + s.decode_ms) / 1000.0;
+        out_stats->image_encode_ms  = s.vision_encode_ms;
+        out_stats->first_token_ms   = s.prefill_ms;
+    } else {
+        auto& s = engine->vlm_engine.last_stats();
+        out_stats->gen_tok_per_sec  = s.gen_tps();
+        out_stats->generated_tokens = static_cast<int>(s.generated_tokens);
+        out_stats->total_time_sec   = (s.image_encode_us + s.generation_us) / 1e6;
+        out_stats->image_encode_ms  = s.image_encode_us / 1000.0;
+        out_stats->first_token_ms   = s.first_token_us / 1000.0;
+    }
     return 0;
 }
 
@@ -3128,11 +3205,16 @@ int rcli_vlm_exit(RCLIHandle handle) {
     auto* engine = static_cast<RCLIEngine*>(handle);
     std::lock_guard<std::mutex> lock(engine->mutex);
 
-    if (engine->vlm_engine.is_initialized()) {
-        engine->vlm_engine.shutdown();
+    if (engine->vlm_use_metalrt) {
+        if (engine->metalrt_vlm_engine.is_initialized())
+            engine->metalrt_vlm_engine.shutdown();
+    } else {
+        if (engine->vlm_engine.is_initialized())
+            engine->vlm_engine.shutdown();
     }
 
     engine->vlm_initialized = false;
+    engine->vlm_use_metalrt = false;
     engine->vlm_backend_name.clear();
     engine->vlm_model_name.clear();
     LOG_INFO("VLM", "VLM unloaded");
@@ -3157,29 +3239,58 @@ int rcli_vlm_analyze_stream(RCLIHandle handle, const char* image_path,
     std::string text_prompt = (prompt && prompt[0])
         ? std::string(prompt) : "Describe this image in detail.";
 
-    // llama.cpp VLM streaming path
-    rastack::TokenCallback token_cb = nullptr;
-    if (callback) {
-        token_cb = [callback, user_data](const rastack::TokenOutput& tok) {
-            if (!tok.text.empty()) {
-                callback("token", tok.text.c_str(), user_data);
-            }
-        };
-    }
+    std::string result;
 
-    std::string result = engine->vlm_engine.analyze_image(
-        std::string(image_path), text_prompt, token_cb);
+    if (engine->vlm_use_metalrt) {
+        // MetalRT VLM streaming path
+        rastack::TokenCallback token_cb = nullptr;
+        if (callback) {
+            token_cb = [callback, user_data](const rastack::TokenOutput& tok) {
+                if (!tok.text.empty()) {
+                    callback("token", tok.text.c_str(), user_data);
+                }
+            };
+        }
+
+        result = engine->metalrt_vlm_engine.analyze_image_stream(
+            std::string(image_path), text_prompt, token_cb);
+
+        if (callback) {
+            auto& s = engine->metalrt_vlm_engine.last_stats();
+            char stats_buf[256];
+            snprintf(stats_buf, sizeof(stats_buf),
+                     "{\"tps\":%.1f,\"tokens\":%d,\"vision_encode_ms\":%.1f}",
+                     s.tps, s.generated_tokens, s.vision_encode_ms);
+            callback("stats", stats_buf, user_data);
+        }
+    } else {
+        // llama.cpp VLM streaming path
+        rastack::TokenCallback token_cb = nullptr;
+        if (callback) {
+            token_cb = [callback, user_data](const rastack::TokenOutput& tok) {
+                if (!tok.text.empty()) {
+                    callback("token", tok.text.c_str(), user_data);
+                }
+            };
+        }
+
+        result = engine->vlm_engine.analyze_image(
+            std::string(image_path), text_prompt, token_cb);
+
+        if (callback) {
+            auto& s = engine->vlm_engine.last_stats();
+            char stats_buf[256];
+            snprintf(stats_buf, sizeof(stats_buf),
+                     "{\"tps\":%.1f,\"tokens\":%lld,\"vision_encode_ms\":%.1f}",
+                     s.gen_tps(), s.generated_tokens, s.image_encode_us / 1000.0);
+            callback("stats", stats_buf, user_data);
+        }
+    }
 
     engine->last_vlm_response = result.empty() ? "Error: Failed to analyze image." : result;
 
     if (callback) {
         callback("response", engine->last_vlm_response.c_str(), user_data);
-        auto& s = engine->vlm_engine.last_stats();
-        char stats_buf[256];
-        snprintf(stats_buf, sizeof(stats_buf),
-                 "{\"tps\":%.1f,\"tokens\":%lld,\"vision_encode_ms\":%.1f}",
-                 s.gen_tps(), s.generated_tokens, s.image_encode_us / 1000.0);
-        callback("stats", stats_buf, user_data);
     }
 
     return engine->last_vlm_response.find("Error:") == 0 ? -1 : 0;

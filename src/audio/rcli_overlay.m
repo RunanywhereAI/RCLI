@@ -9,10 +9,10 @@
 
 #import <AppKit/AppKit.h>
 
-static const CGFloat kBorder    = 6.0;
-static const CGFloat kRadius    = 12.0;
-static const CGFloat kHandle    = 18.0;   // corner handle size
-static const CGFloat kEdgeGrab  = 14.0;   // invisible edge grab zone
+static const CGFloat kBorder    = 8.0;
+static const CGFloat kRadius    = 14.0;
+static const CGFloat kHandle    = 28.0;   // corner handle size
+static const CGFloat kEdgeGrab  = 20.0;   // invisible edge grab zone
 
 // ── Custom view: bold border + corner handles + label pill ─────────────
 @interface OverlayView : NSView
@@ -25,23 +25,37 @@ static const CGFloat kEdgeGrab  = 14.0;   // invisible edge grab zone
     NSRectFill(dirtyRect);
 
     NSRect inner = NSInsetRect(self.bounds, kBorder, kBorder);
-    NSColor *green = [NSColor colorWithRed:0.15 green:0.9 blue:0.45 alpha:0.92];
+    NSColor *green = [NSColor colorWithRed:0.1 green:0.85 blue:0.4 alpha:1.0];
 
-    // Outer glow
+    // Outer glow — wide, soft, two layers for depth
+    NSBezierPath *glow2 = [NSBezierPath bezierPathWithRoundedRect:inner
+                                                           xRadius:kRadius yRadius:kRadius];
+    [glow2 setLineWidth:kBorder + 16];
+    [[green colorWithAlphaComponent:0.08] set];
+    [glow2 stroke];
+
     NSBezierPath *glow = [NSBezierPath bezierPathWithRoundedRect:inner
                                                          xRadius:kRadius yRadius:kRadius];
-    [glow setLineWidth:kBorder + 6];
-    [[green colorWithAlphaComponent:0.12] set];
+    [glow setLineWidth:kBorder + 8];
+    [[green colorWithAlphaComponent:0.18] set];
     [glow stroke];
 
-    // Main border — solid, thick, rounded
+    // Main border — bold, solid, rounded
     NSBezierPath *border = [NSBezierPath bezierPathWithRoundedRect:inner
                                                            xRadius:kRadius yRadius:kRadius];
     [border setLineWidth:kBorder];
     [green set];
     [border stroke];
 
-    // Corner handles — filled rounded squares with white dot
+    // Inner highlight — thin white line for depth
+    NSRect innerHL = NSInsetRect(inner, 1.5, 1.5);
+    NSBezierPath *highlight = [NSBezierPath bezierPathWithRoundedRect:innerHL
+                                                              xRadius:kRadius - 1.5 yRadius:kRadius - 1.5];
+    [highlight setLineWidth:1.0];
+    [[NSColor colorWithWhite:1.0 alpha:0.15] set];
+    [highlight stroke];
+
+    // Corner handles — large rounded squares with shadow + white center dot
     CGFloat hs = kHandle;
     CGFloat off = kBorder / 2;
     NSRect corners[4] = {
@@ -51,20 +65,50 @@ static const CGFloat kEdgeGrab  = 14.0;   // invisible edge grab zone
         NSMakeRect(NSMaxX(inner) + off - hs, NSMaxY(inner) + off - hs, hs, hs),
     };
     for (int i = 0; i < 4; i++) {
+        // Drop shadow
+        NSRect shadowRect = NSOffsetRect(corners[i], 0, -1);
+        NSBezierPath *shadow = [NSBezierPath bezierPathWithRoundedRect:shadowRect
+                                                               xRadius:6 yRadius:6];
+        [[NSColor colorWithWhite:0.0 alpha:0.25] set];
+        [shadow fill];
+
+        // Handle body
         NSBezierPath *h = [NSBezierPath bezierPathWithRoundedRect:corners[i]
-                                                          xRadius:4 yRadius:4];
+                                                          xRadius:6 yRadius:6];
         [green set];
         [h fill];
+
+        // White border on handle
+        [h setLineWidth:1.5];
+        [[NSColor colorWithWhite:1.0 alpha:0.4] set];
+        [h stroke];
+
         // White center dot
-        NSRect dot = NSInsetRect(corners[i], 5, 5);
-        [[NSColor colorWithWhite:1.0 alpha:0.85] set];
+        NSRect dot = NSInsetRect(corners[i], hs * 0.3, hs * 0.3);
+        [[NSColor colorWithWhite:1.0 alpha:0.9] set];
         [[NSBezierPath bezierPathWithOvalInRect:dot] fill];
+    }
+
+    // Edge midpoint handles — small bars to hint at edge dragging
+    CGFloat eh = 5.0;   // half-thickness
+    CGFloat el = 32.0;  // bar length
+    NSRect edges[4] = {
+        NSMakeRect(NSMidX(inner) - el/2, NSMaxY(inner) - eh/2, el, eh),   // top
+        NSMakeRect(NSMidX(inner) - el/2, NSMinY(inner) - eh/2, el, eh),   // bottom
+        NSMakeRect(NSMinX(inner) - eh/2, NSMidY(inner) - el/2, eh, el),   // left
+        NSMakeRect(NSMaxX(inner) - eh/2, NSMidY(inner) - el/2, eh, el),   // right
+    };
+    for (int i = 0; i < 4; i++) {
+        NSBezierPath *ep = [NSBezierPath bezierPathWithRoundedRect:edges[i]
+                                                           xRadius:2.5 yRadius:2.5];
+        [[green colorWithAlphaComponent:0.7] set];
+        [ep fill];
     }
 
     // Label pill — centered at top
     NSString *label = @"  RCLI Visual Mode  ";
     NSDictionary *attrs = @{
-        NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightBold],
+        NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightHeavy],
         NSForegroundColorAttributeName: [NSColor blackColor],
     };
     NSSize sz = [label sizeWithAttributes:attrs];
