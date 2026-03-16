@@ -27,6 +27,10 @@ if [ -f "$BUILD_DIR/rcli_overlay" ]; then
     cp "$BUILD_DIR/rcli_overlay" "$DIST_DIR/bin/rcli_overlay"
     echo "  + bin/rcli_overlay"
 fi
+if [ -f "$BUILD_DIR/rcli_camera_preview" ]; then
+    cp "$BUILD_DIR/rcli_camera_preview" "$DIST_DIR/bin/rcli_camera_preview"
+    echo "  + bin/rcli_camera_preview"
+fi
 
 # --- Collect dylibs ---
 DYLIBS=(
@@ -154,6 +158,9 @@ echo "Codesigning..."
 codesign --force --sign - "$BINARY"
 if [ -f "$DIST_DIR/bin/rcli_overlay" ]; then
     codesign --force --sign - "$DIST_DIR/bin/rcli_overlay"
+fi
+if [ -f "$DIST_DIR/bin/rcli_camera_preview" ]; then
+    codesign --force --sign - "$DIST_DIR/bin/rcli_camera_preview"
 fi
 for lib in "$DIST_DIR/lib/"*.dylib; do
     codesign --force --sign - "$lib"

@@ -14,6 +14,7 @@
 #include "engines/metalrt_loader.h"
 #include "engines/vlm_engine.h"
 #include "audio/camera_capture.h"
+#include "audio/camera_preview.h"
 #include "audio/screen_capture.h"
 #include "models/vlm_model_registry.h"
 #include "core/log.h"
@@ -439,9 +440,43 @@ public:
                 if (c == "r" || c == "R") { enter_rag_mode(); return true; }
                 if (c == "d" || c == "D") { close_all_panels(); enter_cleanup_mode(); return true; }
                 if (c == "p" || c == "P") { enter_personality_mode(); return true; }
-                // V key: capture photo from camera and analyze with VLM
+                // V key: toggle camera preview mode (live feed + auto VLM analysis)
                 if (c == "v" || c == "V") {
-                    run_camera_vlm("Describe what you see in this photo in detail.");
+                    if (camera_preview_active()) {
+                        add_system_message("Closing camera...");
+                        screen_->Post(Event::Custom);
+                        stop_camera_auto_analysis();
+                        std::thread([this]() {
+                            camera_preview_stop();
+                            rcli_vlm_exit(engine_);
+                            add_system_message("Camera OFF");
+                            screen_->Post(Event::Custom);
+                        }).detach();
+                    } else {
+                        add_system_message("Opening camera, loading VLM...");
+                        screen_->Post(Event::Custom);
+                        std::thread([this]() {
+                            if (rcli_vlm_init(engine_) != 0) {
+                                add_system_message("VLM requires the llama.cpp engine. Switch with: rcli engine llamacpp, then download a model via [M] \xe2\x86\x92 VLM Models");
+                                screen_->Post(Event::Custom);
+                                return;
+                            }
+                            if (camera_preview_start() != 0) {
+                                add_system_message("Camera preview failed. Check camera permissions in System Settings > Privacy & Security > Camera.");
+                                screen_->Post(Event::Custom);
+                                return;
+                            }
+                            const char* vbe = rcli_vlm_backend_name(engine_);
+                            const char* vmodel = rcli_vlm_model_name(engine_);
+                            std::string msg = "Camera LIVE";
+                            if (vbe && vbe[0])
+                                msg += std::string(" \xe2\x80\x94 ") + vmodel + " via " + vbe;
+                            msg += ". Auto-analyzing every ~8s. Speak to ask a specific question";
+                            add_system_message(msg);
+                            screen_->Post(Event::Custom);
+                            start_camera_auto_analysis();
+                        }).detach();
+                    }
                     return true;
                 }
                 // S key: toggle visual mode (VLM only on llama.cpp engine)
@@ -580,6 +615,12 @@ private:
 
             std::string user_text = transcript;
             add_user_message(user_text);
+
+            // Camera preview: route voice to camera VLM analysis
+            if (camera_preview_active()) {
+                run_camera_preview_vlm(user_text);
+                return;
+            }
 
             // Visual mode: route voice to VLM screen analysis instead of LLM
             if (screen_capture_overlay_active()) {
@@ -1117,9 +1158,16 @@ private:
         else
             right.push_back(text("[A] actions  ") | dim);
         right.push_back(text("[C] convo  ") | dim);
-        right.push_back(text("[V] camera  ") | dim);
+        if (camera_preview_active()) {
+            if (cam_auto_busy_.load())
+                right.push_back(text("[V] camera \xf0\x9f\x94\xb4  ") | ftxui::color(ftxui::Color::RedLight));
+            else
+                right.push_back(text("[V] camera LIVE  ") | ftxui::color(ftxui::Color::Green));
+        } else {
+            right.push_back(text("[V] camera  ") | dim);
+        }
         if (screen_capture_overlay_active())
-            right.push_back(text("[S] visual ●  ") | ftxui::color(ftxui::Color::Green));
+            right.push_back(text("[S] visual \xe2\x97\x8f  ") | ftxui::color(ftxui::Color::Green));
         else
             right.push_back(text("[S] visual  ") | dim);
         right.push_back(text("[R] RAG  ") | dim);
@@ -2234,6 +2282,118 @@ private:
     // process_input
     // ====================================================================
 
+    void start_camera_auto_analysis() {
+        cam_auto_running_.store(true);
+        cam_auto_busy_.store(false);
+        cam_auto_thread_ = std::thread([this]() {
+            // Small initial delay to let the camera warm up
+            for (int i = 0; i < 4 && cam_auto_running_.load(); i++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+            while (cam_auto_running_.load()) {
+                if (!camera_preview_active()) break;
+                // Skip if voice/text analysis is in progress, check again in 500ms
+                if (cam_auto_busy_.load() || voice_state_.load() != VoiceState::IDLE) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                    continue;
+                }
+
+                cam_auto_busy_.store(true);
+                std::string photo_path = "/tmp/rcli_cam_auto_" +
+                    std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".jpg";
+
+                if (camera_preview_snap(photo_path.c_str()) != 0) {
+                    cam_auto_busy_.store(false);
+                    continue;
+                }
+
+                voice_state_ = VoiceState::THINKING;
+                screen_->Post(Event::Custom);
+
+                std::string accumulated;
+                auto stream_cb = [](const char* event, const char* data, void* ud) {
+                    auto* accum = static_cast<std::string*>(ud);
+                    if (std::strcmp(event, "token") == 0)
+                        accum->append(data);
+                };
+                int vlm_rc = rcli_vlm_analyze_stream(engine_, photo_path.c_str(),
+                    "Briefly describe what you see. Focus on what's new or interesting. Be concise (1-2 sentences).",
+                    stream_cb, &accumulated);
+
+                if (vlm_rc == 0 && !accumulated.empty()) {
+                    add_response(accumulated, "VLM \xf0\x9f\x93\xb7");
+                    voice_state_ = VoiceState::SPEAKING;
+                    screen_->Post(Event::Custom);
+                    rcli_speak_streaming(engine_, accumulated.c_str(), nullptr, nullptr);
+                }
+
+                voice_state_ = VoiceState::IDLE;
+                cam_auto_busy_.store(false);
+                screen_->Post(Event::Custom);
+
+                // Brief cooldown after analysis before next cycle
+                for (int i = 0; i < 4 && cam_auto_running_.load(); i++)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
+        });
+    }
+
+    void stop_camera_auto_analysis() {
+        cam_auto_running_.store(false);
+        if (cam_auto_thread_.joinable())
+            cam_auto_thread_.join();
+    }
+
+    // User-initiated camera analysis (voice/text) — pauses auto, runs targeted query
+    void run_camera_preview_vlm(const std::string& prompt) {
+        cam_auto_busy_.store(true);
+        add_system_message("Analyzing camera feed...");
+        voice_state_ = VoiceState::THINKING;
+        std::string prompt_copy = prompt;
+        std::thread([this, prompt_copy]() {
+            std::string photo_path = "/tmp/rcli_cam_" +
+                std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".jpg";
+
+            if (camera_preview_snap(photo_path.c_str()) != 0) {
+                add_response("(Camera capture failed.)", "");
+                voice_state_ = VoiceState::IDLE;
+                cam_auto_busy_.store(false);
+                screen_->Post(Event::Custom);
+                return;
+            }
+
+            std::string accumulated;
+            auto stream_cb = [](const char* event, const char* data, void* ud) {
+                auto* accum = static_cast<std::string*>(ud);
+                if (std::strcmp(event, "token") == 0) {
+                    accum->append(data);
+                }
+            };
+            int vlm_rc = rcli_vlm_analyze_stream(engine_, photo_path.c_str(),
+                                                  prompt_copy.c_str(), stream_cb, &accumulated);
+
+            if (vlm_rc == 0 && !accumulated.empty()) {
+                add_response(accumulated, "VLM");
+                voice_state_ = VoiceState::SPEAKING;
+                screen_->Post(Event::Custom);
+                rcli_speak_streaming(engine_, accumulated.c_str(), nullptr, nullptr);
+                RCLIVlmStats stats;
+                if (rcli_vlm_get_stats(engine_, &stats) == 0) {
+                    char buf[128];
+                    snprintf(buf, sizeof(buf), "\xe2\x9a\xa1 %.1f tok/s  |  %d tokens  |  %.1fs total",
+                             stats.gen_tok_per_sec, stats.generated_tokens, stats.total_time_sec);
+                    add_system_message(buf);
+                }
+            } else {
+                add_response("(VLM analysis failed.)", "");
+            }
+
+            voice_state_ = VoiceState::IDLE;
+            cam_auto_busy_.store(false);
+            screen_->Post(Event::Custom);
+        }).detach();
+    }
+
     void run_camera_vlm(const std::string& prompt) {
         add_system_message("Capturing photo from camera...");
         voice_state_ = VoiceState::THINKING;
@@ -2383,6 +2543,9 @@ private:
             add_system_message("  P      Personality");
             add_system_message("  R      RAG panel");
             add_system_message("  D      Delete / cleanup models");
+            add_system_message("--- Vision ---");
+            add_system_message("  V      Camera preview (toggle live feed + VLM)");
+            add_system_message("  S      Visual mode (screen overlay + VLM)");
             add_system_message("--- Toggles ---");
             add_system_message("  T      Tool call trace (show tool calls & results)");
 
@@ -2421,7 +2584,10 @@ private:
         }
 
         if (cmd == "camera" || cmd == "photo" || cmd == "webcam") {
-            run_camera_vlm("Describe what you see in this photo in detail.");
+            if (camera_preview_active())
+                run_camera_preview_vlm("Describe what you see in this photo in detail.");
+            else
+                run_camera_vlm("Describe what you see in this photo in detail.");
             return;
         }
 
@@ -2605,6 +2771,12 @@ private:
                 }).detach();
                 return;
             }
+        }
+
+        // Camera preview active: route typed questions to camera VLM
+        if (camera_preview_active()) {
+            run_camera_preview_vlm(input);
+            return;
         }
 
         // Run LLM (or RAG+LLM) in background thread to keep UI responsive
@@ -2864,6 +3036,12 @@ private:
     std::string personality_message_;
     ftxui::Color personality_msg_color_;
 
+
+    // Camera auto-analysis state
+    std::atomic<bool> cam_auto_running_{false};
+    std::atomic<bool> cam_auto_busy_{false};
+    std::thread cam_auto_thread_;
+    std::string cam_last_snap_path_;
 
     // RAG panel state
     struct RagOption { std::string name, action; };

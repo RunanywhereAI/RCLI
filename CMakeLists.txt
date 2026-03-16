@@ -108,6 +108,7 @@ add_library(rcli STATIC
     src/audio/audio_io.cpp
     src/audio/mic_permission.mm
     src/audio/camera_capture.mm
+    src/audio/camera_preview.mm
     src/audio/screen_capture.mm
     src/pipeline/orchestrator.cpp
     src/pipeline/sentence_detector.cpp
@@ -141,7 +142,7 @@ add_library(rcli STATIC
     src/api/rcli_api.cpp
 )
 
-set_source_files_properties(src/audio/mic_permission.mm src/audio/camera_capture.mm src/audio/screen_capture.mm
+set_source_files_properties(src/audio/mic_permission.mm src/audio/camera_capture.mm src/audio/camera_preview.mm src/audio/screen_capture.mm
     PROPERTIES LANGUAGE CXX)
 
 target_include_directories(rcli PUBLIC
@@ -219,6 +220,32 @@ target_link_libraries(rcli_overlay PRIVATE
 
 set_target_properties(rcli_overlay PROPERTIES
     OUTPUT_NAME "rcli_overlay"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+# =============================================================================
+# rcli_camera_preview — standalone Cocoa helper for live camera preview window
+# =============================================================================
+add_executable(rcli_camera_preview
+    src/audio/rcli_camera_preview.m
+)
+
+set_source_files_properties(src/audio/rcli_camera_preview.m PROPERTIES LANGUAGE CXX)
+
+target_compile_options(rcli_camera_preview PRIVATE -x objective-c++)
+
+target_link_libraries(rcli_camera_preview PRIVATE
+    "-framework AppKit"
+    "-framework AVFoundation"
+    "-framework CoreMedia"
+    "-framework CoreVideo"
+    "-framework CoreImage"
+    "-framework ImageIO"
+    "-framework UniformTypeIdentifiers"
+)
+
+set_target_properties(rcli_camera_preview PROPERTIES
+    OUTPUT_NAME "rcli_camera_preview"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
