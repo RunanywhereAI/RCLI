@@ -46,8 +46,7 @@ jobs:
             ## Installation
 
             ```bash
-            brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
-            brew install rcli
+            brew install runanywhereai/rcli/rcli
             rcli setup  # download AI models (~1GB, one-time)
             ```
 
@@ -55,5 +54,24 @@ jobs:
             ```
             ${{ steps.package.outputs.sha256 }}
             ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA256="${{ steps.package.outputs.sha256 }}"
+          TARBALL_URL="https://github.com/RunanywhereAI/RCLI/releases/download/${GITHUB_REF_NAME}/rcli-${VERSION}-Darwin-arm64.tar.gz"
+
+          sed -i '' "s|url \".*\"|url \"${TARBALL_URL}\"|" Formula/rcli.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/rcli.rb
+          sed -i '' "s|version \".*\"|version \"${VERSION}\"|" Formula/rcli.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git add Formula/rcli.rb
+          git commit -m "formula: update to ${VERSION}"
+          git push origin main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
