@@ -31,6 +31,12 @@ class Screen {
     /// shell owns the right side, which stays the same everywhere.
     virtual ftxui::Element Hints() const = 0;
 
+    /// True when the screen has a text field that should receive ordinary
+    /// characters. The shell then stops claiming digits and Left/Right for tab
+    /// switching, which would otherwise make a search box impossible to type
+    /// "2" into. Tab and Shift+Tab keep working everywhere.
+    virtual bool CapturesTyping() const { return false; }
+
     /// Return true to consume the event. Global keys are handled by the shell
     /// first, so a screen never has to care about tab switching or quitting.
     virtual bool OnEvent(const ftxui::Event& event) {

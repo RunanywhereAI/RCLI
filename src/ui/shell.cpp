@@ -99,7 +99,7 @@ Component Shell(std::vector<std::unique_ptr<Screen>> screens) {
                bgcolor(t.background) | flex;
     });
 
-    return CatchEvent(renderer, [state, tabs](const Event& event) {
+    return CatchEvent(renderer, [state, tabs, pages](const Event& event) {
         const int count = static_cast<int>(state->screens.size());
 
         // Clicks land on the tab strip; let it decide before anything else so a
@@ -108,23 +108,38 @@ Component Shell(std::vector<std::unique_ptr<Screen>> screens) {
             return true;
         }
 
-        for (int i = 0; i < count && i < 9; ++i) {
-            if (event == Event::Character(static_cast<char>('1' + i))) {
-                state->active = i;
+        const Screen& current = *state->screens[static_cast<std::size_t>(state->active)];
+        if (!current.CapturesTyping()) {
+            for (int i = 0; i < count && i < 9; ++i) {
+                if (event == Event::Character(static_cast<char>('1' + i))) {
+                    state->active = i;
+                    return true;
+                }
+            }
+            if (event == Event::ArrowRight) {
+                state->active = (state->active + 1) % count;
+                return true;
+            }
+            if (event == Event::ArrowLeft) {
+                state->active = (state->active + count - 1) % count;
                 return true;
             }
         }
-        if (event == Event::Tab || event == Event::ArrowRight) {
+        if (event == Event::Tab) {
             state->active = (state->active + 1) % count;
             return true;
         }
-        if (event == Event::TabReverse || event == Event::ArrowLeft) {
+        if (event == Event::TabReverse) {
             state->active = (state->active + count - 1) % count;
             return true;
         }
 
-        // The screen sees the event before the global quit, so a text field can
-        // still receive a plain q.
+        // The active body gets the event before the global quit, so a search
+        // field receives a plain q instead of the app exiting under it. The
+        // screen's own hook comes next, for keys no widget claimed.
+        if (pages->OnEvent(event)) {
+            return true;
+        }
         if (state->screens[static_cast<std::size_t>(state->active)]->OnEvent(event)) {
             return true;
         }
