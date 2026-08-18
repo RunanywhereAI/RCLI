@@ -206,19 +206,27 @@ class Chat final : public ui::Screen {
         const auto& t = theme::Current();
         SyncThinking();
 
-        Elements lines;
-        int thinking_seen = 0;
+        // Snapshot under the lock, then draw without it. A thinking block is
+        // drawn by its own component whose transform locks the same mutex, so
+        // rendering inside the critical section deadlocked the UI thread the
+        // moment a reply contained reasoning.
+        std::vector<chat::Entry> snapshot;
         {
             std::lock_guard<std::mutex> lock(log_->mutex);
-            for (const chat::Entry& entry : log_->entries) {
-                if (entry.kind == Line::Thinking) {
-                    // Drawn by its own component so it can hold focus.
-                    lines.push_back(thinking_->ChildAt(static_cast<std::size_t>(thinking_seen++))
-                                        ->Render());
-                    continue;
+            snapshot = log_->entries;
+        }
+
+        Elements lines;
+        std::size_t thinking_seen = 0;
+        for (const chat::Entry& entry : snapshot) {
+            if (entry.kind == Line::Thinking) {
+                if (thinking_seen < thinking_->ChildCount()) {
+                    lines.push_back(thinking_->ChildAt(thinking_seen)->Render());
                 }
-                lines.push_back(DrawEntry(entry));
+                ++thinking_seen;
+                continue;
             }
+            lines.push_back(DrawEntry(entry));
         }
         if (lines.empty()) {
             lines.push_back(text("No model loaded. /load to start, /? for help.") |
