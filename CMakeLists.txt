@@ -24,6 +24,7 @@ FetchContent_MakeAvailable(ftxui)
 add_executable(rcli
     src/main.cpp
     src/catalog/catalog.cpp
+    src/screens/chat.cpp
     src/screens/models.cpp
     src/screens/screens.cpp
     src/theme/theme.cpp

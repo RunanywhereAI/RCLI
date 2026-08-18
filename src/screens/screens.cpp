@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "theme/theme.h"
+#include "screens/chat.h"
 #include "screens/models.h"
 #include "ui/list.h"
 
@@ -47,18 +48,6 @@ Element Hint(std::string_view key, std::string_view label) {
     });
 }
 
-class Chat final : public ui::Screen {
-   public:
-    Component Body() override { return body_; }
-    std::string_view Title() const override { return "chat"; }
-    Element Hints() const override {
-        return hbox({Hint("enter", "send"), Hint("ctrl-l", "clear")});
-    }
-
-   private:
-    Component body_ = Placeholder("No conversation yet", "a model has to be loaded first");
-};
-
 class Bench final : public ui::Screen {
    public:
     Component Body() override { return body_; }
@@ -98,7 +87,7 @@ class Settings final : public ui::Screen {
 
 std::vector<std::unique_ptr<ui::Screen>> All() {
     std::vector<std::unique_ptr<ui::Screen>> screens;
-    screens.push_back(std::make_unique<Chat>());
+    screens.push_back(MakeChat());
     screens.push_back(MakeModels());
     screens.push_back(std::make_unique<Bench>());
     screens.push_back(std::make_unique<Settings>());
