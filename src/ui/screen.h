@@ -1,6 +1,7 @@
 #ifndef RCLI_UI_SCREEN_H
 #define RCLI_UI_SCREEN_H
 
+#include <ftxui/component/component_base.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
 
@@ -21,7 +22,10 @@ class Screen {
     /// Shown in the tab strip. Its position in the list is its number key.
     virtual std::string_view Title() const = 0;
 
-    virtual ftxui::Element Body() = 0;
+    /// Built once and kept, because it holds the screen's focus and selection.
+    /// A screen with nothing to navigate returns a Renderer over static
+    /// elements; Up and Down then do nothing, which is the honest result.
+    virtual ftxui::Component Body() = 0;
 
     /// Left side of the bottom bar: what this screen can do right now. The
     /// shell owns the right side, which stays the same everywhere.

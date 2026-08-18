@@ -25,6 +25,7 @@ add_executable(rcli
     src/main.cpp
     src/screens/screens.cpp
     src/theme/theme.cpp
+    src/ui/list.cpp
     src/ui/shell.cpp
 )
 target_include_directories(rcli PRIVATE src)

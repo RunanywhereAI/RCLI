@@ -66,9 +66,18 @@ Component Shell(std::vector<std::unique_ptr<Screen>> screens) {
     tabs_option.elements_infix = [] { return text("  "); };
     auto tabs = Menu(tabs_option);
 
-    // Only the tab strip is interactive today, so it is the whole component
-    // tree. A screen that grows its own inputs joins here.
-    auto renderer = Renderer(tabs, [state, tabs] {
+    // The bodies are the focusable tree, not the tab strip: Up and Down must
+    // always act inside the current screen. Container::Tab keeps every screen's
+    // selection alive while showing only the active one, so switching away and
+    // back returns to the row you were on.
+    Components bodies;
+    bodies.reserve(state->screens.size());
+    for (const auto& screen : state->screens) {
+        bodies.push_back(screen->Body());
+    }
+    auto pages = Container::Tab(std::move(bodies), &state->active);
+
+    auto renderer = Renderer(pages, [state, tabs, pages] {
         const auto& t = theme::Current();
         const Screen& current = *state->screens[static_cast<std::size_t>(state->active)];
         return vbox({
@@ -83,7 +92,7 @@ Component Shell(std::vector<std::unique_ptr<Screen>> screens) {
                        text(" quit") | color(t.textDim),
                    }) | bgcolor(t.surface),
                    separator() | color(t.separator),
-                   state->screens[static_cast<std::size_t>(state->active)]->Body() | flex,
+                   pages->Render() | flex,
                    separator() | color(t.separator),
                    Chrome(current) | bgcolor(t.surface),
                }) |
