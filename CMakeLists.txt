@@ -23,7 +23,9 @@ FetchContent_MakeAvailable(ftxui)
 
 add_executable(rcli
     src/main.cpp
+    src/screens/screens.cpp
     src/theme/theme.cpp
+    src/ui/shell.cpp
 )
 target_include_directories(rcli PRIVATE src)
 # ftxui::component already pulls dom and screen; naming all three makes the

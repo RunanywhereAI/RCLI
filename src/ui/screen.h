@@ -1,0 +1,40 @@
+#ifndef RCLI_UI_SCREEN_H
+#define RCLI_UI_SCREEN_H
+
+#include <ftxui/component/event.hpp>
+#include <ftxui/dom/elements.hpp>
+
+#include <string_view>
+
+namespace rcli::ui {
+
+/// One destination in the app: chat, models, benchmarks, settings.
+///
+/// A screen owns the two regions that change with it — the body and the hints
+/// in the bottom bar — and nothing else. The shell draws the frame, the tab
+/// strip and the global keys, so a new screen is one subclass and one entry in
+/// the screen list, with no chrome to reimplement.
+class Screen {
+   public:
+    virtual ~Screen() = default;
+
+    /// Shown in the tab strip. Its position in the list is its number key.
+    virtual std::string_view Title() const = 0;
+
+    virtual ftxui::Element Body() = 0;
+
+    /// Left side of the bottom bar: what this screen can do right now. The
+    /// shell owns the right side, which stays the same everywhere.
+    virtual ftxui::Element Hints() const = 0;
+
+    /// Return true to consume the event. Global keys are handled by the shell
+    /// first, so a screen never has to care about tab switching or quitting.
+    virtual bool OnEvent(const ftxui::Event& event) {
+        (void)event;
+        return false;
+    }
+};
+
+}  // namespace rcli::ui
+
+#endif  // RCLI_UI_SCREEN_H
