@@ -30,6 +30,7 @@ add_executable(rcli
     src/screens/chat.cpp
     src/screens/models.cpp
     src/screens/screens.cpp
+    src/sdk/llm.cpp
     src/sdk/session.cpp
     src/theme/theme.cpp
     src/ui/list.cpp
@@ -54,3 +55,12 @@ target_compile_options(rcli PRIVATE -Wall -Wextra)
 # Formula/rcli.rb installs. Emitting the binary anywhere else silently breaks
 # the release without breaking the build.
 set_target_properties(rcli PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+# Isolation probe, not shipped: reproduces an SDK call path with no UI so a
+# crash can be attributed to the SDK or to the app.
+add_executable(probe tools/probe.cpp)
+target_link_libraries(probe PRIVATE rac_commons)
+if(TARGET rac_backend_llamacpp)
+    target_link_libraries(probe PRIVATE rac_backend_llamacpp)
+endif()
+set_target_properties(probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
