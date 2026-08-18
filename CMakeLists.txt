@@ -13,6 +13,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(RunAnywhereSDK)
+
 include(FetchContent)
 FetchContent_Declare(ftxui
     GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
@@ -27,6 +30,7 @@ add_executable(rcli
     src/screens/chat.cpp
     src/screens/models.cpp
     src/screens/screens.cpp
+    src/sdk/session.cpp
     src/theme/theme.cpp
     src/ui/list.cpp
     src/ui/shell.cpp
@@ -34,8 +38,16 @@ add_executable(rcli
 target_include_directories(rcli PRIVATE src)
 # ftxui::component already pulls dom and screen; naming all three makes the
 # linker warn about duplicate archives.
-target_link_libraries(rcli PRIVATE ftxui::component)
+target_link_libraries(rcli PRIVATE ftxui::component rac_commons)
 target_compile_definitions(rcli PRIVATE RCLI_VERSION="${PROJECT_VERSION}")
+foreach(_backend llamacpp onnx sherpa mlx neurt cloud)
+    if(TARGET rac_backend_${_backend})
+        string(TOUPPER ${_backend} _upper)
+        target_compile_definitions(rcli PRIVATE RCLI_HAS_${_upper}=1)
+        target_link_libraries(rcli PRIVATE rac_backend_${_backend})
+    endif()
+endforeach()
+
 target_compile_options(rcli PRIVATE -Wall -Wextra)
 
 # scripts/package.sh copies build/rcli into the tarball's bin/, which is what

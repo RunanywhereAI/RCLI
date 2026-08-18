@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "sdk/session.h"
 #include "theme/theme.h"
 #include "screens/chat.h"
 #include "screens/models.h"
@@ -74,7 +75,25 @@ class Settings final : public ui::Screen {
 
     // One row for now because there is exactly one setting that does anything.
     // More arrive with the features that need them.
+    static std::string BackendSummary() {
+        const auto& session = sdk::Session::Instance();
+        if (!session.started()) {
+            return std::string(session.error().empty() ? "not started" : session.error());
+        }
+        return std::to_string(session.backends().size()) + " registered";
+    }
+
     Component body_ = ui::List({
+        ui::Row{
+            .label = "Engines",
+            .value = BackendSummary,
+            .activate = nullptr,
+        },
+        ui::Row{
+            .label = "Storage",
+            .value = [] { return std::string(sdk::Session::Instance().home()); },
+            .activate = nullptr,
+        },
         ui::Row{
             .label = "Theme",
             .value = [] { return theme::CurrentMode() == theme::Mode::Dark ? "dark" : "light"; },
