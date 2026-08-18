@@ -50,9 +50,16 @@ enum class Mode { Dark, Light };
 void SetMode(Mode mode);
 Mode CurrentMode();
 
-/// Reads COLORFGBG when the terminal sets it, which is the only widely
-/// supported hint at background luminance. Absent or unparseable leaves the
-/// mode alone rather than guessing.
+/// Pick a mode from the terminal itself, in descending order of trust:
+///
+///   1. `RCLI_THEME=dark|light`, an explicit answer that always wins.
+///   2. An OSC 11 query, which asks the terminal for its actual background
+///      colour and measures it. Accurate, and what a terminal running against
+///      the OS appearance will already reflect.
+///   3. `COLORFGBG`, a coarse hint some terminals export.
+///
+/// Nothing matching leaves the mode alone. Must run before the FTXUI screen
+/// starts: the query briefly takes over stdin, which the render loop owns.
 void DetectMode();
 
 const Palette& Current();
