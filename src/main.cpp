@@ -4,36 +4,50 @@
 
 #include <string>
 
+#include "theme/theme.h"
+
 namespace {
 
 using namespace ftxui;
 
-Element StatusRow(const std::string& label, const std::string& value, Color value_color) {
+Element Row(const std::string& label, const std::string& value, Color value_color) {
+    const auto& t = rcli::theme::Current();
     return hbox({
-        text(label) | dim,
+        text(label) | color(t.textDim),
         filler(),
         text(value) | color(value_color),
     });
 }
 
+Element Header() {
+    const auto& t = rcli::theme::Current();
+    return hbox({
+        text("rcli") | bold | color(t.accent),
+        text(" " RCLI_VERSION) | color(t.textFaint),
+        filler(),
+        text("idle") | color(t.live),
+    });
+}
+
 Element Splash() {
+    const auto& t = rcli::theme::Current();
     return vbox({
-               hbox({
-                   text("rcli") | bold,
-                   text(" " RCLI_VERSION) | dim,
-               }),
-               separatorLight(),
-               StatusRow("engine", "not wired", Color::GrayDark),
-               StatusRow("models", "none", Color::GrayDark),
+               Header(),
+               separator() | color(t.separator),
+               Row("engine", "ready", t.success),
+               Row("models", "0 local", t.info),
+               Row("microphone", "not granted", t.error),
                text(""),
-               text("press q to quit") | dim,
+               text("press q to quit") | color(t.textFaint),
            }) |
-           border | size(WIDTH, LESS_THAN, 60);
+           border | color(t.separator) | bgcolor(t.background);
 }
 
 }  // namespace
 
 int main() {
+    rcli::theme::DetectMode();
+
     auto screen = ftxui::ScreenInteractive::TerminalOutput();
     auto view = ftxui::Renderer([] { return Splash(); });
 

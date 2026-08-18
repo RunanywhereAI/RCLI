@@ -21,8 +21,14 @@ FetchContent_Declare(ftxui
 )
 FetchContent_MakeAvailable(ftxui)
 
-add_executable(rcli src/main.cpp)
-target_link_libraries(rcli PRIVATE ftxui::screen ftxui::dom ftxui::component)
+add_executable(rcli
+    src/main.cpp
+    src/theme/theme.cpp
+)
+target_include_directories(rcli PRIVATE src)
+# ftxui::component already pulls dom and screen; naming all three makes the
+# linker warn about duplicate archives.
+target_link_libraries(rcli PRIVATE ftxui::component)
 target_compile_definitions(rcli PRIVATE RCLI_VERSION="${PROJECT_VERSION}")
 target_compile_options(rcli PRIVATE -Wall -Wextra)
 
