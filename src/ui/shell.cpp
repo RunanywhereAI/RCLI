@@ -27,8 +27,8 @@ Element TabLabel(const EntryState& entry) {
     if (entry.active) {
         return row | bgcolor(t.accent) | bold;
     }
-    // Hovering is worth showing now that the strip is clickable: without it a
-    // mouse user has no way to tell the tabs are targets before clicking one.
+    // Hovering matters now the strip is clickable: without it a mouse user has
+    // no way to tell the tabs are targets before clicking one.
     return entry.focused ? row | bgcolor(t.raised) : row;
 }
 
@@ -57,7 +57,7 @@ Component Shell(std::vector<std::unique_ptr<Screen>> screens) {
     }
 
     // A Menu rather than hand-drawn text: it already handles clicks, hover and
-    // arrow keys, and reports the selection through `active`. Writing our own
+    // arrow keys, and reports the selection through `active`. Hand-rolled
     // hit-testing against x-ranges would reimplement all of it, worse.
     MenuOption tabs_option = MenuOption::Horizontal();
     tabs_option.entries = &state->titles;
@@ -101,14 +101,22 @@ Component Shell(std::vector<std::unique_ptr<Screen>> screens) {
 
     return CatchEvent(renderer, [state, tabs, pages](const Event& event) {
         const int count = static_cast<int>(state->screens.size());
+        Screen& current = *state->screens[static_cast<std::size_t>(state->active)];
 
-        // Clicks land on the tab strip; let it decide before anything else so a
-        // press on a tab is never read as a key by the active screen.
+        // Clicks land on the tab strip; let it decide first so a press on a tab
+        // is never read as a key by the active screen.
         if (event.is_mouse() && tabs->OnEvent(event)) {
             return true;
         }
 
-        const Screen& current = *state->screens[static_cast<std::size_t>(state->active)];
+        // The screen gets first refusal on keys. Chat claims Tab only while a
+        // completion list is open, so Tab still switches screens the rest of
+        // the time; deciding that here would mean the shell having to know what
+        // each screen is doing at that moment.
+        if (current.OnEvent(event)) {
+            return true;
+        }
+
         if (!current.CapturesTyping()) {
             for (int i = 0; i < count && i < 9; ++i) {
                 if (event == Event::Character(static_cast<char>('1' + i))) {
@@ -134,13 +142,9 @@ Component Shell(std::vector<std::unique_ptr<Screen>> screens) {
             return true;
         }
 
-        // The active body gets the event before the global quit, so a search
-        // field receives a plain q instead of the app exiting under it. The
-        // screen's own hook comes next, for keys no widget claimed.
+        // The body sees the event before the global quit, so a text field gets
+        // a plain q instead of the app exiting under it.
         if (pages->OnEvent(event)) {
-            return true;
-        }
-        if (state->screens[static_cast<std::size_t>(state->active)]->OnEvent(event)) {
             return true;
         }
         if (event == Event::Character('q') || event == Event::Escape) {
