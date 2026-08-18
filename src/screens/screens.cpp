@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "theme/theme.h"
+#include "screens/models.h"
 #include "ui/list.h"
 
 // Four screens. Each is small enough to live here; the first one to grow real
@@ -58,18 +59,6 @@ class Chat final : public ui::Screen {
     Component body_ = Placeholder("No conversation yet", "a model has to be loaded first");
 };
 
-class Models final : public ui::Screen {
-   public:
-    Component Body() override { return body_; }
-    std::string_view Title() const override { return "models"; }
-    Element Hints() const override {
-        return hbox({Hint("/", "search"), Hint("enter", "install"), Hint("d", "remove")});
-    }
-
-   private:
-    Component body_ = Placeholder("No models installed", "the catalog is not connected yet");
-};
-
 class Bench final : public ui::Screen {
    public:
     Component Body() override { return body_; }
@@ -110,7 +99,7 @@ class Settings final : public ui::Screen {
 std::vector<std::unique_ptr<ui::Screen>> All() {
     std::vector<std::unique_ptr<ui::Screen>> screens;
     screens.push_back(std::make_unique<Chat>());
-    screens.push_back(std::make_unique<Models>());
+    screens.push_back(MakeModels());
     screens.push_back(std::make_unique<Bench>());
     screens.push_back(std::make_unique<Settings>());
     return screens;
