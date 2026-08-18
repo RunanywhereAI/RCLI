@@ -68,13 +68,18 @@ bool Session::Start() {
     // is already downloaded.
     rac_model_paths_set_base_dir(home_.c_str());
 
-    rac_platform_adapter_t adapter{};
+    // MUST outlive this function. rac_init stores the POINTER, and commons
+    // calls back through it for every file read, log line and secure-store
+    // access for the life of the process. As a local it went out of scope the
+    // moment Start() returned, and the first callback after that jumped through
+    // freed stack memory — an EXC_BAD_ACCESS at address 0x1.
+    static rac_platform_adapter_t adapter{};
     if (rac_desktop_adapter_init(nullptr, &adapter) != RAC_SUCCESS) {
         error_ = "desktop platform adapter failed to initialise";
         return false;
     }
 
-    rac_config_t config{};
+    static rac_config_t config{};
     config.platform_adapter = &adapter;
     config.log_level = RAC_LOG_ERROR;  // a TUI owns the screen; logs would corrupt it
     if (rac_init(&config) != RAC_SUCCESS) {

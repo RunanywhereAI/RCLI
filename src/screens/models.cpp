@@ -94,7 +94,7 @@ class Models final : public ui::Screen {
             text(std::string(model.id)) | color(marked ? t.text : t.textDim),
             text(model.alias.empty() ? "" : "  " + std::string(model.alias)) | color(t.textFaint),
             filler(),
-            text(std::string(catalog::Label(model.modality))) | color(t.info),
+            text(std::string(catalog::Label(model.category))) | color(t.info),
             text("  "),
             text(catalog::HumanSize(model.bytes)) | color(t.textDim),
             text("  "),

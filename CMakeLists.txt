@@ -30,6 +30,7 @@ add_executable(rcli
     src/screens/chat.cpp
     src/screens/models.cpp
     src/screens/screens.cpp
+    src/sdk/install.cpp
     src/sdk/llm.cpp
     src/sdk/session.cpp
     src/theme/theme.cpp
@@ -50,6 +51,41 @@ foreach(_backend llamacpp onnx sherpa mlx neurt cloud)
     endif()
 endforeach()
 
+
+# Proto-byte ABI access. Downloads, the model registry and the lifecycle are
+# protobuf-only in commons — there is no plain-C equivalent — so a consumer that
+# wants them has to re-attach what rac_commons keeps PRIVATE. This mirrors the
+# SDK's own rcli target; the difference is RCLI_SDK_ROOT, because the SDK is not
+# the top-level project here.
+set(_RAC_CORE "${RCLI_SDK_ROOT}/core")
+if(NOT EXISTS "${_RAC_CORE}/src/generated/proto/model_types.pb.cc")
+    message(FATAL_ERROR
+        "the SDK's generated protos are missing — configure the SDK once so it "
+        "generates them, or check RCLI_SDK_DIR")
+endif()
+target_compile_definitions(rcli PRIVATE RAC_HAVE_PROTOBUF=1)
+if(RAC_PROTOBUF_NAMESPACE_ISOLATED)
+    # The bundled runtime rewrites the google namespace; generated messages
+    # compiled here must agree or the two see different types.
+    target_compile_definitions(rcli PRIVATE google=runanywhere_internal)
+endif()
+target_include_directories(rcli PRIVATE
+    "${_RAC_CORE}/src/generated/proto"
+    "${_RAC_CORE}/src/generated"
+    ${Protobuf_INCLUDE_DIRS}
+)
+if(TARGET protobuf::libprotobuf)
+    target_link_libraries(rcli PRIVATE protobuf::libprotobuf)
+elseif(Protobuf_LIBRARIES)
+    target_link_libraries(rcli PRIVATE ${Protobuf_LIBRARIES})
+endif()
+if(RAC_ABSL_LIBS)
+    target_link_libraries(rcli PRIVATE ${RAC_ABSL_LIBS})
+endif()
+if(RAC_PROTOBUF_COMPILE_OPTIONS)
+    target_compile_options(rcli PRIVATE ${RAC_PROTOBUF_COMPILE_OPTIONS})
+endif()
+
 target_compile_options(rcli PRIVATE -Wall -Wextra)
 
 # scripts/package.sh copies build/rcli into the tarball's bin/, which is what
@@ -59,8 +95,26 @@ set_target_properties(rcli PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_D
 
 # Isolation probe, not shipped: reproduces an SDK call path with no UI so a
 # crash can be attributed to the SDK or to the app.
-add_executable(probe tools/probe.cpp)
+add_executable(probe tools/probe.cpp src/catalog/catalog.cpp src/sdk/install.cpp src/sdk/session.cpp)
+target_include_directories(probe PRIVATE src "${_RAC_CORE}/src/generated/proto" "${_RAC_CORE}/src/generated" ${Protobuf_INCLUDE_DIRS})
+target_compile_definitions(probe PRIVATE RAC_HAVE_PROTOBUF=1)
+if(RAC_PROTOBUF_NAMESPACE_ISOLATED)
+    target_compile_definitions(probe PRIVATE google=runanywhere_internal)
+endif()
 target_link_libraries(probe PRIVATE rac_commons)
+if(TARGET protobuf::libprotobuf)
+    target_link_libraries(probe PRIVATE protobuf::libprotobuf)
+endif()
+if(RAC_ABSL_LIBS)
+    target_link_libraries(probe PRIVATE ${RAC_ABSL_LIBS})
+endif()
+foreach(_b llamacpp onnx sherpa mlx neurt cloud)
+    if(TARGET rac_backend_${_b})
+        string(TOUPPER ${_b} _u)
+        target_compile_definitions(probe PRIVATE RCLI_HAS_${_u}=1)
+        target_link_libraries(probe PRIVATE rac_backend_${_b})
+    endif()
+endforeach()
 if(TARGET rac_backend_llamacpp)
     target_link_libraries(probe PRIVATE rac_backend_llamacpp)
 endif()

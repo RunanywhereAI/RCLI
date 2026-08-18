@@ -13,9 +13,29 @@ namespace rcli::catalog {
 /// this machine at all — MLX and NeuRT are Apple Silicon only.
 enum class Backend { LlamaCpp, Mlx, NeuRT, Onnx, Sherpa };
 
-/// What the model is for. Coarser than the SDK's category enum on purpose: this
-/// is a grouping for the eye, not a routing decision.
-enum class Modality { Language, Vision, Speech, Voice, Embedding, Image };
+/// The SDK's own model category, one to one.
+///
+/// An earlier version of this collapsed these into a coarser set for display
+/// and then used that set to fill ModelInfo.category. VAD and TTS both became
+/// "voice", so installing silero-vad asked the lifecycle to load a VAD graph as
+/// a TTS voice and it failed. Display grouping and routing are different jobs;
+/// this enum does routing, and Label() does the display.
+enum class Category {
+    Language,
+    Multimodal,
+    SpeechRecognition,
+    SpeechSynthesis,
+    VoiceActivityDetection,
+    SpeakerDiarization,
+    SemanticSegmentation,
+    Embedding,
+    ImageGeneration,
+};
+
+/// The on-disk shape, which decides how a model is fetched. Multi-file entries
+/// (an MLX weight directory, a Sherpa bundle) need a file manifest the snapshot
+/// does not carry yet, so only single-file entries can be installed today.
+enum class Format { Gguf, Onnx, Safetensors, Mlpackage, Unspecified };
 
 struct Model {
     std::string_view id;
@@ -23,14 +43,23 @@ struct Model {
     std::string_view alias;
     std::string_view name;
     Backend backend;
-    Modality modality;
+    Category category;
     std::int64_t bytes;
+    /// Empty for a multi-file model, which is exactly the ones we cannot fetch.
+    std::string_view url;
+    Format format;
+    /// 0 when the catalog does not state one.
+    int context_length;
 };
+
+/// True when this entry can be downloaded with what the snapshot knows.
+bool Installable(const Model& model);
 
 std::span<const Model> All();
 
 std::string_view Label(Backend backend);
-std::string_view Label(Modality modality);
+std::string_view Label(Category category);
+std::string_view Label(Format format);
 
 /// "639 MB", "2.5 GB". Sizes come from the catalog and are exact artifact byte
 /// counts, so the rounding here is the only approximation.
