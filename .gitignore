@@ -58,4 +58,6 @@ benchmark_docs/
 
 # CMake FetchContent
 _deps/
-EXTERNAL/
+EXTERNAL/build/
+deps/
+dist/
