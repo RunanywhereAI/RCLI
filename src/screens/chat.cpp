@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "sdk/llm.h"
+#include "tools/shell.h"
 #include "theme/theme.h"
 
 // Chat is deliberately NOT a panelled TUI. It reads as a terminal session —
@@ -122,6 +123,9 @@ class Chat final : public ui::Screen {
         if (line.empty()) {
             return;
         }
+        if (ResolvePending(line)) {
+            return;
+        }
         if (line.front() == '/') {
             Command(line);
             return;
@@ -181,6 +185,8 @@ class Chat final : public ui::Screen {
         if (name == "/?" || name == "/help") {
             Notice("/load <id>   load a model that is already downloaded");
             Notice("/models      list what is on this machine");
+            Notice("/run <cmd>   propose a shell command, then y to run it");
+            Notice("/tools       what the assistant can do besides talk");
             Notice("/clear       clear this conversation");
             Notice("/bye         quit");
             return;
@@ -200,6 +206,14 @@ class Chat final : public ui::Screen {
             Load(argument);
             return;
         }
+        if (name == "/run" || name == "/sh") {
+            Propose(argument);
+            return;
+        }
+        if (name == "/tools") {
+            Notice("run   execute a shell command, after you confirm it");
+            return;
+        }
         if (name == "/clear") {
             std::lock_guard<std::mutex> lock(chat_->mutex);
             chat_->log.clear();
@@ -212,6 +226,41 @@ class Chat final : public ui::Screen {
             return;
         }
         Append(Line::Failure, "unknown command " + name + " — /? for help");
+    }
+
+    /// A proposed command is shown and left pending. Nothing runs until the
+    /// next line is an explicit y, which is the whole point: the model may
+    /// suggest commands, and the person at the keyboard decides.
+    void Propose(const std::string& command) {
+        if (command.empty()) {
+            Append(Line::Failure, "usage: /run <command>");
+            return;
+        }
+        pending_command_ = command;
+        Append(Line::Notice, "about to run:  " + command);
+        Append(Line::Notice, "press y to run it, anything else cancels");
+    }
+
+    /// Returns true when the line was consumed as an answer to a pending
+    /// confirmation.
+    bool ResolvePending(const std::string& line) {
+        if (pending_command_.empty()) {
+            return false;
+        }
+        const std::string command = pending_command_;
+        pending_command_.clear();
+        if (line != "y" && line != "yes") {
+            Notice("cancelled");
+            return true;
+        }
+        Append(Line::Prompt, command);
+        const tools::Output output = tools::Run(command);
+        if (!output.text.empty()) {
+            Append(Line::Answer, output.text);
+        }
+        Append(output.status == 0 ? Line::Notice : Line::Failure,
+               "exit " + std::to_string(output.status));
+        return true;
     }
 
     void Load(const std::string& id) {
@@ -235,6 +284,7 @@ class Chat final : public ui::Screen {
     }
 
     std::string draft_;
+    std::string pending_command_;
     std::shared_ptr<Conversation> chat_ = std::make_shared<Conversation>();
     sdk::Llm llm_;
     Component input_;

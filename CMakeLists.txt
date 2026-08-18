@@ -33,6 +33,7 @@ add_executable(rcli
     src/sdk/llm.cpp
     src/sdk/session.cpp
     src/theme/theme.cpp
+    src/tools/shell.cpp
     src/ui/list.cpp
     src/ui/shell.cpp
 )
