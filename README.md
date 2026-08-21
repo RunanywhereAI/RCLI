@@ -1,305 +1,161 @@
-<p align="center">
-  <img src="assets/rcli_waveform.gif" alt="RCLI Waveform" width="700" />
-  <br>
-  <strong>Talk to your Mac, query your docs, no cloud required.</strong>
-  <br><br>
-  <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/platform-macOS-blue" alt="macOS"></a>
-  <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/chip-Apple_Silicon-black" alt="Apple Silicon"></a>
-  <a href="https://github.com/RunanywhereAI/RCLI"><img src="https://img.shields.io/badge/inference-100%25_local-green" alt="Local"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
-</p>
+# rcli
 
-**RCLI** is an on-device voice AI for macOS. A complete STT + LLM + TTS + VLM pipeline running natively on Apple Silicon — 40 macOS actions via voice, local RAG over your documents, on-device vision (camera & screen analysis), sub-200ms end-to-end latency. No cloud, no API keys.
+`rcli` runs AI models on your own machine: text generation, speech to text, text to speech, and
+image generation, all through the
+[RunAnywhere SDK](https://github.com/RunanywhereAI/runanywhere-sdks).
 
-Powered by [MetalRT](#metalrt-gpu-engine), a proprietary GPU inference engine built by [RunAnywhere, Inc.](https://runanywhere.ai) specifically for Apple Silicon.
+It is a plain command-line tool with no full-screen interface. Results go to stdout, progress and
+errors go to stderr, so a redirect keeps the answer and leaves the progress bar on your terminal:
 
-## Demo
-
-> Real-time screen recordings on Apple Silicon — no cloud, no edits, no tricks.
-
-<table>
-<tr>
-<td width="50%" align="center">
-<strong>Voice Conversation</strong><br>
-<em>Talk naturally — RCLI listens, understands, and responds on-device.</em><br><br>
-<a href="https://youtu.be/qeardCENcV0">
-<img src="assets/demos/demo1-voice-conversation.gif" alt="Voice Conversation Demo" width="100%">
-</a>
-<br><sub>Click for full video with audio</sub>
-</td>
-<td width="50%" align="center">
-<strong>App Control</strong><br>
-<em>Control Spotify, adjust volume — 38 macOS actions by voice.</em><br><br>
-<a href="https://youtu.be/eTYwkgNoaKg">
-<img src="assets/demos/demo2-spotify-volume.gif" alt="App Control Demo" width="100%">
-</a>
-<br><sub>Click for full video with audio</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-<strong>Models</strong><br>
-<em>Browse models, hot-swap LLMs — all from the TUI.</em><br><br>
-<a href="https://youtu.be/HD1aS37zIGE">
-<img src="assets/demos/demo3-benchmarks.gif" alt="Models & Benchmarks Demo" width="100%">
-</a>
-<br><sub>Click for full video with audio</sub>
-</td>
-<td width="50%" align="center">
-<strong>Document Intelligence (RAG)</strong><br>
-<em>Ingest docs, ask questions by voice — ~4ms hybrid retrieval.</em><br><br>
-<a href="https://youtu.be/8FEfbwS7cQ8">
-<img src="assets/demos/demo4-rag-documents.gif" alt="RAG Demo" width="100%">
-</a>
-<br><sub>Click for full video with audio</sub>
-</td>
-</tr>
-</table>
+```bash
+rcli run qwen3 "why is the sky blue" > answer.txt
+```
 
 ## Install
 
-> [IMPORTANT]
-> **Requires macOS 13+ on Apple Silicon. MetalRT engine requires M3 or later.** M1/M2 Macs fall back to llama.cpp automatically.
-
-**One command:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | bash
-```
-
-**Or via Homebrew:**
+The repo is its own Homebrew tap, so the tap needs the explicit URL form:
 
 ```bash
 brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
 brew install rcli
-rcli setup          # required — downloads AI models (~1GB, one-time)
 ```
 
-**Upgrade to latest:**
+Requires an Apple Silicon Mac on macOS 14.5 or later. Nothing else to set up: models download when
+you first ask for one and are kept in `~/.local/share/runanywhere`.
+
+## Quick start
 
 ```bash
-brew update
-brew upgrade rcli
+rcli list --all                    # everything in the catalog
+rcli pull qwen3-0.6b               # download one
+rcli run qwen3 "explain mmap"      # ask once and exit
+rcli run qwen3                     # interactive prompt, /? for commands
+rcli                               # same prompt, no model loaded yet
 ```
 
-<details>
-<summary><strong>Troubleshooting: SHA256 mismatch or stale version</strong></summary>
+Models are named by id (`qwen3-0.6b`) or by the shorter alias (`qwen3`). `rcli run` on a model you
+have not downloaded pulls it first.
 
-If `brew install` or `brew upgrade` fails with a checksum error:
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `rcli run [model] [prompt]` | Talk to a model. With a prompt it answers and exits; without one you get the interactive prompt. `chat` is the same command. |
+| `rcli list [-a]` | Models on this machine. `-a` / `--all` lists the whole catalog and marks what is downloaded. |
+| `rcli search <query>` | Match a query against catalog ids, aliases, and names. |
+| `rcli pull <model>` | Download a model and wait for it to land. |
+| `rcli rm <model>` | Delete a downloaded model and report the space freed. |
+| `rcli show <model>` | Catalog details: engine, kind, format, size, context length, whether it reasons. |
+| `rcli stt <file>` | Transcribe a 16-bit mono WAV. `-m` picks the speech model. |
+| `rcli tts <text>` | Speak text through the speakers, or write a WAV with `-o file`. `-m` picks the voice. |
+| `rcli imagine <prompt>` | Generate an image, draw a preview in the terminal, and print the path. `-m` picks the model, `-q` skips the preview. `draw` is the same command. |
+| `rcli bench [model]` | Measure tokens per second and time to first token, over one model or every downloaded model that generates text. |
+| `rcli engines` | Which engines came up and which primitives each one serves. Engines that were compiled in but did not start are listed with the reason. |
+| `rcli config [setting] [value]` | List settings, read one, or change one. |
+| `rcli where` | The directory models and generated images live in. |
+
+Global flags: `--version`, `-v` / `--verbose` to let the engines log to stderr, and
+`--color auto|always|never`.
+
+`rcli imagine` prints the image path alone on the last line of stdout, so `rcli imagine "a red
+apple" | xargs open` works.
+
+## The interactive prompt
+
+`rcli run <model>` with no prompt opens a readline prompt with history and tab completion. Anything
+that does not start with `/` goes to the model.
+
+| | |
+| --- | --- |
+| `/load <model>` | Load a model, downloading it first if needed |
+| `/models` | What is on this machine |
+| `/pull <model>` | Download from the catalog |
+| `/rm <model>` | Delete a downloaded model |
+| `/show` | Current settings |
+| `/set <key> <value>` | Change a setting |
+| `/image <path>` | Ask about a picture. Needs a vision model loaded, and the turn is single-turn |
+| `/doc <path>` | Put a text file in the context. Text only, truncated at 32000 characters |
+| `/imagine <text>` | Generate an image |
+| `/mic` | Record until you press enter, transcribe, and send |
+| `/say [text]` | Speak the text, or the last answer |
+| `/run <cmd>` | Run a shell command after you confirm it |
+| `/think` | Show or hide the model's reasoning |
+| `/history` | The conversation so far |
+| `/clear` | Forget the conversation |
+| `/bye` | Quit |
+
+Reasoning tokens go to stderr and the answer goes to stdout, which is why redirecting a one-shot
+`run` captures the answer and nothing else.
+
+## Settings
+
+`rcli config` with no arguments lists the settings and their current values:
+
+| Setting | |
+| --- | --- |
+| `accelerator` | `auto`, `cpu`, `gpu`, or `npu`. Advisory; an engine may ignore it |
+| `engine` | Pin one engine instead of letting priority decide. The allowed values are the engines that actually registered on this machine |
+| `context-length` | Context window at load time. `0` leaves it to the engine |
+| `reasoning` | `auto`, `on`, or `off`. `auto` follows the model |
+| `temperature` | `0` is greedy, `2` is as random as the sampler goes |
+| `max-tokens` | Longest answer the model may produce |
+
+Settings live for one process. `rcli config temperature 0.2` changes it for that command and
+nothing else, so to use a setting you either set it in the interactive prompt with `/set` or accept
+the default. There is no config file.
+
+Two environment variables: `RUNANYWHERE_HOME` moves the storage directory, and `RCLI_LOG` names a
+file for the engine logs that `--verbose` would otherwise put on stderr.
+
+## Engines
+
+Six engines are linked into the one binary: mlx, llamacpp, neurt, sherpa, cloud, and onnx. Which
+ones are usable depends on the machine and the build, and `rcli engines` is the honest answer for
+any given install. A model's catalog entry names the engine that runs it, so pulling a model is
+also how you choose an engine.
+
+## Building from source
+
+You need CMake 3.24 or later, Apple Clang for the C++ build, and Xcode for the MLX one. Point the
+build at a checkout of the SDK:
 
 ```bash
-# Force-refresh the tap to pick up the latest formula
-cd $(brew --repo RunanywhereAI/rcli) && git fetch origin && git reset --hard origin/main
-brew reinstall rcli
+cmake -B build -DRCLI_SDK_DIR=/path/to/runanywhere-sdks
+cmake --build build
 ```
 
-If that doesn't work, clean re-tap and clear the download cache:
+Without `RCLI_SDK_DIR` the SDK is fetched at the tag pinned in `cmake/RunAnywhereSDK.cmake`, which
+means a long first build. A sibling checkout reuses what is already built there.
+
+That build produces `build/rcli-cxx`, with five engines and no MLX. For the binary that ships:
 
 ```bash
-brew untap RunanywhereAI/rcli
-rm -rf "$(brew --cache)/downloads/"*rcli*
-brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
-brew install rcli
-rcli setup
+scripts/build-mlx.sh
 ```
 
-</details>
+which produces `build/rcli` with all six.
 
-## Quick Start
+The two steps are not interchangeable. MLX inference is Swift, and SwiftPM on the command line
+cannot compile Metal shaders; mlx-swift documents this in its own README. Only xcodebuild can, so
+xcodebuild has to own the final link. A binary built without the shaders still links MLX, registers
+nothing, and reports MLX as unavailable at runtime. `scripts/build-mlx.sh` harvests the link line
+CMake wrote and hands it to xcodebuild, which is why `cmake --build` has to run first.
 
-```bash
-rcli                             # interactive TUI (push-to-talk + text)
-rcli listen                      # continuous voice mode
-rcli ask "open Safari"           # one-shot command
-rcli ask "play some jazz on Spotify"
-rcli vlm photo.jpg "what's in this image?"  # vision analysis
-rcli camera                      # live camera VLM
-rcli screen                      # screen capture VLM
-rcli metalrt                     # MetalRT GPU engine management
-rcli llamacpp                    # llama.cpp engine management
-```
+One more thing that build produces: `mlx-swift_Cmlx.bundle`, next to the executable. mlx-swift keeps
+its Metal shaders in a resource bundle rather than inside the binary, so moving `rcli` somewhere
+without that directory beside it costs you MLX while the other five engines carry on as if nothing
+happened. The Homebrew formula installs both into `libexec` and symlinks the binary for this reason.
 
+## Licence
 
-## Benchmarks
+This repo is MIT (see [LICENSE](LICENSE)), but it links the RunAnywhere SDK, which is not. The SDK
+is source-available under the RunAnywhere License: free for individuals, for organizations with
+both less than $1M in total funding and less than $1M in gross annual revenue, and for educational
+institutions, non-profits, government bodies, and projects under an OSI-approved open source
+licence. Anyone outside those categories needs a commercial licence, and the contact for that is
+san@runanywhere.ai.
 
-<p align="center">
-  <img src="assets/decode-vs-llamacpp.webp" alt="MetalRT vs llama.cpp decode speed" width="700" />
-  <br>
-  <em>MetalRT decode throughput vs llama.cpp and Apple MLX on Apple M3 Max</em>
-</p>
+Read the [SDK's licence](https://github.com/RunanywhereAI/runanywhere-sdks/blob/main/LICENSE)
+before you build `rcli` into a commercial product. The summary above is not the terms.
 
-<p align="center">
-  <img src="assets/rtf_comparison.webp" alt="STT and TTS real-time factor comparison" width="700" />
-  <br>
-  <em>STT and TTS real-time factor — lower is better. MetalRT STT is 714x faster than real-time.</em>
-</p>
-
-For More info : 
-- https://www.runanywhere.ai/blog/metalrt-fastest-llm-decode-engine-apple-silicon
-- https://www.runanywhere.ai/blog/metalrt-speech-fastest-stt-tts-apple-silicon
-- https://www.runanywhere.ai/blog/fastvoice-on-device-voice-ai-pipeline-apple-silicon
-
-## Features
-
-### Voice Pipeline
-
-A full STT + LLM + TTS pipeline running on Metal GPU with three concurrent threads:
-
-- **VAD** — Silero voice activity detection
-- **STT** — Zipformer streaming + Whisper / Parakeet offline
-- **LLM** — Qwen3 / LFM2 / Qwen3.5 with KV cache continuation and Flash Attention
-- **TTS** — Double-buffered sentence-level synthesis (next sentence renders while current plays)
-- **Tool Calling** — LLM-native tool call formats (Qwen3, LFM2, etc.)
-- **Multi-turn Memory** — Sliding window conversation history with token-budget trimming
-
-### Vision (VLM)
-
-Analyze images, camera captures, and screen regions using on-device vision-language models. VLM runs on the llama.cpp engine via Metal GPU — no cloud.
-
-- **Image Analysis** — `rcli vlm photo.jpg "describe this"` for single-image queries
-- **Camera** — Press **V** in the TUI or run `rcli camera` for live camera analysis
-- **Screen Capture** — Press **S** in the TUI or run `rcli screen` to analyze screen regions
-- **Models** — Qwen3 VL 2B, Liquid LFM2 VL 1.6B, SmolVLM 500M — download on demand via `rcli models vlm`
-
-> **Note:** VLM is currently available on the llama.cpp engine. MetalRT VLM support is coming soon.
-
-### 40 macOS Actions
-
-Control your Mac by voice or text. The LLM routes intent to actions executed locally via AppleScript and shell commands.
-
-| Category | Examples |
-|----------|---------|
-| **Productivity** | `create_note`, `create_reminder`, `run_shortcut` |
-| **Communication** | `send_message`, `facetime_call` |
-| **Media** | `play_on_spotify`, `play_apple_music`, `play_pause`, `next_track`, `set_music_volume` |
-| **System** | `open_app`, `quit_app`, `set_volume`, `toggle_dark_mode`, `screenshot`, `lock_screen` |
-| **Web** | `search_web`, `search_youtube`, `open_url`, `open_maps` |
-
-Run `rcli actions` to see all 40, or toggle them on/off in the TUI Actions panel.
-
-> **Tip:** If tool calling feels unreliable, press **X** in the TUI to clear the conversation and reset context. With small LLMs, accumulated context can degrade tool-calling accuracy — a fresh context often fixes it.
-
-### RAG (Local Document Q&A)
-
-Index local documents, query them by voice. Hybrid vector + BM25 retrieval with ~4ms latency over 5K+ chunks. Supports PDF, DOCX, and plain text.
-
-```bash
-rcli rag ingest ~/Documents/notes
-rcli ask --rag ~/Library/RCLI/index "summarize the project plan"
-```
-
-### Interactive TUI
-
-A terminal dashboard with push-to-talk, live hardware monitoring, model management, and an actions browser.
-
-| Key | Action |
-|-----|--------|
-| **SPACE** | Push-to-talk |
-| **V** | Camera — capture and analyze with VLM |
-| **S** | Screen — capture and analyze a screen region with VLM |
-| **M** | Models — browse, download, hot-swap LLM/STT/TTS/VLM |
-| **A** | Actions — browse, enable/disable macOS actions |
-| **R** | RAG — ingest documents |
-| **X** | Clear conversation and reset context |
-| **T** | Toggle tool call trace |
-| **ESC** | Stop / close / quit |
-
-## MetalRT GPU Engine
-
-MetalRT is a high-performance GPU inference engine built by [RunAnywhere, Inc.](https://runanywhere.ai) specifically for Apple Silicon. It delivers the fastest on-device inference for LLM, STT, and TTS — up to **550 tok/s** LLM throughput and sub-200ms end-to-end voice latency.
-
-> **Apple M3 or later required.** MetalRT uses Metal 3.1 GPU features available on M3, M3 Pro, M3 Max, M4, and later chips. M1/M2 support is coming soon. On M1/M2, RCLI automatically falls back to the open-source llama.cpp engine.
-
-MetalRT is automatically installed during `rcli setup` (choose "MetalRT" or "Both"). Or install separately:
-
-```bash
-rcli metalrt install
-rcli metalrt status
-```
-
-**Supported models:** Qwen3 0.6B, Qwen3 4B, Llama 3.2 3B, LFM2.5 1.2B (LLM) · Whisper Tiny/Small/Medium (STT) · Kokoro 82M with 28 voices (TTS)
-
-MetalRT is distributed under a [proprietary license](https://github.com/RunanywhereAI/metalrt-binaries/blob/main/LICENSE). For licensing inquiries: founder@runanywhere.ai
-
-## Supported Models
-
-RCLI supports 20+ models across LLM, STT, TTS, VLM, VAD, and embeddings. All run locally on Apple Silicon. Use `rcli models` to browse, download, or switch.
-
-**LLM:** LFM2 1.2B (default), LFM2 350M, LFM2.5 1.2B, LFM2 2.6B, Qwen3 0.6B, Qwen3.5 0.8B/2B/4B, Qwen3 4B
-
-**STT:** Zipformer (streaming), Whisper base.en (offline, default), Parakeet TDT 0.6B (~1.9% WER)
-
-**TTS:** Piper Lessac/Amy, KittenTTS Nano, Matcha LJSpeech, Kokoro English/Multi-lang
-
-**VLM:** Qwen3 VL 2B, Liquid LFM2 VL 1.6B, SmolVLM 500M — on-demand download via `rcli models vlm` (llama.cpp engine only)
-
-**Default install** (`rcli setup`): ~1GB — LFM2 1.2B + Whisper + Piper + Silero VAD + Snowflake embeddings. VLM models are downloaded on demand.
-
-```bash
-rcli models                  # interactive model management
-rcli models vlm              # download/manage VLM models
-rcli upgrade-llm             # guided LLM upgrade
-rcli voices                  # browse and switch TTS voices
-rcli cleanup                 # remove unused models
-```
-
-## Build from Source
-
-CPU-only build using llama.cpp + sherpa-onnx (no MetalRT):
-
-```bash
-git clone https://github.com/RunanywhereAI/RCLI.git && cd RCLI
-bash scripts/setup.sh
-bash scripts/download_models.sh
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(sysctl -n hw.ncpu)
-./rcli
-```
-
-All dependencies are vendored or CMake-fetched. Requires CMake 3.15+ and Apple Clang (C++17).
-
-<details>
-<summary><strong>CLI Reference</strong></summary>
-
-```
-rcli                          Interactive TUI (push-to-talk + text + trace)
-rcli listen                   Continuous voice mode
-rcli ask <text>               One-shot text command
-rcli vlm <image> [prompt]     Analyze an image with VLM
-rcli camera [prompt]          Live camera capture + VLM analysis
-rcli screen [prompt]          Screen capture + VLM analysis
-rcli actions [name]           List actions or show detail
-rcli rag ingest <dir>         Index documents for RAG
-rcli rag query <text>         Query indexed documents
-rcli models [llm|stt|tts|vlm] Manage AI models
-rcli voices                   Manage TTS voices
-rcli metalrt                  MetalRT GPU engine management
-rcli llamacpp                 llama.cpp engine management
-rcli setup                    Download default models
-rcli info                     Show engine and model info
-
-Options:
-  --models <dir>      Models directory (default: ~/Library/RCLI/models)
-  --rag <index>       Load RAG index for document-grounded answers
-  --gpu-layers <n>    GPU layers for LLM (default: 99 = all)
-  --ctx-size <n>      LLM context size (default: 4096)
-  --no-speak          Text output only (no TTS)
-  --verbose, -v       Debug logs
-```
-
-</details>
-
-## Contributing
-
-Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and how to add new actions, models, or voices.
-
-## License
-
-RCLI is open source under the [MIT License](LICENSE).
-
-MetalRT is proprietary software by [RunAnywhere, Inc.](https://runanywhere.ai), distributed under a separate [license](https://github.com/RunanywhereAI/metalrt-binaries/blob/main/LICENSE).
-
-<p align="center">
-  Built by <a href="https://www.runanywhere.ai">RunAnywhere, Inc.</a>
-</p>
+Built by [RunAnywhere, Inc.](https://runanywhere.ai)

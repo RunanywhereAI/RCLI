@@ -4,10 +4,19 @@ build-*/
 cmake-build-*/
 dist/
 
-# Dependencies (cloned by scripts/setup.sh, or symlinked for local dev)
+# SwiftPM and xcodebuild output for the Apple entry point. 7 GB of checkouts
+# and object files: worth naming explicitly, because `git add -A` in this repo
+# would otherwise try to commit all of it.
+swift/.build/
+.swiftpm/
+*.xcuserdatad
+
+# Left over from the pre-SDK build, which cloned its engines here. Nothing
+# creates this now; the pattern stays so an old working copy is not committed.
 deps/
 
-# Models (large binary files, download via scripts/download_models.sh)
+# Model weights, in case any land in the tree. rcli keeps them out of the repo,
+# under ~/.local/share/runanywhere.
 # Use /models/ (root-level only) to avoid ignoring src/models/ headers
 /models/
 *.gguf
