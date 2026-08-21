@@ -88,14 +88,19 @@ jobs:
         run: |
           ./build/rcli-cxx --version
           ./build/rcli-cxx --help > /dev/null
-          engines=$(./build/rcli-cxx engines)
-          echo "$engines"
+          # The two streams answer two different questions. stdout lists the
+          # engines that registered; stderr names the ones compiled in that
+          # could not come up here. An engine absent from both was never built.
+          registered=$(./build/rcli-cxx engines 2>/dev/null)
+          reported=$(./build/rcli-cxx engines 2>&1)
+          echo "$reported"
           for e in llamacpp neurt sherpa cloud onnx; do
-            echo "$engines" | grep -q "^${e}\b" || { echo "::error::engine ${e} was not built in"; exit 1; }
+            echo "$reported" | grep -q "^${e} " || { echo "::error::engine ${e} was not built in"; exit 1; }
           done
-          # These three have no hardware excuse, so they must actually register.
-          for e in llamacpp sherpa onnx; do
-            echo "$engines" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+          # neurt is exempt: a CI runner is a VM with no Apple Neural Engine, so
+          # it refuses to register while still shipping in the binary.
+          for e in llamacpp sherpa cloud onnx; do
+            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
               || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
           done
 
@@ -108,9 +113,8 @@ jobs:
       # says MLX is linked and inert, which is the exact failure being tested.
       - name: Check MLX registered
         run: |
-          engines=$(./build/rcli engines)
-          echo "$engines"
-          echo "$engines" | grep -qE "^mlx[[:space:]]+[0-9]+" \
+          ./build/rcli engines
+          ./build/rcli engines 2>/dev/null | grep -qE "^mlx[[:space:]]+[0-9]+" \
             || { echo "::error::MLX is present but did not register"; exit 1; }
 
       # No model is downloaded here: the smallest is hundreds of megabytes, and
@@ -141,5 +145,5 @@ jobs:
           root=$(ls -d "${staging}"/*/)
           mkdir -p "${root}bin"
           ln -s ../libexec/rcli "${root}bin/rcli"
-          "${root}bin/rcli" engines | grep -qE "^mlx[[:space:]]+[0-9]+" \
+          "${root}bin/rcli" engines 2>/dev/null | grep -qE "^mlx[[:space:]]+[0-9]+" \
             || { echo "::error::MLX broke when installed behind a symlink"; exit 1; }

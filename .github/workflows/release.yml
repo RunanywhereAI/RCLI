@@ -91,13 +91,19 @@ jobs:
       # refuses to register here while still shipping in the binary.
       - name: Verify every engine registered
         run: |
-          engines=$(./build/rcli engines)
-          echo "$engines"
+          # stdout lists the engines that registered; stderr names the ones
+          # compiled in that could not come up on this host. Absent from both
+          # means never built.
+          registered=$(./build/rcli engines 2>/dev/null)
+          reported=$(./build/rcli engines 2>&1)
+          echo "$reported"
           for e in mlx llamacpp neurt sherpa cloud onnx; do
-            echo "$engines" | grep -q "^${e}\b" || { echo "::error::engine ${e} was not built in"; exit 1; }
+            echo "$reported" | grep -q "^${e} " || { echo "::error::engine ${e} was not built in"; exit 1; }
           done
+          # neurt is exempt: the runner is a VM with no Apple Neural Engine, so
+          # it refuses to register while still shipping in the binary.
           for e in mlx llamacpp sherpa cloud onnx; do
-            echo "$engines" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
               || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
           done
 
