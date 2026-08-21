@@ -12,10 +12,12 @@ permissions:
   contents: write
 
 env:
-  # Both RAC_ROOT_DIR (needed to configure at all) and the llama.cpp accelerator
-  # fix are on main. Pin this to a tag once the SDK cuts one that contains them,
-  # so a release builds from a fixed point rather than a moving branch.
-  SDK_REF: main
+  # Pinned to a commit, not a branch: a release has to be rebuildable from its
+  # tag, and main moves. This is the SDK commit carrying both RAC_ROOT_DIR
+  # (without which rcli cannot configure at all) and the llama.cpp accelerator
+  # fix. Move it deliberately when picking up SDK changes, and prefer a release
+  # tag once the SDK cuts one that contains them.
+  SDK_REF: a46517cf1c2a1fc258f137a81e6185d7ccc3b62d
 
 jobs:
   macos:
