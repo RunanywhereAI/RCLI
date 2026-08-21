@@ -120,6 +120,16 @@ target_compile_options(rcli_core PRIVATE -Wall -Wextra)
 add_executable(rcli src/main.cpp)
 target_link_libraries(rcli PRIVATE rcli_core)
 
+if(MINGW)
+    # MinGW links its own runtime dynamically by default, so the binary imports
+    # libstdc++-6, libgcc_s_seh-1 and libwinpthread-1 from wherever the compiler
+    # lives. That directory is on PATH on the machine that built it and nowhere
+    # else, which makes the failure invisible in CI and total for a user: the
+    # image will not load and Windows reports it as though the program were
+    # missing. Linking them in costs about a megabyte and removes the class.
+    target_link_options(rcli PRIVATE -static-libgcc -static-libstdc++ -static)
+endif()
+
 if(APPLE)
     # On Apple the shipped `rcli` is the one scripts/build-mlx.sh produces: MLX
     # inference is Swift, so the binary that can use every engine has to be
