@@ -23,8 +23,22 @@ brew install runanywhereai/rcli/rcli
 The name is spelled out because `runanywhereai/tap` also provides a formula called `rcli`. If you
 do not have that tap, plain `brew install rcli` works too.
 
-Requires an Apple Silicon Mac on macOS 14.5 or later. Nothing else to set up: models download when
-you first ask for one and are kept in `~/.local/share/runanywhere`.
+That covers an Apple Silicon Mac on macOS 14.5 or later, and x86-64 Linux through Homebrew on
+Linux. Nothing else to set up: models download when you first ask for one and are kept in
+`~/.local/share/runanywhere`.
+
+## Install on Windows
+
+There is no Homebrew on Windows, so the installer downloads the release and unpacks it itself. In
+PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.ps1 | iex
+```
+
+That puts `rcli` in `%LOCALAPPDATA%\Programs\rcli` and adds the directory to your user PATH, so
+open a new terminal before you run it. 64-bit x86 only, and models are kept in
+`%LOCALAPPDATA%\RunAnywhere`.
 
 ## Quick start
 
@@ -112,10 +126,14 @@ file for the engine logs that `--verbose` would otherwise put on stderr.
 
 ## Engines
 
-Six engines are linked into the one binary: mlx, llamacpp, neurt, sherpa, cloud, and onnx. Which
-ones are usable depends on the machine and the build, and `rcli engines` is the honest answer for
-any given install. A model's catalog entry names the engine that runs it, so pulling a model is
-also how you choose an engine.
+A macOS build links six engines: mlx, llamacpp, neurt, sherpa, cloud, and onnx. Linux and Windows
+get llamacpp, sherpa, cloud, and onnx. MLX is Metal and NeuRT is the Apple Neural Engine, so
+neither has anything to link against elsewhere.
+
+Which of those are usable also depends on the machine, so `rcli engines` is the honest answer for
+any given install: it lists what registered, and names anything that was compiled in but could not
+start, with the reason. A model's catalog entry names the engine that runs it, so pulling a model
+is also how you choose an engine.
 
 ## Building from source
 

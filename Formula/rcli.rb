@@ -1,19 +1,37 @@
 class Rcli < Formula
   desc "Run language, speech and image models on your own machine"
   homepage "https://github.com/RunanywhereAI/RCLI"
-  url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-Darwin-arm64.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
   version "0.4.0"
 
-  depends_on :macos
-  depends_on arch: :arm64
+  # Two builds of the same application. The macOS one adds MLX and NeuRT, which
+  # are Metal and the Apple Neural Engine and have no counterpart elsewhere;
+  # Linux ships llama.cpp, sherpa and ONNX. `rcli engines` reports what a given
+  # build actually has, so the difference is visible rather than implied.
+  #
+  # Windows is not here because Homebrew does not run there. It is installed
+  # with install.ps1 from the same release.
+  on_macos do
+    on_arm do
+      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-macos-arm64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-linux-x86_64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+  end
 
   def install
-    # libexec rather than bin: MLX keeps its Metal shaders in a resource bundle
-    # that has to sit beside the executable, and a bundle loose in Homebrew's
-    # bin/ would be shared with every other formula.
-    libexec.install "libexec/rcli", "libexec/mlx-swift_Cmlx.bundle"
+    # libexec rather than bin: on macOS MLX keeps its Metal shaders in a
+    # resource bundle that has to sit beside the executable, and on Linux the
+    # sherpa and onnxruntime shared objects are reached through an $ORIGIN/lib
+    # rpath. Either one loose in Homebrew's bin/ would be shared with every
+    # other formula.
+    libexec.install Dir["libexec/*"]
     bin.install_symlink libexec/"rcli"
   end
 
@@ -39,9 +57,12 @@ class Rcli < Formula
 
   test do
     assert_match "rcli", shell_output("#{bin}/rcli --version")
-    # Proves the Metal bundle survived the install: without it MLX silently
-    # drops out and the other engines carry on, which is exactly the failure a
-    # smoke test should catch.
-    assert_match "mlx", shell_output("#{bin}/rcli engines")
+    engines = shell_output("#{bin}/rcli engines")
+    # llama.cpp is on every platform, so this proves the binary starts and the
+    # plugin registry came up rather than proving anything platform-specific.
+    assert_match(/^llamacpp\s+\d+/, engines)
+    # On macOS it also proves the Metal bundle survived the install: without it
+    # MLX drops out silently and the other engines carry on.
+    assert_match(/^mlx\s+\d+/, engines) if OS.mac?
   end
 end
