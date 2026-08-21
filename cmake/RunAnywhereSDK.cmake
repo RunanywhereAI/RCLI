@@ -26,6 +26,21 @@ set(RAC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 # rcli lives in this repo now; building the SDK's own copy would produce a
 # second binary with the same name.
 set(RAC_BUILD_CLI OFF CACHE BOOL "" FORCE)
+# RAC_STATIC_PLUGINS is deliberately left at the SDK's own default. Forcing it
+# on folds the cloud engine into rac_commons, which stops it being a
+# rac_backend_cloud target; the loop below then never defines RCLI_HAS_CLOUD and
+# the engine disappears from the binary with nothing to say so.
+
+if(NOT APPLE)
+    # MLX is Metal, and NeuRT is the Apple Neural Engine. Neither has a
+    # non-Apple implementation to link, so asking for them off Apple fails the
+    # configure rather than producing a smaller binary. Linux and Windows get
+    # llama.cpp, sherpa and ONNX; the engine list simply reads shorter there.
+    set(RAC_BACKEND_MLX OFF CACHE BOOL "" FORCE)
+    set(RAC_BACKEND_NEURT OFF CACHE BOOL "" FORCE)
+    # Apple Foundation Models, System TTS and CoreML diffusion.
+    set(RAC_BUILD_PLATFORM OFF CACHE BOOL "" FORCE)
+endif()
 
 if(RCLI_SDK_DIR)
     if(NOT EXISTS "${RCLI_SDK_DIR}/CMakeLists.txt")

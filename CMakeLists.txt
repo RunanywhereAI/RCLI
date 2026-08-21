@@ -47,8 +47,16 @@ add_library(rcli_core STATIC
     src/sdk/speech.cpp
     src/settings/settings.cpp
     src/tools/shell.cpp
-    third_party/linenoise/linenoise.c
 )
+
+# linenoise drives the terminal through termios, which Windows does not have.
+# The console does its own line editing there, and repl.cpp falls back to
+# getline, so the commands are the same and only completion is lost.
+if(WIN32)
+    target_compile_definitions(rcli_core PUBLIC RCLI_NO_LINENOISE=1)
+else()
+    target_sources(rcli_core PRIVATE third_party/linenoise/linenoise.c)
+endif()
 target_include_directories(rcli_core PUBLIC
     src
     third_party/CLI11
