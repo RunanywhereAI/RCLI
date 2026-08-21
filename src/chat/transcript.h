@@ -10,7 +10,9 @@
 
 namespace rcli::chat {
 
-enum class Line { Prompt, Answer, Thinking, Notice, Failure };
+/// Image carries a file path, not text: the transcript stays a list of strings
+/// and the screen decides how to show a picture in a terminal.
+enum class Line { Prompt, Answer, Thinking, Notice, Failure, Image };
 
 struct Entry {
     Line kind = Line::Notice;
@@ -31,10 +33,9 @@ class Transcript {
     std::vector<Entry> entries;
     std::atomic<bool> open{true};
 
-    /// Appends to the reply in progress, splitting <think>…</think> into its
-    /// own entry. Reasoning arrives inline in the token stream, so the split
-    /// has to happen here rather than after the fact.
-    void AppendToken(std::string_view token);
+    /// Appends to the reply in progress. The SDK reports reasoning as its own
+    /// event kind, so no tag parsing is needed: the caller says which it is.
+    void AppendPiece(bool thinking, std::string_view text);
 
     void Push(Line kind, std::string text);
     void Clear();
@@ -42,11 +43,6 @@ class Transcript {
 
    private:
     void PushLocked(Line kind, std::string text);
-
-    bool in_think_ = false;
-    /// A tag can arrive split across tokens, so a partial match is held back
-    /// rather than printed and then regretted.
-    std::string carry_;
 };
 
 }  // namespace rcli::chat

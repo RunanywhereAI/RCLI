@@ -32,10 +32,18 @@ enum class Category {
     ImageGeneration,
 };
 
-/// The on-disk shape, which decides how a model is fetched. Multi-file entries
-/// (an MLX weight directory, a Sherpa bundle) need a file manifest the snapshot
-/// does not carry yet, so only single-file entries can be installed today.
+/// The on-disk shape, which decides how a model is fetched.
 enum class Format { Gguf, Onnx, Safetensors, Mlpackage, Unspecified };
+
+/// One artifact of a multi-file model: an MLX weight directory, a Sherpa
+/// bundle, a GGUF paired with its mmproj.
+struct File {
+    std::string_view url;
+    std::string_view filename;
+    bool required;
+    /// 0 when the catalog does not state one.
+    std::int64_t bytes;
+};
 
 struct Model {
     std::string_view id;
@@ -45,11 +53,17 @@ struct Model {
     Backend backend;
     Category category;
     std::int64_t bytes;
-    /// Empty for a multi-file model, which is exactly the ones we cannot fetch.
+    /// Empty for a multi-file model; `files` carries the manifest instead.
     std::string_view url;
     Format format;
     /// 0 when the catalog does not state one.
     int context_length;
+    /// The model wraps reasoning in think tags. Commons needs this on the
+    /// registry entry to route the reasoning channel instead of guessing, and
+    /// guessing is what leaks a bare `</think>` into the answer.
+    bool thinks;
+    /// Empty for a single-file model, which uses `url`.
+    std::span<const File> files;
 };
 
 /// True when this entry can be downloaded with what the snapshot knows.

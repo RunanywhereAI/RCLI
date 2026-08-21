@@ -30,6 +30,11 @@ std::string Accelerator();
 std::string Engine();
 int ContextLength();
 
+/// Values sent with each generation.
+std::string Reasoning();
+float Temperature();
+int MaxTokens();
+
 }  // namespace rcli::settings
 
 #endif  // RCLI_SETTINGS_SETTINGS_H

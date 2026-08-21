@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
-project(rcli VERSION 0.3.7 LANGUAGES CXX)
+project(rcli VERSION 0.4.0 LANGUAGES C CXX)
 
-# Version stays at the last published release until the rework ships; the
-# Homebrew formula and scripts/package.sh both read it, and moving it early
-# would advertise a build users cannot install yet.
+# 0.3.7 was the last MetalRT release and its tag already carries that tarball,
+# so the rework starts at 0.4.0 rather than reusing it. scripts/package.sh reads
+# this to name the tarball, and the release workflow stamps the same number into
+# Formula/rcli.rb.
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,41 +17,53 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(RunAnywhereSDK)
 
-include(FetchContent)
-FetchContent_Declare(ftxui
-    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
-    GIT_TAG v7.0.3
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(ftxui)
-
-add_executable(rcli
-    src/main.cpp
+# CLI11 and linenoise are vendored rather than fetched: they are the same two
+# the SDK's own rcli vendors, both are a single translation unit, and a release
+# build should not depend on the network reaching two more repositories.
+# Everything except the entry point, so there can be more than one entry point.
+# The Apple build adds a Swift one that registers the MLX callbacks first; both
+# call rcli_run(), so the app itself exists once.
+add_library(rcli_core STATIC
+    src/audio/audio.cpp
     src/catalog/catalog.cpp
     src/chat/complete.cpp
-    src/chat/transcript.cpp
-    src/settings/settings.cpp
-    src/screens/chat.cpp
-    src/screens/models.cpp
-    src/screens/screens.cpp
+    src/cli/app.cpp
+    src/cli/cmd_bench.cpp
+    src/cli/cmd_chat.cpp
+    src/cli/cmd_engines.cpp
+    src/cli/cmd_image.cpp
+    src/cli/cmd_models.cpp
+    src/cli/cmd_speech.cpp
+    src/cli/output.cpp
+    src/cli/preview.cpp
+    src/media/png.cpp
+    src/repl/repl.cpp
+    src/repl/session.cpp
+    src/sdk/download.cpp
+    src/sdk/imagine.cpp
     src/sdk/install.cpp
     src/sdk/llm.cpp
     src/sdk/session.cpp
-    src/theme/theme.cpp
+    src/sdk/speech.cpp
+    src/settings/settings.cpp
     src/tools/shell.cpp
-    src/ui/list.cpp
-    src/ui/shell.cpp
+    third_party/linenoise/linenoise.c
 )
-target_include_directories(rcli PRIVATE src)
-# ftxui::component already pulls dom and screen; naming all three makes the
-# linker warn about duplicate archives.
-target_link_libraries(rcli PRIVATE ftxui::component rac_commons)
-target_compile_definitions(rcli PRIVATE RCLI_VERSION="${PROJECT_VERSION}")
+target_include_directories(rcli_core PUBLIC
+    src
+    third_party/CLI11
+    third_party/linenoise
+)
+# zlib for PNG encode and decode; it is already a transitive dependency of the
+# SDK, naming it here is what makes that explicit rather than accidental.
+find_package(ZLIB REQUIRED)
+target_link_libraries(rcli_core PRIVATE rac_commons ZLIB::ZLIB)
+target_compile_definitions(rcli_core PRIVATE RCLI_VERSION="${PROJECT_VERSION}")
 foreach(_backend llamacpp onnx sherpa mlx neurt cloud)
     if(TARGET rac_backend_${_backend})
         string(TOUPPER ${_backend} _upper)
-        target_compile_definitions(rcli PRIVATE RCLI_HAS_${_upper}=1)
-        target_link_libraries(rcli PRIVATE rac_backend_${_backend})
+        target_compile_definitions(rcli_core PRIVATE RCLI_HAS_${_upper}=1)
+        target_link_libraries(rcli_core PRIVATE rac_backend_${_backend})
     endif()
 endforeach()
 
@@ -66,44 +79,66 @@ if(NOT EXISTS "${_RAC_CORE}/src/generated/proto/model_types.pb.cc")
         "the SDK's generated protos are missing — configure the SDK once so it "
         "generates them, or check RCLI_SDK_DIR")
 endif()
-target_compile_definitions(rcli PRIVATE RAC_HAVE_PROTOBUF=1)
+target_compile_definitions(rcli_core PRIVATE RAC_HAVE_PROTOBUF=1)
 if(RAC_PROTOBUF_NAMESPACE_ISOLATED)
     # The bundled runtime rewrites the google namespace; generated messages
     # compiled here must agree or the two see different types.
-    target_compile_definitions(rcli PRIVATE google=runanywhere_internal)
+    target_compile_definitions(rcli_core PRIVATE google=runanywhere_internal)
 endif()
-target_include_directories(rcli PRIVATE
+target_include_directories(rcli_core PRIVATE
     "${_RAC_CORE}/src/generated/proto"
     "${_RAC_CORE}/src/generated"
     ${Protobuf_INCLUDE_DIRS}
 )
 if(TARGET protobuf::libprotobuf)
-    target_link_libraries(rcli PRIVATE protobuf::libprotobuf)
+    target_link_libraries(rcli_core PRIVATE protobuf::libprotobuf)
 elseif(Protobuf_LIBRARIES)
-    target_link_libraries(rcli PRIVATE ${Protobuf_LIBRARIES})
+    target_link_libraries(rcli_core PRIVATE ${Protobuf_LIBRARIES})
 endif()
 if(RAC_ABSL_LIBS)
-    target_link_libraries(rcli PRIVATE ${RAC_ABSL_LIBS})
+    target_link_libraries(rcli_core PRIVATE ${RAC_ABSL_LIBS})
 endif()
 if(RAC_PROTOBUF_COMPILE_OPTIONS)
-    target_compile_options(rcli PRIVATE ${RAC_PROTOBUF_COMPILE_OPTIONS})
+    target_compile_options(rcli_core PRIVATE ${RAC_PROTOBUF_COMPILE_OPTIONS})
 endif()
 
-target_compile_options(rcli PRIVATE -Wall -Wextra)
+if(APPLE)
+    # AudioQueue, for microphone capture and playback.
+    target_link_libraries(rcli_core PRIVATE "-framework AudioToolbox")
+endif()
 
-# scripts/package.sh copies build/rcli into the tarball's bin/, which is what
-# Formula/rcli.rb installs. Emitting the binary anywhere else silently breaks
-# the release without breaking the build.
+target_compile_options(rcli_core PRIVATE -Wall -Wextra)
+
+add_executable(rcli src/main.cpp)
+target_link_libraries(rcli PRIVATE rcli_core)
+
+if(APPLE)
+    # On Apple the shipped `rcli` is the one scripts/build-mlx.sh produces: MLX
+    # inference is Swift, so the binary that can use every engine has to be
+    # linked by xcodebuild. This one is an intermediate — it exists so CMake
+    # writes the link line that build-mlx.sh harvests, and so there is a way to
+    # build without Xcode. Naming it apart is what stops a later
+    # `cmake --build` from quietly replacing the full binary with this one.
+    set_target_properties(rcli PROPERTIES OUTPUT_NAME "rcli-cxx")
+endif()
+
+# scripts/package.sh copies build/rcli into the tarball's libexec/, which is
+# what Formula/rcli.rb installs before symlinking bin/rcli at it. Emitting the
+# binary anywhere else silently breaks the release without breaking the build.
 set_target_properties(rcli PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 # Isolation probe, not shipped: reproduces an SDK call path with no UI so a
 # crash can be attributed to the SDK or to the app.
-add_executable(probe tools/probe.cpp src/catalog/catalog.cpp src/sdk/install.cpp src/sdk/session.cpp)
+add_executable(probe tools/probe.cpp src/audio/audio.cpp src/catalog/catalog.cpp
+    src/sdk/download.cpp src/sdk/install.cpp src/sdk/llm.cpp src/sdk/session.cpp
+    src/sdk/speech.cpp src/settings/settings.cpp)
 target_include_directories(probe PRIVATE src "${_RAC_CORE}/src/generated/proto" "${_RAC_CORE}/src/generated" ${Protobuf_INCLUDE_DIRS})
 target_compile_definitions(probe PRIVATE RAC_HAVE_PROTOBUF=1)
 if(RAC_PROTOBUF_NAMESPACE_ISOLATED)
     target_compile_definitions(probe PRIVATE google=runanywhere_internal)
 endif()
+# ftxui::screen only: the settings registry carries the theme setting, whose
+# value type is an ftxui colour mode.
 target_link_libraries(probe PRIVATE rac_commons)
 if(TARGET protobuf::libprotobuf)
     target_link_libraries(probe PRIVATE protobuf::libprotobuf)
@@ -118,7 +153,7 @@ foreach(_b llamacpp onnx sherpa mlx neurt cloud)
         target_link_libraries(probe PRIVATE rac_backend_${_b})
     endif()
 endforeach()
-if(TARGET rac_backend_llamacpp)
-    target_link_libraries(probe PRIVATE rac_backend_llamacpp)
+if(APPLE)
+    target_link_libraries(probe PRIVATE "-framework AudioToolbox")
 endif()
 set_target_properties(probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

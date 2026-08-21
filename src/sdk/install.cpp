@@ -9,6 +9,8 @@
 #include "rac/foundation/rac_proto_buffer.h"
 #include "rac/infrastructure/model_management/rac_model_registry.h"
 
+#include "sdk/llm.h"
+
 namespace rcli::sdk {
 namespace {
 
@@ -53,14 +55,86 @@ v1::ModelFormat FileFormat(catalog::Format format) {
     return v1::MODEL_FORMAT_UNSPECIFIED;
 }
 
+/// Multi-file models cannot go through ModelInfo: it has one download_url, and
+/// an MLX weight directory is fifteen files that all have to land together.
+bool RegisterMultiFile(const catalog::Model& model, std::string* error) {
+    v1::RegisterMultiFileModelRequest request;
+    request.set_id(std::string(model.id));
+    request.set_name(std::string(model.name));
+    request.set_framework(Framework(model.backend));
+    request.set_category(Category(model.category));
+    request.set_format(FileFormat(model.format));
+    request.set_download_size_bytes(model.bytes);
+    request.set_source(v1::MODEL_SOURCE_REMOTE);
+    request.set_supports_thinking(model.thinks);
+    // Multi-file registration has no local_path field; a model already on disk
+    // is left alone entirely rather than re-described as remote.
+    if (model.context_length > 0) {
+        request.set_context_length(model.context_length);
+    }
+    for (const catalog::File& file : model.files) {
+        v1::ModelFileDescriptor* descriptor = request.add_files();
+        descriptor->set_url(std::string(file.url));
+        descriptor->set_filename(std::string(file.filename));
+        descriptor->set_is_optional(!file.required);
+        if (file.bytes > 0) {
+            descriptor->set_size_bytes(file.bytes);
+        }
+    }
+
+    std::string bytes;
+    if (!request.SerializeToString(&bytes)) {
+        if (error != nullptr) {
+            *error = "could not serialize the registration";
+        }
+        return false;
+    }
+    rac_proto_buffer_t out;
+    rac_proto_buffer_init(&out);
+    const rac_result_t rc = rac_register_multi_file_model_proto(
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), &out);
+    const rac_result_t status = rc == RAC_SUCCESS ? out.status : rc;
+    rac_proto_buffer_free(&out);
+    if (status != RAC_SUCCESS) {
+        if (error != nullptr) {
+            *error = "register failed (" + std::to_string(status) + ")";
+        }
+        return false;
+    }
+    return true;
+}
+
+/// Where this model already sits on disk, or empty.
+///
+/// Registering a catalog entry describes where to GET a model. Doing that for
+/// one already downloaded overwrites the registry's own record of where it IS,
+/// and the next load re-resolves it as remote and waits on a download that
+/// never needed to happen — an "auto-download timeout" on a model sitting in
+/// the models folder, intermittent because it depends on what the previous run
+/// left behind.
+std::string LocalDirectory(std::string_view id) {
+    for (const LocalModel& local : LocalModels()) {
+        if (local.id == id && local.complete) {
+            return local.dir;
+        }
+    }
+    return {};
+}
+
 }  // namespace
 
 bool Register(const catalog::Model& model, std::string* error) {
     if (!catalog::Installable(model)) {
         if (error != nullptr) {
-            *error = std::string(model.id) + " is a multi-file model; not supported yet";
+            *error = std::string(model.id) + " has no download source";
         }
         return false;
+    }
+    if (!model.files.empty()) {
+        if (!LocalDirectory(model.id).empty()) {
+            return true;
+        }
+        return RegisterMultiFile(model, error);
     }
 
     v1::ModelInfo info;
@@ -71,10 +145,17 @@ bool Register(const catalog::Model& model, std::string* error) {
     info.set_format(FileFormat(model.format));
     info.set_download_url(std::string(model.url));
     info.set_download_size_bytes(model.bytes);
-    info.set_source(v1::MODEL_SOURCE_REMOTE);
+    const std::string local = LocalDirectory(model.id);
+    if (local.empty()) {
+        info.set_source(v1::MODEL_SOURCE_REMOTE);
+    } else {
+        info.set_source(v1::MODEL_SOURCE_LOCAL);
+        info.set_local_path(local);
+    }
     if (model.context_length > 0) {
         info.set_context_length(model.context_length);
     }
+    info.set_supports_thinking(model.thinks);
 
     std::string bytes;
     if (!info.SerializeToString(&bytes)) {
@@ -110,7 +191,12 @@ bool Install(const catalog::Model& model, std::function<void(Progress)> on_progr
     request.set_validate_availability(true);
 
     std::string bytes;
-    request.SerializeToString(&bytes);
+    if (!request.SerializeToString(&bytes)) {
+        if (error != nullptr) {
+            *error = "could not serialize the load request";
+        }
+        return false;
+    }
 
     rac_proto_buffer_t out;
     rac_proto_buffer_init(&out);

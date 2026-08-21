@@ -24,6 +24,15 @@ extern "C" rac_result_t rac_backend_onnx_register(void);
 #if defined(RCLI_HAS_CLOUD)
 extern "C" rac_result_t rac_backend_cloud_register(void);
 #endif
+#if defined(RCLI_HAS_MLX)
+#include "rac/backends/rac_mlx.h"
+#endif
+#if defined(RCLI_HAS_NEURT)
+// NeuRT has no rac_backend_neurt_register(): it needs no bring-up beyond the
+// plugin entry, so the entry is registered directly.
+#include "rac/plugin/rac_plugin_entry_neurt.h"
+
+#endif
 
 namespace rcli::sdk {
 namespace {
@@ -101,6 +110,21 @@ bool Session::Start() {
 #endif
 #if defined(RCLI_HAS_CLOUD)
     rac_backend_cloud_register();
+#endif
+#if defined(RCLI_HAS_MLX)
+    // MLX runs through a Swift bridge that registers its callbacks from the
+    // app side. A C++ terminal has no Swift half, so the engine is linked and
+    // inert rather than absent, and saying so is better than a missing row.
+    if (rac_mlx_is_available() != RAC_TRUE) {
+        skipped_.emplace_back("mlx — needs the Swift MLX runtime callbacks");
+    } else if (rac_backend_mlx_register() != RAC_SUCCESS) {
+        skipped_.emplace_back("mlx — registration refused");
+    }
+#endif
+#if defined(RCLI_HAS_NEURT)
+    if (rac_plugin_register(rac_plugin_entry_neurt()) != RAC_SUCCESS) {
+        skipped_.emplace_back("neurt — registration refused (Apple Neural Engine)");
+    }
 #endif
 
     std::map<std::string, BackendInfo> found;

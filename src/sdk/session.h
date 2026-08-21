@@ -37,6 +37,10 @@ class Session {
 
     const std::vector<BackendInfo>& backends() const { return backends_; }
 
+    /// Engines this build compiled in that did not come up, and why. Naming
+    /// them beats leaving a gap the reader has to explain to themselves.
+    const std::vector<std::string>& skipped() const { return skipped_; }
+
    private:
     Session() = default;
 
@@ -44,6 +48,7 @@ class Session {
     std::string error_;
     std::string home_;
     std::vector<BackendInfo> backends_;
+    std::vector<std::string> skipped_;
 };
 
 }  // namespace rcli::sdk
