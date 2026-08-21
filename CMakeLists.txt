@@ -31,11 +31,13 @@ add_library(rcli_core STATIC
     src/cli/cmd_bench.cpp
     src/cli/cmd_chat.cpp
     src/cli/cmd_engines.cpp
+    src/cli/cmd_harness.cpp
     src/cli/cmd_image.cpp
     src/cli/cmd_models.cpp
     src/cli/cmd_speech.cpp
     src/cli/output.cpp
     src/cli/preview.cpp
+    src/harness/harness.cpp
     src/media/png.cpp
     src/repl/repl.cpp
     src/repl/session.cpp
@@ -66,6 +68,8 @@ target_include_directories(rcli_core PUBLIC
 # SDK, naming it here is what makes that explicit rather than accidental.
 find_package(ZLIB REQUIRED)
 target_link_libraries(rcli_core PRIVATE rac_commons ZLIB::ZLIB)
+# The OpenAI-compatible server `rcli opencode` starts for a local model.
+target_link_libraries(rcli_core PRIVATE rac_server)
 target_compile_definitions(rcli_core PRIVATE RCLI_VERSION="${PROJECT_VERSION}")
 foreach(_backend llamacpp onnx sherpa mlx neurt cloud)
     if(TARGET rac_backend_${_backend})

@@ -26,6 +26,20 @@ set(RAC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 # rcli lives in this repo now; building the SDK's own copy would produce a
 # second binary with the same name.
 set(RAC_BUILD_CLI OFF CACHE BOOL "" FORCE)
+# The OpenAI-compatible HTTP server, which `rcli opencode <local model>` starts
+# so a coding harness can talk to a model running on this machine. Same trick
+# Ollama uses. It pulls cpp-httplib at configure time, which is the one place
+# this build reaches the network for something it does not vendor.
+set(RAC_BUILD_SERVER ON CACHE BOOL "" FORCE)
+# cpp-httplib links OpenSSL, zlib, brotli and zstd whenever it can find them,
+# and on a machine with Homebrew it always can. The server here only ever
+# listens on loopback for a coding harness on the same machine, so none of that
+# is wanted, and taking it would put four Homebrew dylibs into a binary that
+# currently depends on nothing outside the system.
+set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_ZSTD_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 # RAC_STATIC_PLUGINS is deliberately left at the SDK's own default. Forcing it
 # on folds the cloud engine into rac_commons, which stops it being a
 # rac_backend_cloud target; the loop below then never defines RCLI_HAS_CLOUD and

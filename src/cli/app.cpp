@@ -81,6 +81,7 @@ extern "C" int rcli_run(int argc, char** argv) {
     cli::RegisterImage(app, options);
     cli::RegisterBench(app, options);
     cli::RegisterEngines(app, options);
+    cli::RegisterHarness(app, options);
 
     // Only --color is left to decide here; logging was settled in rcli_begin,
     // which had to run before the engines got a chance to write anything.

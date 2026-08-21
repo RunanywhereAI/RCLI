@@ -31,6 +31,7 @@ void RegisterSpeech(CLI::App& app, Options& options);
 void RegisterImage(CLI::App& app, Options& options);
 void RegisterBench(CLI::App& app, Options& options);
 void RegisterEngines(CLI::App& app, Options& options);
+void RegisterHarness(CLI::App& app, Options& options);
 
 /// The interactive prompt, and the one-shot form when `prompt` is not empty.
 int Chat(const std::string& model, const std::string& prompt);
