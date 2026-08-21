@@ -40,6 +40,11 @@ set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_USE_ZSTD_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+# Its non-blocking resolver calls GetAddrInfoExCancel, which MinGW's headers do
+# not declare at any _WIN32_WINNT, so the server will not compile for Windows
+# with it on. Nothing is lost: this server binds loopback and never resolves a
+# name.
+set(HTTPLIB_USE_NON_BLOCKING_GETADDRINFO OFF CACHE BOOL "" FORCE)
 # RAC_STATIC_PLUGINS is deliberately left at the SDK's own default. Forcing it
 # on folds the cloud engine into rac_commons, which stops it being a
 # rac_backend_cloud target; the loop below then never defines RCLI_HAS_CLOUD and
@@ -57,11 +62,10 @@ if(NOT APPLE)
 endif()
 
 if(WIN32)
-    # cpp-httplib calls GetAddrInfoExCancel, which ws2tcpip.h only declares when
-    # the target Windows version is Vista or later. MinGW defaults below that,
-    # so without this the server fails to compile with the API "not declared"
-    # while every other platform builds. Set before the SDK is added so its
-    # targets get it too.
+    # A modern Windows target, which several of the SDK's Win32 calls expect.
+    # Set before the SDK is added so its targets get it too. Note this alone
+    # does not make GetAddrInfoExCancel visible under MinGW; see the httplib
+    # resolver option above for that.
     add_compile_definitions(_WIN32_WINNT=0x0A00)
 endif()
 
