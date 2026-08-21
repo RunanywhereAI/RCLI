@@ -122,7 +122,7 @@ Reasoning tokens go to stderr and the answer goes to stdout, which is why redire
 | `context-length` | Context window at load time. `0` leaves it to the engine |
 | `reasoning` | `auto`, `on`, or `off`. `auto` follows the model |
 | `temperature` | `0` is greedy, `2` is as random as the sampler goes |
-| `max-tokens` | Longest answer the model may produce |
+| `max-tokens` | Longest answer the model may produce, 4096 by default. A model that reasons spends this budget thinking before it answers, so lowering it much can leave no room for the answer itself |
 
 Settings live for one process. `rcli config temperature 0.2` changes it for that command and
 nothing else, so to use a setting you either set it in the interactive prompt with `/set` or accept

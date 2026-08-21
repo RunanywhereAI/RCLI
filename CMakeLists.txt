@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(rcli VERSION 0.4.0 LANGUAGES C CXX)
+project(rcli VERSION 0.4.1 LANGUAGES C CXX)
 
 # 0.3.7 was the last MetalRT release and its tag already carries that tarball,
 # so the rework starts at 0.4.0 rather than reusing it. scripts/package.sh reads
