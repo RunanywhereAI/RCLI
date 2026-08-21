@@ -17,8 +17,11 @@ The repo is its own Homebrew tap, so the tap needs the explicit URL form:
 
 ```bash
 brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
-brew install rcli
+brew install runanywhereai/rcli/rcli
 ```
+
+The name is spelled out because `runanywhereai/tap` also provides a formula called `rcli`. If you
+do not have that tap, plain `brew install rcli` works too.
 
 Requires an Apple Silicon Mac on macOS 14.5 or later. Nothing else to set up: models download when
 you first ask for one and are kept in `~/.local/share/runanywhere`.

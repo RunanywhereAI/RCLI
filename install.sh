@@ -3,7 +3,10 @@ set -euo pipefail
 
 REPO="RunanywhereAI/RCLI"
 TAP="RunanywhereAI/rcli"
-FORMULA="rcli"
+# Fully qualified on purpose. runanywhereai/tap also provides a formula called
+# rcli, and a bare `brew install rcli` on a machine with both taps fails with
+# "Formulae found in multiple taps" rather than picking one.
+FORMULA="runanywhereai/rcli/rcli"
 
 info()  { printf "\033[1;34m==>\033[0m \033[1m%s\033[0m\n" "$*"; }
 ok()    { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
@@ -50,6 +53,7 @@ else
     echo "  Fix what Homebrew reported above, then run:"
     echo "    brew tap $TAP https://github.com/$REPO.git"
     echo "    brew install $FORMULA"
+    echo ""
     echo ""
     fail "Could not install $FORMULA. If it still fails, open an issue at https://github.com/$REPO/issues with the output above."
 fi

@@ -126,8 +126,11 @@ jobs:
 
             ```bash
             brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
-            brew install rcli
+            brew install runanywhereai/rcli/rcli
             ```
+
+            The name is spelled out because `runanywhereai/tap` also provides a
+            formula called `rcli`.
 
             Apple Silicon macOS. Models download on demand into
             `~/.local/share/runanywhere`.
