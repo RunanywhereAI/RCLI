@@ -14,14 +14,14 @@ class Rcli < Formula
   on_macos do
     on_arm do
       url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-macos-arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "ae83a45625d056e031044e865d2852de4cfcedee807a5856a3c01cd25e4b0fe3"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-linux-x86_64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "a3e47f598ee715b9394c25dece48fbf933087ba5e4fdb56fad20ff498bf83883"
     end
   end
 
