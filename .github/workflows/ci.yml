@@ -22,7 +22,11 @@ defaults:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-26 rather than macos-14: swift/Package.swift declares
+    # swift-tools-version 6.0 and the macos-14 image ships Swift 5.10, so
+    # xcodebuild refuses to resolve the package at all. This is also the
+    # runner line the SDK pins for its own Apple lanes, and it is arm64.
+    runs-on: macos-26
     timeout-minutes: 90
 
     steps:

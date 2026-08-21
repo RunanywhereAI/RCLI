@@ -25,7 +25,10 @@ defaults:
 
 jobs:
   build:
-    runs-on: macos-14  # Apple Silicon; the binary is arm64 only
+    # macos-26, matching the SDK's Apple lanes: the macos-14 image ships
+    # Swift 5.10 and swift/Package.swift needs 6.0, so xcodebuild cannot
+    # resolve the package there. arm64, which is what this binary targets.
+    runs-on: macos-26
     steps:
       # Both repos are checked out side by side, and the directory names matter:
       # swift/Package.swift depends on the SDK by the relative path
