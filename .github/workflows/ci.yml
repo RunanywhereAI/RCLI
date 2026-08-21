@@ -11,6 +11,11 @@ on:
   pull_request:
     branches: [main]
 
+# Read is all this lane needs: it builds and checks, and never writes back.
+# Only the release workflow pushes, and it asks for contents: write itself.
+permissions:
+  contents: read
+
 env:
   # Keep in step with release.yml. Must contain the RAC_ROOT_DIR embeddability
   # fix (RunanywhereAI/runanywhere-sdks#753).
