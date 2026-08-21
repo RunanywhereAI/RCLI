@@ -2,7 +2,7 @@ class Rcli < Formula
   desc "Run language, speech and image models on your own machine"
   homepage "https://github.com/RunanywhereAI/RCLI"
   license "MIT"
-  version "0.4.0"
+  version "0.4.1"
 
   # Two builds of the same application. The macOS one adds MLX and NeuRT, which
   # are Metal and the Apple Neural Engine and have no counterpart elsewhere;
@@ -13,15 +13,15 @@ class Rcli < Formula
   # with install.ps1 from the same release.
   on_macos do
     on_arm do
-      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-macos-arm64.tar.gz"
-      sha256 "ae83a45625d056e031044e865d2852de4cfcedee807a5856a3c01cd25e4b0fe3"
+      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.1/rcli-0.4.1-macos-arm64.tar.gz"
+      sha256 "2458af9cd0cac623453b0963d2736d4c5f8b34bb0d9f298fb6a7d9d1b1081b3b"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-linux-x86_64.tar.gz"
-      sha256 "a3e47f598ee715b9394c25dece48fbf933087ba5e4fdb56fad20ff498bf83883"
+      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.1/rcli-0.4.1-linux-x86_64.tar.gz"
+      sha256 "5b6e100346f146732d59c630a33f7cb3cd44eec0b8664253af7b215303a5e208"
     end
   end
 
