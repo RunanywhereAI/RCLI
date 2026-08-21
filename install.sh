@@ -20,15 +20,30 @@ VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
 [[ -n "$VERSION" ]] || fail "Could not determine latest release version. Check your internet connection."
 info "Latest version: v${VERSION}"
 
-[[ "$(uname -s)" == "Darwin" ]] || fail "RCLI requires macOS. Detected: $(uname -s)"
-
+os=$(uname -s)
 arch=$(uname -m)
-[[ "$arch" == "arm64" ]] || fail "RCLI requires Apple Silicon (M1+). Detected: $arch"
+case "${os}/${arch}" in
+    # MLX is Metal and NeuRT is the Apple Neural Engine, so an Intel Mac would
+    # get neither and there is no build for it. Linux is x86-64 only for now.
+    Darwin/arm64)  ;;
+    Linux/x86_64)  ;;
+    Darwin/*)      fail "RCLI needs an Apple Silicon Mac. Detected: ${arch}" ;;
+    Linux/*)       fail "RCLI on Linux is x86-64 only. Detected: ${arch}" ;;
+    *)             fail "RCLI has no build for ${os}. On Windows, use install.ps1." ;;
+esac
 
 if ! command -v brew &>/dev/null; then
     info "Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    eval "$(/opt/homebrew/bin/brew shellenv)"
+    # Homebrew installs to a different prefix on each platform and does not put
+    # itself on PATH, so the shellenv has to come from wherever it landed.
+    for prefix in /opt/homebrew /home/linuxbrew/.linuxbrew /usr/local; do
+        if [ -x "${prefix}/bin/brew" ]; then
+            eval "$("${prefix}/bin/brew" shellenv)"
+            break
+        fi
+    done
+    command -v brew &>/dev/null || fail "Homebrew installed but is not on PATH. Open a new shell and run this again."
 fi
 
 info "Tapping $TAP..."

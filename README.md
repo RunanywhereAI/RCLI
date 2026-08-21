@@ -13,7 +13,14 @@ rcli run qwen3 "why is the sky blue" > answer.txt
 
 ## Install
 
-The repo is its own Homebrew tap, so the tap needs the explicit URL form:
+On macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | bash
+```
+
+That installs Homebrew if you do not have it, adds the tap, and installs rcli. To do the same by
+hand, note that this repo is its own tap, so tapping it needs the explicit URL form:
 
 ```bash
 brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
