@@ -119,6 +119,13 @@ if(APPLE)
     target_link_libraries(rcli_core PRIVATE "-framework AudioToolbox")
 endif()
 
+if(WIN32)
+    # Winsock, for the free-port probe in src/harness. Named here rather than
+    # left to httplib: that code calls socket() before the server starts, so it
+    # cannot rely on something else having pulled the library in.
+    target_link_libraries(rcli_core PRIVATE ws2_32)
+endif()
+
 target_compile_options(rcli_core PRIVATE -Wall -Wextra)
 
 add_executable(rcli src/main.cpp)

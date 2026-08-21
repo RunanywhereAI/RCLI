@@ -9,12 +9,16 @@
 #if defined(_WIN32)
 #include <process.h>
 #include <winsock2.h>
+// Winsock spells these differently: a socket is an unsigned SOCKET rather than
+// a file descriptor, and getsockname takes an int length rather than socklen_t.
+using rcli_socklen_t = int;
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+using rcli_socklen_t = socklen_t;
 #endif
 
 #include "rac/server/rac_server.h"
@@ -45,17 +49,36 @@ std::string Env(const char* name) {
 /// it straight back. There is a race between closing and the server binding,
 /// but the alternative is a fixed port that collides with a second rcli.
 int FreePort() {
-    const int sock = static_cast<int>(socket(AF_INET, SOCK_STREAM, 0));
+#if defined(_WIN32)
+    // Winsock has to be initialised before any socket call, and the server that
+    // would otherwise do it has not started yet. The count is per-process and
+    // refcounted, so starting it here and leaving it up is harmless.
+    static const bool ready = [] {
+        WSADATA data;
+        return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    }();
+    if (!ready) {
+        return 0;
+    }
+    const SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+    // INVALID_SOCKET, not a negative number: SOCKET is unsigned on Windows, so
+    // the usual `< 0` check silently passes for a failed call.
+    if (sock == INVALID_SOCKET) {
+        return 0;
+    }
+#else
+    const int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         return 0;
     }
+#endif
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = 0;
     int port = 0;
     if (bind(sock, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
-        socklen_t length = sizeof(address);
+        rcli_socklen_t length = static_cast<rcli_socklen_t>(sizeof(address));
         if (getsockname(sock, reinterpret_cast<sockaddr*>(&address), &length) == 0) {
             port = ntohs(address.sin_port);
         }
