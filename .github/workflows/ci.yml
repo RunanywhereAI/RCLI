@@ -16,6 +16,13 @@ on:
 permissions:
   contents: read
 
+# A push supersedes whatever was already running for the same ref. Three
+# platforms building the SDK from source is most of an hour of runner time, and
+# an older commit's answer is not worth waiting for once a newer one exists.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Both RAC_ROOT_DIR (needed to configure at all) and the llama.cpp accelerator
   # fix are on main now. Pin this to a tag once the SDK cuts one that contains
@@ -208,6 +215,30 @@ jobs:
       - name: Smoke test
         run: bash scripts/smoke.sh ./build/rcli
 
+      # The staging is the part worth testing: package.sh reads the shared
+      # objects out of ldd, rewrites the rpath to $ORIGIN/lib, and then runs the
+      # staged copy from its own directory. A release is the wrong place to find
+      # out that any of that is wrong.
+      - name: Package
+        run: bash scripts/package.sh
+
+      # Unpack somewhere with no relation to the build tree and run it there,
+      # which is the closest CI gets to a user's machine.
+      - name: Check the packaged binary
+        run: |
+          tarball=$(ls dist/*.tar.gz)
+          staging=$(mktemp -d)
+          tar xzf "${tarball}" -C "${staging}"
+          root=$(ls -d "${staging}"/*/)
+          mkdir -p "${root}bin"
+          ln -s ../libexec/rcli "${root}bin/rcli"
+          engines=$("${root}bin/rcli" engines 2>/dev/null)
+          echo "${engines}"
+          for e in llamacpp sherpa onnx; do
+            echo "${engines}" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+              || { echo "::error::engine ${e} is missing from the package"; exit 1; }
+          done
+
   windows:
     # Native runner rather than a cross build. MinGW via vcpkg, matching the
     # toolchain the SDK's own Windows rcli lane uses.
@@ -321,3 +352,12 @@ jobs:
 
       - name: Smoke test
         run: bash scripts/smoke.sh ./build/rcli.exe
+
+      # Neither this nor install.ps1 has ever run. The script stages the DLLs it
+      # finds in the import table and then runs the staged copy with PATH cut
+      # back to System32, so a DLL that is only present because the build tree
+      # is on PATH fails here rather than on a user's machine.
+      - name: Package
+        shell: pwsh
+        working-directory: RCLI
+        run: ./scripts/package-windows.ps1 -SdkDir "$env:GITHUB_WORKSPACE/runanywhere-sdks"
