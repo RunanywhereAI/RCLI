@@ -1,182 +1,67 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Builds the release tarball: one rcli binary, plus the Metal shaders MLX keeps
+# in a resource bundle rather than inside the executable.
+#
+# Nothing else travels with it. The binary links commons, llama.cpp, sherpa,
+# ONNX and NeuRT statically, so the dylib collection and rpath surgery this
+# script used to do is gone along with the engine it did it for.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-BUILD_DIR="$PROJECT_DIR/build"
+BUILD_DIR="${1:-$PROJECT_DIR/build}"
 
-VERSION=$(grep 'project(rcli VERSION' "$PROJECT_DIR/CMakeLists.txt" | sed 's/.*VERSION \([0-9.]*\).*/\1/')
+# CMakeLists carries the release version, but a prerelease tag adds a suffix
+# CMake's VERSION field cannot hold (v0.4.1-beta.1). RCLI_VERSION lets the
+# caller name the tarball after the tag instead, so the asset and the formula
+# agree.
+VERSION="${RCLI_VERSION:-$(grep 'project(rcli VERSION' "$PROJECT_DIR/CMakeLists.txt" | sed 's/.*VERSION \([0-9.]*\).*/\1/')}"
 ARCH=$(uname -m)
-TARBALL_NAME="rcli-${VERSION}-Darwin-${ARCH}"
-DIST_DIR="$PROJECT_DIR/dist/$TARBALL_NAME"
+NAME="rcli-${VERSION}-Darwin-${ARCH}"
+DIST="$PROJECT_DIR/dist/$NAME"
 
-if [ ! -f "$BUILD_DIR/rcli" ]; then
-    echo "ERROR: build/rcli not found. Run cmake --build first."
+if [ ! -x "$BUILD_DIR/rcli" ]; then
+    echo "ERROR: $BUILD_DIR/rcli not found. Run scripts/build-mlx.sh first." >&2
     exit 1
 fi
 
-echo "Packaging RCLI v${VERSION} for Darwin-${ARCH}"
-echo ""
+# Refuse to ship the CMake-only binary by mistake: it is the same application
+# but MLX cannot register in it, and the difference is invisible until someone
+# tries to run an MLX model.
+if ! "$BUILD_DIR/rcli" engines 2>/dev/null | grep -q '^mlx'; then
+    echo "ERROR: $BUILD_DIR/rcli has no MLX engine." >&2
+    echo "       Run scripts/build-mlx.sh — cmake alone cannot link it." >&2
+    exit 1
+fi
+
+echo "Packaging rcli v${VERSION} for Darwin-${ARCH}"
 
 rm -rf "$PROJECT_DIR/dist"
-mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
+mkdir -p "$DIST/libexec"
 
-# --- Collect binaries ---
-cp "$BUILD_DIR/rcli" "$DIST_DIR/bin/rcli"
-if [ -f "$BUILD_DIR/rcli_overlay" ]; then
-    cp "$BUILD_DIR/rcli_overlay" "$DIST_DIR/bin/rcli_overlay"
-    echo "  + bin/rcli_overlay"
-fi
+cp "$BUILD_DIR/rcli" "$DIST/libexec/rcli"
+cp -R "$BUILD_DIR/mlx-swift_Cmlx.bundle" "$DIST/libexec/"
+echo "  + libexec/rcli"
+echo "  + libexec/mlx-swift_Cmlx.bundle"
 
-# --- Collect dylibs ---
-DYLIBS=(
-    "$BUILD_DIR/bin/libllama.0.dylib"
-    "$BUILD_DIR/bin/libggml.0.dylib"
-    "$BUILD_DIR/bin/libggml-base.0.dylib"
-    "$BUILD_DIR/bin/libggml-cpu.0.dylib"
-    "$BUILD_DIR/bin/libggml-blas.0.dylib"
-    "$BUILD_DIR/bin/libggml-metal.0.dylib"
-    "$BUILD_DIR/lib/libsherpa-onnx-c-api.dylib"
-)
-
-# libmtmd (VLM multimodal) may be in bin/ or mtmd/
-MTMD_DYLIB=$(find "$BUILD_DIR" -name "libmtmd.0.dylib" -not -path "*/CMakeFiles/*" 2>/dev/null | head -1)
-if [ -n "$MTMD_DYLIB" ]; then
-    cp -L "$MTMD_DYLIB" "$DIST_DIR/lib/libmtmd.0.dylib"
-    echo "  + lib/libmtmd.0.dylib"
-else
-    echo "  WARNING: libmtmd.0.dylib not found in build tree"
-fi
-
-ONNX_DYLIB=$(find "$BUILD_DIR/_deps/onnxruntime-src/lib" -name "libonnxruntime.*.*.dylib" 2>/dev/null | head -1)
-if [ -z "$ONNX_DYLIB" ]; then
-    ONNX_DYLIB=$(find "$BUILD_DIR/_deps/onnxruntime-src/lib" -name "libonnxruntime.*.dylib" ! -name "libonnxruntime.dylib" 2>/dev/null | head -1)
-fi
-if [ -z "$ONNX_DYLIB" ]; then
-    ONNX_DYLIB=$(find "$BUILD_DIR" -name "libonnxruntime.*.dylib" ! -name "libonnxruntime.dylib" 2>/dev/null | head -1)
-fi
-if [ -z "$ONNX_DYLIB" ]; then
-    echo "  ERROR: Could not find versioned libonnxruntime dylib anywhere in $BUILD_DIR"
-    echo "  Searched: _deps/onnxruntime-src/lib and recursive fallback"
-    echo "  The packaged binary will fail with dyld errors without this library."
+# Anything outside the system frameworks would have to be shipped too, and
+# nothing here should be.
+STRAY=$(otool -L "$DIST/libexec/rcli" | tail -n +2 | awk '{print $1}' |
+        grep -vE '^/usr/lib/|^/System/Library/' || true)
+if [ -n "$STRAY" ]; then
+    echo "ERROR: the binary depends on libraries that are not being packaged:" >&2
+    echo "$STRAY" | sed 's/^/       /' >&2
     exit 1
 fi
-DYLIBS+=("$ONNX_DYLIB")
 
-for lib in "${DYLIBS[@]}"; do
-    if [ -f "$lib" ]; then
-        cp "$lib" "$DIST_DIR/lib/"
-        echo "  + lib/$(basename "$lib")"
-    else
-        echo "  WARNING: $lib not found, skipping"
-    fi
-done
+# Ad-hoc, which is what Gatekeeper needs for a Homebrew install; a browser
+# download would additionally need notarization with a Developer ID.
+codesign --force --sign - "$DIST/libexec/rcli"
 
-# Also copy the unversioned onnxruntime symlink if the binary references it
-ONNX_BASENAME=$(basename "$ONNX_DYLIB")
-if [ ! -f "$DIST_DIR/lib/libonnxruntime.dylib" ] && [ -f "$DIST_DIR/lib/$ONNX_BASENAME" ]; then
-    (cd "$DIST_DIR/lib" && ln -sf "$ONNX_BASENAME" libonnxruntime.dylib)
-fi
-
-# --- Validate all required dylibs are present ---
-echo ""
-echo "Validating packaged dylibs..."
-REQUIRED_LIBS=(libllama libmtmd libggml libsherpa-onnx-c-api libonnxruntime)
-MISSING=0
-for req in "${REQUIRED_LIBS[@]}"; do
-    if ! ls "$DIST_DIR/lib/"${req}* 1>/dev/null 2>&1; then
-        echo "  ERROR: Required library missing: $req"
-        MISSING=1
-    fi
-done
-
-# Verify the binary can find its dylibs via otool
-NEEDED=$(otool -L "$DIST_DIR/bin/rcli" | grep '@rpath' | awk '{print $1}' | sed 's|@rpath/||')
-for lib in $NEEDED; do
-    if [ ! -f "$DIST_DIR/lib/$lib" ] && [ ! -L "$DIST_DIR/lib/$lib" ]; then
-        echo "  ERROR: Binary references @rpath/$lib but it's not in lib/"
-        MISSING=1
-    fi
-done
-
-if [ "$MISSING" -ne 0 ]; then
-    echo ""
-    echo "  Package is incomplete — missing required shared libraries."
-    echo "  The binary will crash with dyld errors on user machines."
-    exit 1
-fi
-echo "  All required dylibs present."
-
-echo ""
-echo "Fixing rpaths..."
-
-# --- Fix the main binary ---
-BINARY="$DIST_DIR/bin/rcli"
-
-# Remove all existing rpaths from binary
-RPATHS=$(otool -l "$BINARY" | grep -A2 LC_RPATH | grep "path " | awk '{print $2}' || true)
-for rpath in $RPATHS; do
-    install_name_tool -delete_rpath "$rpath" "$BINARY" 2>/dev/null || true
-done
-
-# Add the single correct rpath
-install_name_tool -add_rpath "@executable_path/../lib" "$BINARY" 2>/dev/null || true
-echo "  fixed: rcli binary"
-
-# --- Fix dylib cross-references ---
-# Each dylib uses @rpath/libXXX to reference others.
-# We need dylibs to find each other in the same lib/ directory.
-for lib in "$DIST_DIR/lib/"*.dylib; do
-    [ -L "$lib" ] && continue  # skip symlinks
-    libname=$(basename "$lib")
-
-    # Remove existing absolute rpaths
-    LIB_RPATHS=$(otool -l "$lib" | grep -A2 LC_RPATH | grep "path " | awk '{print $2}' || true)
-    for rpath in $LIB_RPATHS; do
-        install_name_tool -delete_rpath "$rpath" "$lib" 2>/dev/null || true
-    done
-
-    # Add @loader_path so dylibs find each other in the same directory
-    install_name_tool -add_rpath "@loader_path" "$lib" 2>/dev/null || true
-
-    # Fix the install name to use @rpath (most already do, but ensure consistency)
-    current_id=$(otool -D "$lib" | tail -1)
-    if [[ "$current_id" != "@rpath/"* ]]; then
-        install_name_tool -id "@rpath/$libname" "$lib" 2>/dev/null || true
-    fi
-
-    echo "  fixed: $libname"
-done
-
-# --- Ad-hoc codesign everything (required for macOS Gatekeeper) ---
-echo ""
-echo "Codesigning..."
-codesign --force --sign - "$BINARY"
-if [ -f "$DIST_DIR/bin/rcli_overlay" ]; then
-    codesign --force --sign - "$DIST_DIR/bin/rcli_overlay"
-fi
-for lib in "$DIST_DIR/lib/"*.dylib; do
-    codesign --force --sign - "$lib"
-done
-
-# --- Create tarball ---
-echo ""
-echo "Creating tarball..."
 cd "$PROJECT_DIR/dist"
-tar czf "${TARBALL_NAME}.tar.gz" "$TARBALL_NAME"
+tar czf "${NAME}.tar.gz" "$NAME"
+SHA256=$(shasum -a 256 "${NAME}.tar.gz" | awk '{print $1}')
 
-SHA256=$(shasum -a 256 "${TARBALL_NAME}.tar.gz" | awk '{print $1}')
-SIZE=$(du -h "${TARBALL_NAME}.tar.gz" | awk '{print $1}')
-
-echo ""
-echo "========================================"
-echo "  Package: dist/${TARBALL_NAME}.tar.gz"
-echo "  Size:    $SIZE"
-echo "  SHA256:  $SHA256"
-echo "========================================"
-echo ""
-echo "Tarball contents:"
-tar tzf "${TARBALL_NAME}.tar.gz" | head -20
-echo ""
-echo "Update Formula/rcli.rb with:"
+echo
+echo "  dist/${NAME}.tar.gz  ($(du -h "${NAME}.tar.gz" | awk '{print $1}'))"
 echo "  sha256 \"$SHA256\""

@@ -1,50 +1,47 @@
 class Rcli < Formula
-  desc "On-device voice AI for macOS — STT, LLM, TTS, 43 actions, and local RAG"
+  desc "Run language, speech and image models on your own machine"
   homepage "https://github.com/RunanywhereAI/RCLI"
-  url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.3.7/rcli-0.3.7-Darwin-arm64.tar.gz"
-  sha256 "631349d585231b8f9b4590022c8c1fc3525e6112cce2308ee9871856cd327e3c"
+  url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-Darwin-arm64.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
-  version "0.3.7"
+  version "0.4.0"
 
   depends_on :macos
   depends_on arch: :arm64
 
   def install
-    bin.install "bin/rcli"
-    bin.install "bin/rcli_overlay" if File.exist? "bin/rcli_overlay"
-    lib.install Dir["lib/*.dylib"]
-  end
-
-  def post_install
-    ohai "Run 'rcli setup' to download AI models and choose your engine"
+    # libexec rather than bin: MLX keeps its Metal shaders in a resource bundle
+    # that has to sit beside the executable, and a bundle loose in Homebrew's
+    # bin/ would be shared with every other formula.
+    libexec.install "libexec/rcli", "libexec/mlx-swift_Cmlx.bundle"
+    bin.install_symlink libexec/"rcli"
   end
 
   def caveats
     <<~EOS
-      RCLI requires Apple Silicon (M1+).
+      Models are downloaded on demand and kept in
+        ~/.local/share/runanywhere
 
-      Get started:
-        rcli setup              # choose engine + download models (one-time)
-        rcli                    # interactive mode (push-to-talk + text)
-        rcli ask "open Safari"  # one-shot voice command
+      Getting started:
+        rcli list --all              every model in the catalog
+        rcli pull qwen3-0.6b         download one
+        rcli run qwen3-0.6b          talk to it, /? for commands
+        rcli run qwen3-0.6b "hi"     ask once and exit
 
-      Engine options (selected during setup):
-        Open Source   llama.cpp + sherpa-onnx (~1 GB)   — all Apple Silicon
-        MetalRT       GPU-accelerated engine (~0.9 GB)  — M3+ only, 550 tok/s
-        Both          recommended (~1.9 GB)
-
-      MetalRT (GPU acceleration):
-        rcli metalrt install    # install/update MetalRT engine
-        rcli metalrt status     # check MetalRT installation
-
-      Model management:
-        rcli models             # manage all AI models (LLM, STT, TTS)
-        rcli cleanup            # remove unused models to free disk space
-
+      Also:
+        rcli tts "hello"             speak text
+        rcli stt recording.wav       transcribe audio
+        rcli imagine "a red apple"   generate an image
+        rcli bench                   measure generation speed
+        rcli engines                 which backends are available here
     EOS
   end
 
   test do
-    assert_match "RCLI", shell_output("#{bin}/rcli --help")
+    assert_match "rcli", shell_output("#{bin}/rcli --version")
+    # Proves the Metal bundle survived the install: without it MLX silently
+    # drops out and the other engines carry on, which is exactly the failure a
+    # smoke test should catch.
+    assert_match "mlx", shell_output("#{bin}/rcli engines")
   end
 end

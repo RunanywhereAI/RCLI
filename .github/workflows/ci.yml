@@ -3,46 +3,107 @@ name: CI
 on:
   push:
     branches: [main]
+    # The release workflow stamps the formula on main; rebuilding for that
+    # commit would test nothing and take most of an hour.
+    paths-ignore:
+      - 'Formula/**'
+      - '**.md'
   pull_request:
     branches: [main]
 
+env:
+  # Keep in step with release.yml. Must contain the RAC_ROOT_DIR embeddability
+  # fix (RunanywhereAI/runanywhere-sdks#753).
+  SDK_REF: siddhesh/sdk-embeddable-cmake
+
+defaults:
+  run:
+    working-directory: RCLI
+
 jobs:
-  build-and-test:
+  build:
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
+      # The directory names matter: swift/Package.swift depends on the SDK by
+      # the relative path ../../runanywhere-sdks, so the SDK has to be this
+      # checkout's sibling under that name.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: RCLI
 
-      - name: Setup dependencies
-        run: bash scripts/setup.sh
+      - name: Checkout the SDK
+        uses: actions/checkout@v4
+        with:
+          repository: RunanywhereAI/runanywhere-sdks
+          ref: ${{ env.SDK_REF }}
+          path: runanywhere-sdks
 
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=arm64
+      # core/src/generated/proto/ is gitignored, so a fresh clone carries none
+      # and configure stops on the missing model_types.pb.cc.
+      - name: Generate the SDK protos
+        working-directory: runanywhere-sdks
+        run: bash idl/codegen/generate_cpp.sh
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
 
       - name: Build
         run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
 
-      - name: Verify binary
+      # build/rcli-cxx is the cmake output on Apple: five engines, no MLX. The
+      # name differs from the shipping binary on purpose, so a plain cmake build
+      # cannot quietly replace it.
+      - name: Check the five-engine binary
         run: |
-          ./build/rcli --help | head -5
-          echo "Binary built successfully"
+          ./build/rcli-cxx --version
+          ./build/rcli-cxx --help > /dev/null
+          engines=$(./build/rcli-cxx engines)
+          echo "$engines"
+          for e in llamacpp neurt sherpa cloud onnx; do
+            echo "$engines" | grep -q "^${e}" || { echo "::error::engine ${e} is missing"; exit 1; }
+          done
 
-      - name: Smoke test — one-shot ask
-        run: |
-          # Download minimal models for testing
-          ./build/rcli setup --auto 2>&1 || echo "Setup requires interaction, skipping"
-          echo "Smoke test passed"
+      - name: Link the shipping binary
+        run: RCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks" scripts/build-mlx.sh
 
-      - name: Build test harness
+      # The difference between the two binaries is invisible until someone runs
+      # an MLX model, so assert on it rather than trusting the build.
+      - name: Check MLX registered
         run: |
-          if [ -f build/test_pipeline ]; then
-            echo "Test binary found"
-            ls -la build/test_pipeline
-          else
-            echo "Test binary not built (expected if test target not in default build)"
-          fi
+          engines=$(./build/rcli engines)
+          echo "$engines"
+          echo "$engines" | grep -q "^mlx" || { echo "::error::MLX did not register"; exit 1; }
+
+      # No model is downloaded here: the smallest is hundreds of megabytes, and
+      # this only needs to prove the commands parse, reach the SDK and exit
+      # cleanly. Generation itself is covered by the smoke suite run before a
+      # release.
+      - name: Smoke test
+        run: |
+          set -x
+          ./build/rcli list
+          ./build/rcli list --all > /dev/null
+          ./build/rcli search qwen > /dev/null
+          ./build/rcli where
+          ./build/rcli config
+          echo /bye | ./build/rcli run 2>/dev/null || true
+
+      - name: Package
+        run: bash scripts/package.sh
+
+      # A release that installs but cannot find its Metal bundle is the failure
+      # this catches: package.sh lays out libexec/ the way the formula does, and
+      # Homebrew then symlinks bin/rcli at it.
+      - name: Check the packaged binary behind a symlink
+        run: |
+          tarball=$(ls dist/*.tar.gz)
+          staging=$(mktemp -d)
+          tar xzf "${tarball}" -C "${staging}"
+          root=$(ls -d "${staging}"/*/)
+          mkdir -p "${root}bin"
+          ln -s ../libexec/rcli "${root}bin/rcli"
+          "${root}bin/rcli" engines | grep -q "^mlx" \
+            || { echo "::error::MLX broke when installed behind a symlink"; exit 1; }

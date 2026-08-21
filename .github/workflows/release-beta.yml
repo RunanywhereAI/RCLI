@@ -8,57 +8,100 @@ on:
 permissions:
   contents: write
 
+env:
+  # Keep in step with release.yml. Must contain the RAC_ROOT_DIR embeddability
+  # fix (RunanywhereAI/runanywhere-sdks#753); without it cmake resolves the
+  # SDK's own include paths into this repo's tree and configure fails.
+  SDK_REF: siddhesh/sdk-embeddable-cmake
+
+defaults:
+  run:
+    working-directory: RCLI
+
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-14  # Apple Silicon; the binary is arm64 only
     steps:
+      # Both repos are checked out side by side, and the directory names matter:
+      # swift/Package.swift depends on the SDK by the relative path
+      # ../../runanywhere-sdks, so the SDK has to be this checkout's sibling
+      # under the same name. This is also the local development layout, which is
+      # why it is mirrored rather than special-cased.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: RCLI
 
-      - name: Setup dependencies
-        run: bash scripts/setup.sh
+      - name: Checkout the SDK
+        uses: actions/checkout@v4
+        with:
+          repository: RunanywhereAI/runanywhere-sdks
+          ref: ${{ env.SDK_REF }}
+          path: runanywhere-sdks
 
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=arm64
+      # core/src/generated/proto/ is gitignored, so a fresh clone carries none
+      # and rcli's configure stops on the missing model_types.pb.cc. The script
+      # bootstraps its own pinned protoc.
+      - name: Generate the SDK protos
+        working-directory: runanywhere-sdks
+        run: bash idl/codegen/generate_cpp.sh
 
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
+
+      # Produces build/rcli-cxx: five engines, no MLX. Not the binary that
+      # ships, but build-mlx.sh harvests its link line, so it has to exist.
       - name: Build
         run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+
+      # MLX inference is Swift, and SwiftPM on the command line cannot compile
+      # Metal shaders, so only xcodebuild produces the six-engine binary.
+      - name: Link the shipping binary
+        run: RCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks" scripts/build-mlx.sh
+
+      - name: Verify every engine registered
+        run: |
+          engines=$(./build/rcli engines)
+          echo "$engines"
+          for e in mlx llamacpp neurt sherpa cloud onnx; do
+            echo "$engines" | grep -q "^${e}" || { echo "::error::engine ${e} is missing"; exit 1; }
+          done
 
       - name: Package
         id: package
         run: |
-          bash scripts/package.sh
+          # Name the tarball after the tag: CMakeLists cannot hold the -beta.N
+          # suffix, so without this a v0.4.1-beta.1 tag ships an asset called
+          # rcli-0.4.0-... and the formula's url misses it.
+          RCLI_VERSION="${GITHUB_REF_NAME#v}" bash scripts/package.sh
           TARBALL=$(ls dist/*.tar.gz)
-          SHA256=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
-          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
-          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
-          echo "SHA256: $SHA256"
+          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "${TARBALL}")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "${TARBALL}" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Pre-Release
+      # Pre-release, and no formula stamping: Formula/rcli-beta.rb is updated by
+      # hand so a beta never moves what `brew install rcli` resolves to.
+      - name: Create the pre-release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: RCLI/dist/*.tar.gz
           prerelease: true
           generate_release_notes: true
           body: |
-            ## Beta Release — MetalRT Integration
+            ## Install
 
-            This is a **pre-release** for testing MetalRT support.
-            Install alongside your stable `rcli`:
+            A pre-release. It installs as `rcli-beta` and leaves your stable
+            `rcli` alone, so both can sit on the same machine.
 
             ```bash
             brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
             brew install rcli-beta
-            rcli-beta setup       # choose engine
-            rcli-beta metalrt install
             ```
 
-            Your stable `rcli` is NOT affected.
+            Apple Silicon macOS. Models download on demand into
+            `~/.local/share/runanywhere`.
 
-            ### SHA256
+            ### sha256
             ```
             ${{ steps.package.outputs.sha256 }}
             ```
