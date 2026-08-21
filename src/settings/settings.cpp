@@ -13,7 +13,12 @@ std::string g_engine = "auto";
 int g_context_length = 0;
 std::string g_reasoning = "auto";
 float g_temperature = 0.7F;
-int g_max_tokens = 512;
+// 512 is not enough for a model that reasons. Qwen3 and friends spend the
+// budget thinking before they answer, and because reasoning goes to stderr and
+// the answer to stdout, running out mid-thought returns nothing at all on
+// stdout with no error. Half the one-shot runs against mlx-qwen3-0.6b-4bit came
+// back empty at 512.
+int g_max_tokens = 4096;
 
 bool OneOf(const std::vector<std::string>& allowed, const std::string& value) {
     return std::find(allowed.begin(), allowed.end(), value) != allowed.end();

@@ -365,6 +365,7 @@ void Session::Ask(const std::string& prompt) {
     // result and belongs on stdout, the thinking is commentary and belongs on
     // stderr, so `rcli run m "q" > out.txt` captures the answer alone.
     bool in_reasoning = false;
+    bool reasoned = false;
     std::string answer;
     // Generation runs on its own thread so a UI can stay responsive; a prompt
     // has no such need and must not return before the answer is complete.
@@ -381,6 +382,7 @@ void Session::Ask(const std::string& prompt) {
                 if (!in_reasoning) {
                     std::fputs(out::Paint(Ink::Faint, "thinking ").c_str(), stderr);
                     in_reasoning = true;
+                    reasoned = true;
                 }
                 std::fputs(out::Paint(Ink::Faint, token).c_str(), stderr);
                 std::fflush(stderr);
@@ -407,6 +409,16 @@ void Session::Ask(const std::string& prompt) {
     }
     if (!failure.empty()) {
         out::Error(failure);
+    }
+    if (answer.empty() && failure.empty()) {
+        // A model that reasons can spend the whole budget thinking and never
+        // reach an answer. Reasoning is on stderr and the answer on stdout, so
+        // without this the command prints nothing at all and exits 0, which
+        // reads as a broken install rather than a budget that ran out.
+        out::Status(reasoned
+                        ? "the model used its whole token budget reasoning and did not answer; "
+                          "raise max-tokens or turn reasoning off"
+                        : "the model returned nothing");
     }
     if (!answer.empty()) {
         std::fputc('\n', stdout);
