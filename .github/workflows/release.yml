@@ -225,7 +225,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rcli-windows-x86_64
-          path: RCLI/dist/*.zip
+          path: |
+            RCLI/dist/*.zip
+            RCLI/dist/*.sha256
 
   publish:
     needs: [macos, linux, windows]
@@ -245,6 +247,7 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
+            artifacts/*.sha256
           generate_release_notes: true
           body: |
             ## Install

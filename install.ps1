@@ -70,8 +70,11 @@ try {
         # not the line of text this needs.
         $ShaFile = Join-Path $Temp $ShaAsset.name
         Invoke-WebRequest -Uri $ShaAsset.browser_download_url -OutFile $ShaFile
-        $Expected = ((Get-Content -Raw -LiteralPath $ShaFile) -split '\s+')[0]
-        $Actual = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash
+        # Both lowercased rather than relying on -ne being case-insensitive:
+        # Get-FileHash returns uppercase and the sidecar is written lowercase,
+        # so the comparison only looks wrong until you know that rule.
+        $Expected = ((Get-Content -Raw -LiteralPath $ShaFile) -split '\s+')[0].ToLowerInvariant()
+        $Actual = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($Actual -ne $Expected) {
             Fail "Checksum mismatch on $AssetName. Expected $Expected, got $Actual. Do not use this download."
         }

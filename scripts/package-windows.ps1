@@ -157,6 +157,13 @@ $Zip = Join-Path $Dist "$Name.zip"
 Compress-Archive -Path $Stage -DestinationPath $Zip -CompressionLevel Optimal
 $Sha256 = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
 
+# Written as a sidecar because install.ps1 checks the download against it, and
+# unlike the macOS and Linux packages there is no Homebrew formula carrying the
+# digest for Windows. Without this the installer has nothing to verify and
+# silently skips the check. Format matches sha256sum, so the file is also usable
+# by hand.
+Set-Content -LiteralPath "$Zip.sha256" -Value "$Sha256  $Name.zip" -NoNewline -Encoding ascii
+
 Write-Host ''
 Write-Host ("  dist/$Name.zip  ({0:N1} MB)" -f ((Get-Item -LiteralPath $Zip).Length / 1MB))
 Write-Host "  sha256 `"$Sha256`""
