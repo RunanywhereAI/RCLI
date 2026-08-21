@@ -264,14 +264,47 @@ jobs:
 
       # onnxruntime and sherpa ship as DLLs on Windows rather than being linked
       # in, so the binary cannot start until they are findable.
+      # onnxruntime and sherpa ship as DLLs on Windows rather than being linked
+      # in, so the binary cannot start until they are findable. A missing one
+      # does not produce a helpful error: Windows fails to load the image and
+      # the shell reports 127, the same code it uses for a command that is not
+      # there at all. Hence failing here, where the cause is still obvious.
       - name: Add native runtimes to PATH
         shell: pwsh
         run: |
           $onnx = Get-ChildItem "$env:GITHUB_WORKSPACE/RCLI/build" -Filter onnxruntime.dll -File -Recurse |
             Select-Object -First 1
-          if ($onnx) { $onnx.DirectoryName | Out-File $env:GITHUB_PATH -Encoding utf8 -Append }
-          "$env:GITHUB_WORKSPACE\runanywhere-sdks\core\third_party\sherpa-onnx-windows\lib" |
-            Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not $onnx) { throw "onnxruntime.dll is not under the build tree; the ONNX engine cannot load" }
+          Write-Host "onnxruntime.dll: $($onnx.FullName)"
+          $onnx.DirectoryName | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+          $sherpa = "$env:GITHUB_WORKSPACE\runanywhere-sdks\core\third_party\sherpa-onnx-windows\lib"
+          if (-not (Test-Path $sherpa)) { throw "$sherpa does not exist; the sherpa prebuilts did not land" }
+          Get-ChildItem $sherpa -Filter *.dll | ForEach-Object { Write-Host "sherpa: $($_.Name)" }
+          $sherpa | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # Names every DLL the binary imports and says which cannot be resolved.
+      # Without this a load failure is a bare 127 with nothing to act on.
+      - name: Resolve the import table
+        shell: pwsh
+        run: |
+          $exe = "$env:GITHUB_WORKSPACE/RCLI/build/rcli.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not produced by the build" }
+          # Only direct imports. A missing transitive one fails the same way, so
+          # a clean list here is necessary rather than sufficient; the run below
+          # is what actually settles it.
+          $dirs = @((Split-Path $exe), (Join-Path $env:SystemRoot 'System32')) +
+                  ($env:PATH -split ';' | Where-Object { $_ })
+          $missing = @()
+          foreach ($line in (& objdump -p $exe | Select-String '^\s*DLL Name:\s*(\S+)')) {
+              $dep = $line.Matches[0].Groups[1].Value
+              $at = $dirs | Where-Object { Test-Path -LiteralPath (Join-Path $_ $dep) -ErrorAction SilentlyContinue } |
+                    Select-Object -First 1
+              if ($at) { Write-Host "  ok      $dep  ($at)" }
+              else { Write-Host "  MISSING $dep"; $missing += $dep }
+          }
+          if ($missing) { throw "rcli.exe imports DLLs that are not on PATH: $($missing -join ', ')" }
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "rcli.exe will not start even though every direct import resolved" }
 
       - name: Check the engines
         run: |
