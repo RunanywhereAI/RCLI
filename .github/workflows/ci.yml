@@ -143,10 +143,24 @@ jobs:
           staging=$(mktemp -d)
           tar xzf "${tarball}" -C "${staging}"
           root=$(ls -d "${staging}"/*/)
+          # An exec wrapper, which is what the formula installs. A symlink here
+          # would pass this check and still ship a broken MLX: the engine finds
+          # its shaders relative to the launch path, and a symlink in bin/ makes
+          # that bin/, where the bundle is not.
           mkdir -p "${root}bin"
-          ln -s ../libexec/rcli "${root}bin/rcli"
+          printf '#!/bin/bash\nexec "%s" "$@"\n' "${root}libexec/rcli" > "${root}bin/rcli"
+          chmod +x "${root}bin/rcli"
           "${root}bin/rcli" engines 2>/dev/null | grep -qE "^mlx[[:space:]]+[0-9]+" \
-            || { echo "::error::MLX broke when installed behind a symlink"; exit 1; }
+            || { echo "::error::MLX did not register in the packaged layout"; exit 1; }
+
+          # Registration is not the same as working. MLX reports itself
+          # available whenever it can see the shader bundle, then fails at load
+          # time if the launch path is wrong, so v0.4.0 shipped an MLX that
+          # registered and could not generate. Only a token settles it.
+          ./build/rcli pull mlx-qwen3-0.6b-4bit
+          out=$("${root}bin/rcli" run mlx-qwen3-0.6b-4bit "say ok" 2>/dev/null)
+          echo "generated: ${out}"
+          [ -n "${out}" ] || { echo "::error::MLX registered but generated nothing"; exit 1; }
 
   linux:
     # MLX is Metal and NeuRT is the Apple Neural Engine, so neither exists here.

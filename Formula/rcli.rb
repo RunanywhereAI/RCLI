@@ -32,7 +32,13 @@ class Rcli < Formula
     # rpath. Either one loose in Homebrew's bin/ would be shared with every
     # other formula.
     libexec.install Dir["libexec/*"]
-    bin.install_symlink libexec/"rcli"
+    # A wrapper that execs, not a symlink. MLX finds its Metal shaders relative
+    # to the path the process was launched from, and through a symlink in bin/
+    # that is bin/, where the bundle is not. The engine still reports itself
+    # available, because the check that answers that question does resolve the
+    # link, so the failure only shows up when a model actually runs. exec'ing
+    # from libexec means the launch path is the real one.
+    bin.write_exec_script libexec/"rcli"
   end
 
   def caveats
@@ -63,6 +69,14 @@ class Rcli < Formula
     assert_match(/^llamacpp\s+\d+/, engines)
     # On macOS it also proves the Metal bundle survived the install: without it
     # MLX drops out silently and the other engines carry on.
-    assert_match(/^mlx\s+\d+/, engines) if OS.mac?
+    # Registration is not the same as working: MLX reports itself available
+    # whenever the shader bundle exists anywhere it can see, and then fails at
+    # load time if the launch path is wrong. Generating a token is what
+    # separates the two, so the test does that rather than reading a table.
+    if OS.mac?
+      assert_match(/^mlx\s+\d+/, engines)
+      system bin/"rcli", "pull", "mlx-qwen3-0.6b-4bit"
+      assert_match(/\S/, shell_output("#{bin}/rcli run mlx-qwen3-0.6b-4bit 'say ok' 2>/dev/null"))
+    end
   end
 end
