@@ -3,23 +3,15 @@ set -euo pipefail
 
 REPO="RunanywhereAI/RCLI"
 TAP="RunanywhereAI/rcli"
-FORMULA="rcli"
+# Fully qualified on purpose. runanywhereai/tap also provides a formula called
+# rcli, and a bare `brew install rcli` on a machine with both taps fails with
+# "Formulae found in multiple taps" rather than picking one.
+FORMULA="runanywhereai/rcli/rcli"
 
 info()  { printf "\033[1;34m==>\033[0m \033[1m%s\033[0m\n" "$*"; }
 ok()    { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 warn()  { printf "\033[1;33mWarning:\033[0m %s\n" "$*"; }
 fail()  { printf "\033[1;31mError:\033[0m %s\n" "$*" >&2; exit 1; }
-
-ENGINE_FLAG=""
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --engine)
-            ENGINE_FLAG="$2"; shift 2 ;;
-        --engine=*)
-            ENGINE_FLAG="${1#*=}"; shift ;;
-        *) shift ;;
-    esac
-done
 
 info "Checking latest RCLI release..."
 VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
@@ -28,15 +20,30 @@ VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
 [[ -n "$VERSION" ]] || fail "Could not determine latest release version. Check your internet connection."
 info "Latest version: v${VERSION}"
 
-[[ "$(uname -s)" == "Darwin" ]] || fail "RCLI requires macOS. Detected: $(uname -s)"
-
+os=$(uname -s)
 arch=$(uname -m)
-[[ "$arch" == "arm64" ]] || fail "RCLI requires Apple Silicon (M1+). Detected: $arch"
+case "${os}/${arch}" in
+    # MLX is Metal and NeuRT is the Apple Neural Engine, so an Intel Mac would
+    # get neither and there is no build for it. Linux is x86-64 only for now.
+    Darwin/arm64)  ;;
+    Linux/x86_64)  ;;
+    Darwin/*)      fail "RCLI needs an Apple Silicon Mac. Detected: ${arch}" ;;
+    Linux/*)       fail "RCLI on Linux is x86-64 only. Detected: ${arch}" ;;
+    *)             fail "RCLI has no build for ${os}. On Windows, use install.ps1." ;;
+esac
 
 if ! command -v brew &>/dev/null; then
     info "Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    eval "$(/opt/homebrew/bin/brew shellenv)"
+    # Homebrew installs to a different prefix on each platform and does not put
+    # itself on PATH, so the shellenv has to come from wherever it landed.
+    for prefix in /opt/homebrew /home/linuxbrew/.linuxbrew /usr/local; do
+        if [ -x "${prefix}/bin/brew" ]; then
+            eval "$("${prefix}/bin/brew" shellenv)"
+            break
+        fi
+    done
+    command -v brew &>/dev/null || fail "Homebrew installed but is not on PATH. Open a new shell and run this again."
 fi
 
 info "Tapping $TAP..."
@@ -49,33 +56,21 @@ info "Installing RCLI v${VERSION}..."
 if brew upgrade "$FORMULA" 2>/dev/null || brew install "$FORMULA" 2>/dev/null; then
     ok "Installed via Homebrew"
 else
-    warn "brew install failed (likely macOS 26 CLT issue). Installing manually..."
-
-    brew fetch "$FORMULA" 2>/dev/null || true
-
-    CACHED="$(brew --cache "$FORMULA" 2>/dev/null || true)"
-
-    if [[ -z "$CACHED" || ! -f "$CACHED" ]]; then
-        info "Downloading tarball directly..."
-        CACHED="/tmp/rcli-${VERSION}.tar.gz"
-        curl -fsSL -o "$CACHED" \
-            "https://github.com/$REPO/releases/download/v${VERSION}/rcli-${VERSION}-Darwin-arm64.tar.gz"
-    fi
-
-    WORKDIR=$(mktemp -d)
-    tar xzf "$CACHED" -C "$WORKDIR"
-
-    CELLAR="/opt/homebrew/Cellar/$FORMULA/$VERSION"
-    rm -rf "$CELLAR" 2>/dev/null || sudo rm -rf "$CELLAR"
-    mkdir -p "$CELLAR/bin" "$CELLAR/lib" 2>/dev/null || sudo mkdir -p "$CELLAR/bin" "$CELLAR/lib"
-    cp "$WORKDIR"/rcli-*/bin/rcli "$CELLAR/bin/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/bin/rcli "$CELLAR/bin/"
-    cp "$WORKDIR"/rcli-*/bin/rcli_overlay "$CELLAR/bin/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/bin/rcli_overlay "$CELLAR/bin/" 2>/dev/null || true
-    cp "$WORKDIR"/rcli-*/lib/*.dylib "$CELLAR/lib/" 2>/dev/null || sudo cp "$WORKDIR"/rcli-*/lib/*.dylib "$CELLAR/lib/"
-
-    brew link --overwrite "$FORMULA" 2>/dev/null || sudo brew link --overwrite "$FORMULA"
-
-    rm -rf "$WORKDIR"
-    ok "Installed manually into Homebrew Cellar"
+    # There used to be a fallback here that unpacked the tarball into the Cellar
+    # by hand. Homebrew is the only supported path now: the formula puts rcli and
+    # mlx-swift_Cmlx.bundle in libexec and symlinks bin/rcli at the binary, and
+    # if the bundle does not end up beside the executable MLX quietly reports
+    # itself unavailable while the other five engines carry on. That is not a
+    # failure worth risking in an installer that cannot test for it.
+    warn "brew install failed. Re-running it with the output shown:"
+    brew install "$FORMULA" || true
+    echo ""
+    echo "  Fix what Homebrew reported above, then run:"
+    echo "    brew tap $TAP https://github.com/$REPO.git"
+    echo "    brew install $FORMULA"
+    echo ""
+    echo ""
+    fail "Could not install $FORMULA. If it still fails, open an issue at https://github.com/$REPO/issues with the output above."
 fi
 
 if ! command -v rcli &>/dev/null; then
@@ -84,24 +79,10 @@ fi
 
 ok "RCLI v${VERSION} installed successfully"
 echo ""
-info "Setting up AI models and engine (one-time)..."
-
-if [[ -n "$ENGINE_FLAG" ]]; then
-    case "$ENGINE_FLAG" in
-        llamacpp|1)  echo "1" | rcli setup ;;
-        metalrt|2)   echo "2" | rcli setup ;;
-        both|3)      echo "3" | rcli setup ;;
-        *)
-            warn "Unknown engine '$ENGINE_FLAG'. Valid: llamacpp, metalrt, both"
-            rcli setup </dev/tty
-            ;;
-    esac
-else
-    # When piped (curl | bash), stdin is the pipe — redirect from /dev/tty
-    # so the user can interactively choose their engine.
-    if [[ -t 0 ]]; then
-        rcli setup
-    else
-        rcli setup </dev/tty
-    fi
-fi
+info "Getting started:"
+echo "    rcli list --all              every model in the catalog"
+echo "    rcli pull qwen3-0.6b         download one"
+echo "    rcli run qwen3-0.6b          talk to it, /? for commands"
+echo "    rcli engines                 which backends are available here"
+echo ""
+echo "  Models download on demand into ~/.local/share/runanywhere"

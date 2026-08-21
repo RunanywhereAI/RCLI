@@ -1,179 +1,166 @@
-# Contributing to RCLI
+# Contributing to rcli
 
-Thanks for your interest in contributing. This guide covers how to build, test, and extend RCLI.
+`rcli` is the terminal half of the product. Every model, engine and inference call comes from the
+[RunAnywhere SDK](https://github.com/RunanywhereAI/runanywhere-sdks), so a change to how a model
+runs usually belongs there, and a change to how it is asked for belongs here.
 
 ## Prerequisites
 
-- macOS 13+ on Apple Silicon (M1 or later)
-- CMake 3.15+
-- Apple Clang (ships with Xcode or Command Line Tools)
+- An Apple Silicon Mac on macOS 14.5 or later
+- CMake 3.24 or later
+- Apple Clang, from Xcode or the Command Line Tools
+- Xcode itself, for the binary that ships. `xcodebuild` owns the final link, and the reason is
+  below.
+- Optionally a checkout of `runanywhere-sdks`. Without one, CMake fetches the tag pinned in
+  `cmake/RunAnywhereSDK.cmake`, which means a long first build.
+
+If you do use a local checkout, keep it named `runanywhere-sdks` and put it beside this repo.
+`swift/Package.swift` depends on the SDK by the relative path `../../runanywhere-sdks`, so the name
+and the position both matter. CI mirrors that layout rather than special-casing it.
+
+A fresh SDK clone carries no generated protos, because `core/src/generated/proto/` is gitignored.
+Configure will stop on a missing `model_types.pb.cc`. Generate them once, from the SDK checkout:
+
+```bash
+bash idl/codegen/generate_cpp.sh
+```
 
 ## Build
 
+Two steps, and they are not interchangeable.
+
 ```bash
 git clone https://github.com/RunanywhereAI/RCLI.git && cd RCLI
-bash scripts/setup.sh              # clone llama.cpp + sherpa-onnx into deps/
-bash scripts/download_models.sh    # download models (~1GB)
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(sysctl -n hw.ncpu)
-./rcli
+cmake -B build -DRCLI_SDK_DIR=/path/to/runanywhere-sdks
+cmake --build build
 ```
 
-Debug build:
+That produces `build/rcli-cxx`, with five engines and no MLX. For the binary that ships:
 
 ```bash
-cmake .. -DCMAKE_BUILD_TYPE=Debug
-cmake --build . -j$(sysctl -n hw.ncpu)
+scripts/build-mlx.sh
 ```
 
-## Test
+which produces `build/rcli` with all six.
+
+MLX inference is written in Swift, and SwiftPM on the command line cannot compile Metal shaders.
+mlx-swift says so in its own README. Only `xcodebuild` can, so `xcodebuild` has to own the final
+link. A binary built without the shaders still links MLX, registers nothing, and reports MLX as
+unavailable at runtime. `scripts/build-mlx.sh` harvests the link line CMake wrote and hands it to
+`xcodebuild`, which is why `cmake --build` has to run first.
+
+The names differ on purpose. A later `cmake --build` would otherwise replace the six-engine binary
+with the five-engine one and nothing would look wrong until someone ran an MLX model.
+
+That second step also produces `mlx-swift_Cmlx.bundle` next to the executable. mlx-swift keeps its
+Metal shaders in a resource bundle rather than inside the binary, so copying `rcli` somewhere
+without that directory beside it costs you MLX while the other five engines carry on as if nothing
+happened. `scripts/package.sh` and `Formula/rcli.rb` both exist in the shape they do for this
+reason: `libexec/` holds the binary and the bundle together, and `bin/rcli` is a symlink.
+
+The build type defaults to Release. For a debug build, configure a second directory so the release
+one survives:
 
 ```bash
-cd build
-./rcli_test ~/Library/RCLI/models
-./rcli_test ~/Library/RCLI/models --actions-only    # fast, no models needed
-./rcli_test ~/Library/RCLI/models --llm-only
-./rcli_test ~/Library/RCLI/models --stt-only
-./rcli_test ~/Library/RCLI/models --tts-only
-./rcli_test ~/Library/RCLI/models --api-only
+cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DRCLI_SDK_DIR=/path/to/runanywhere-sdks
+cmake --build build-debug
 ```
 
-The `--actions-only` suite runs without any model downloads and is a good smoke test.
+## Tests
 
-## Architecture Overview
+There is no test suite in this repo yet. What stands in for one is `.github/workflows/ci.yml`,
+which builds both binaries, asserts that every engine registered, runs the commands that need no
+model, packages the tarball, and checks that MLX still works when the binary is reached through the
+Homebrew symlink. You can run the same pass locally:
 
+```bash
+./build/rcli-cxx --version
+./build/rcli engines
+./build/rcli list
+./build/rcli list --all
+./build/rcli search qwen
+./build/rcli show qwen3-0.6b
+./build/rcli where
+./build/rcli config
+echo /bye | ./build/rcli run
 ```
-Mic → VAD → STT → [RAG] → LLM → TTS → Speaker
-                            |
-                     Tool Calling → macOS Actions
-```
 
-Three threads run concurrently in live mode:
+None of that downloads a model. The smallest is a few hundred megabytes, so generation itself is
+checked by hand before a release.
 
-1. **STT thread** — captures mic audio, runs VAD, detects speech endpoints
-2. **LLM thread** — receives transcribed text, generates tokens, dispatches tool calls
-3. **TTS thread** — queues sentences from LLM, double-buffered playback
+`tools/probe.cpp` builds a `probe` binary that reproduces an SDK call path with no terminal output
+around it. It is not shipped. Use it when a crash could be either side of the seam and you need to
+know which.
 
-Synchronization uses `std::condition_variable` + mutex on pending text. Audio passes between threads via lock-free ring buffers.
-
-### Source Layout
+## Source layout
 
 ```
 src/
-  engines/     ML engine wrappers (stt, llm, tts, vad, embedding)
-  pipeline/    Orchestrator, sentence detector, text sanitizer
-  rag/         Vector index, BM25, hybrid retriever, document processor
-  core/        types.h, ring_buffer.h, memory_pool.h, hardware_profile.h
-  audio/       CoreAudio mic/speaker I/O, WAV file I/O
-  tools/       Tool calling engine with JSON schema definitions
-  bench/       Benchmark harness (STT, LLM, TTS, E2E, RAG, memory)
-  actions/     macOS action implementations (AppleScript + shell)
-  api/         C API (rcli_api.h/.cpp) — the engine's public interface
-  cli/         main.cpp, TUI dashboard (FTXUI), model pickers, help
-  models/      Model registries (LLM, TTS, STT) with on-demand download
-  test/        Pipeline test harness
+  main.cpp       the C++ entry point; calls rcli_run()
+  cli/           command registration, output, terminal image preview
+  repl/          the interactive prompt and its slash commands
+  chat/          transcript and completion
+  catalog/       the model catalog snapshot
+  sdk/           the seam with the SDK: session, download, install, llm, speech, imagine
+  settings/      the settings registry
+  audio/         CoreAudio capture and playback
+  media/         PNG encode and decode
+  tools/         shell execution for the /run command
+swift/           the Apple entry point: registers the MLX callbacks, then calls rcli_run()
+third_party/     CLI11 and linenoise, vendored
+tools/probe.cpp  isolation probe, not shipped
 ```
 
-### Key Files
+The application exists once. `src/main.cpp` and `swift/Sources/RCLIMLX` are two entry points into
+the same `rcli_run()`, which is what stops the Apple build and the plain one from drifting.
 
-| File | What it does |
-|------|-------------|
-| `src/api/rcli_api.h` | Public C API — all engine functionality exposed here |
-| `src/pipeline/orchestrator.h` | Central class that owns all engines and coordinates data flow |
-| `src/actions/action_registry.h` | Action registration and dispatch |
-| `src/models/model_registry.h` | LLM model definitions (id, URL, size, speed, flags) |
-| `src/models/tts_model_registry.h` | TTS voice definitions |
-| `src/models/stt_model_registry.h` | STT model definitions |
-| `src/tools/tool_engine.h` | Tool call parsing and execution |
+## Adding a command
 
-## Extension Points
+Commands live one per file in `src/cli/`. To add one:
 
-### Adding a New macOS Action
+1. Write `src/cli/cmd_yours.cpp` with a `RegisterYours(CLI::App&, Options&)` function.
+2. Declare it in `src/cli/commands.h`.
+3. Call it from `rcli_run()` in `src/cli/app.cpp`.
+4. Add the file to the `rcli_core` sources in `CMakeLists.txt`.
 
-Actions live in `src/actions/`. Each action is a function registered with the `ActionRegistry`.
+Two conventions worth knowing. CLI11 callbacks return void, so an exit code travels back through
+`Options::status` rather than an exception: a bad model name is an ordinary failure and should not
+unwind through the SDK. And call `Start()` before touching the SDK. It brings the session up once,
+on the first command that needs it, so `--help` and `--version` never pay for it.
 
-1. Open `src/actions/macos_actions.h` (or create a new `.h` file)
-2. Write your action function:
+## Adding a setting
 
-```cpp
-inline ActionResult action_my_feature(const std::string& params_json) {
-    // Parse JSON params (use the lightweight JSON helpers in the file)
-    // Execute via AppleScript, shell command, or native API
-    // Return ActionResult{true, "output text"} or {false, "error message"}
-}
-```
+Add one `Setting` to `src/settings/settings.cpp`. It carries its own name, summary, allowed values,
+getter and setter, which is enough for `rcli config`, the `/set` command and its tab completion to
+pick it up without any of the three being touched.
 
-3. Register it in `src/actions/action_registry.h` inside `register_defaults()`:
+Settings live for one process. There is no config file, and adding one that `rcli run` silently
+obeys is a bigger decision than a patch should make on its own.
 
-```cpp
-register_action("my_feature", action_my_feature, ActionDef{
-    "my_feature",
-    "Description of what it does",
-    "category",
-    R"({"type":"object","properties":{"param1":{"type":"string"}},"required":["param1"]})"
-});
-```
+## Adding a model
 
-4. The action is now available via `rcli actions`, `rcli action my_feature '{...}'`, and automatic LLM tool calling.
+Not here. `src/catalog/catalog.cpp` is a snapshot extracted from the SDK's own catalog so that ids,
+aliases and byte counts match what the SDK ships. Hand-editing it puts the two out of step. Add the
+model to the SDK, then regenerate the snapshot. Once this repo can read the live registry through
+the SDK, the table goes away.
 
-### Adding a New LLM Model
+## Code style
 
-Edit `src/models/model_registry.h` and add an entry to the `all_models()` function:
+- C++20, Apple Clang, built with `-Wall -Wextra`
+- stdout carries what the user asked for. Progress, notices and errors go to stderr, which is what
+  makes `rcli imagine "..." | xargs open` work. Use `out::Line()` for the first and `out::Status()`
+  or `out::Error()` for the second, from `src/cli/output.h`.
+- No emoji in output.
+- Colour goes through `out::Paint()`, never a raw escape sequence. Colour is decided once and is
+  off when stdout is not a terminal.
+- Comment where a reader would otherwise be misled: an invariant that is not visible locally, a
+  workaround and the reason it exists, a constraint imposed from outside. Do not restate the line
+  below.
 
-```cpp
-{
-    /* id            */ "my-model-id",
-    /* name          */ "My Model Name",
-    /* filename      */ "my-model.gguf",
-    /* url           */ "https://huggingface.co/.../resolve/main/my-model.gguf",
-    /* family        */ "model-family",
-    /* size_mb       */ 500,
-    /* priority      */ 10,
-    /* speed_est     */ "~200 t/s",
-    /* tool_calling  */ "Good",
-    /* description   */ "Brief description of the model.",
-    /* is_default    */ false,
-    /* is_recommended*/ false,
-},
-```
+## Pull requests
 
-The model will appear in `rcli models`, `rcli upgrade-llm`, and the TUI models panel.
-
-### Adding a New TTS Voice
-
-Edit `src/models/tts_model_registry.h` and add an entry to `all_tts_models()`. The key fields are:
-
-- `architecture` — the sherpa-onnx TTS backend (`vits`, `kokoro`, `matcha`, `kitten`)
-- `dir_name` — subdirectory under `~/Library/RCLI/models/`
-- `download_url` — URL to a `.tar.bz2` archive that extracts to `dir_name/`
-
-### Adding a New STT Model
-
-Edit `src/models/stt_model_registry.h`. STT models are either `streaming` (live mic) or `offline` (batch transcription).
-
-## Code Style
-
-- C++17, Apple Clang
-- No external package manager — all dependencies are vendored or fetched via CMake
-- Avoid emojis in output strings — use plain text markers (`[ok]`, `[PASS]`, `>`, `*`, `Tip:`)
-- Header-only where practical for CLI modules (reduces build complexity)
-- Use `fprintf(stderr, ...)` for user-facing output (stdout is reserved for machine-parseable output)
-
-## Pull Requests
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-change`)
-3. Make your changes and ensure the build succeeds
-4. Run `./rcli_test` if your changes affect the engine
-5. Open a pull request with a clear description of what changed and why
-
-## Good First Issues
-
-If you're looking for a place to start:
-
-- Add a new macOS action (see "Adding a New macOS Action" above)
-- Add a new LLM model to the registry
-- Improve error messages or help text
-- Add a benchmark for a new component
-- Write documentation for an under-documented feature
+1. Branch off `main`.
+2. Make both build steps pass, not just the first. A change that breaks only the MLX link is
+  invisible to `cmake --build`.
+3. Run the smoke pass above.
+4. Describe what changed and why.

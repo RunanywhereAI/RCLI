@@ -1,32 +1,33 @@
 class RcliBeta < Formula
-  desc "RCLI with MetalRT support (beta)"
+  desc "Run language, speech and image models on your own machine (beta)"
   homepage "https://github.com/RunanywhereAI/RCLI"
-  url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.2.0-beta.1/rcli-0.2.0-Darwin-arm64.tar.gz"
-  sha256 "6ee8e62485d6cdcab75322f2288a0fe63ba01e93311e034a836ee621b19837cf"
+  url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0-beta.1/rcli-0.4.0-beta.1-Darwin-arm64.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
-  version "0.2.0-beta.1"
+  version "0.4.0-beta.1"
 
   depends_on :macos
   depends_on arch: :arm64
 
-  # Installs as 'rcli-beta' so it doesn't conflict with stable 'rcli'
+  # Installed as rcli-beta so it can sit alongside a stable rcli. Each formula
+  # gets its own libexec, so the two Metal bundles do not collide.
   def install
-    bin.install "bin/rcli" => "rcli-beta"
-    lib.install Dir["lib/*.dylib"]
+    libexec.install "libexec/rcli", "libexec/mlx-swift_Cmlx.bundle"
+    bin.install_symlink libexec/"rcli" => "rcli-beta"
   end
 
   def caveats
     <<~EOS
-      This is the BETA version of RCLI with MetalRT support.
-      It installs as 'rcli-beta' and does NOT replace your stable 'rcli'.
+      This is a prerelease. It installs as rcli-beta and leaves a stable rcli
+      alone, so both can be on the machine at once.
 
-      Get started:
-        rcli-beta setup
-        rcli-beta metalrt install
-        rcli-beta engine metalrt
+      Models are downloaded on demand and kept in
+        ~/.local/share/runanywhere
 
-      Both rcli and rcli-beta can coexist on the same machine.
-      If the beta doesn't work, just use your stable 'rcli'.
+      Getting started:
+        rcli-beta list --all         every model in the catalog
+        rcli-beta pull qwen3-0.6b    download one
+        rcli-beta run qwen3-0.6b     talk to it, /? for commands
 
       To remove:
         brew uninstall rcli-beta
@@ -34,6 +35,9 @@ class RcliBeta < Formula
   end
 
   test do
-    assert_match "rcli", shell_output("#{bin}/rcli-beta info 2>&1", 0)
+    assert_match "rcli", shell_output("#{bin}/rcli-beta --version")
+    # Proves the Metal bundle survived the install: without it MLX drops out
+    # silently and the other five engines carry on.
+    assert_match "mlx", shell_output("#{bin}/rcli-beta engines")
   end
 end

@@ -3,46 +3,361 @@ name: CI
 on:
   push:
     branches: [main]
+    # The release workflow stamps the formula on main; rebuilding for that
+    # commit would test nothing and take most of an hour.
+    paths-ignore:
+      - 'Formula/**'
+      - '**.md'
   pull_request:
     branches: [main]
 
+# Read is all this lane needs: it builds and checks, and never writes back.
+# Only the release workflow pushes, and it asks for contents: write itself.
+permissions:
+  contents: read
+
+# A push supersedes whatever was already running for the same ref. Three
+# platforms building the SDK from source is most of an hour of runner time, and
+# an older commit's answer is not worth waiting for once a newer one exists.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Both RAC_ROOT_DIR (needed to configure at all) and the llama.cpp accelerator
+  # fix are on main now. Pin this to a tag once the SDK cuts one that contains
+  # them, so a build is reproducible from a fixed point.
+  SDK_REF: main
+
 jobs:
-  build-and-test:
-    runs-on: macos-14
-    timeout-minutes: 30
+  macos:
+    # macos-26 rather than macos-14: swift/Package.swift declares
+    # swift-tools-version 6.0 and the macos-14 image ships Swift 5.10, so
+    # xcodebuild refuses to resolve the package at all. This is also the runner
+    # line the SDK pins for its own Apple lanes, and it is arm64.
+    runs-on: macos-26
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: RCLI
 
     steps:
+      # The directory names matter: swift/Package.swift depends on the SDK by
+      # the relative path ../../runanywhere-sdks, so the SDK has to be this
+      # checkout's sibling under that name.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: RCLI
 
-      - name: Setup dependencies
-        run: bash scripts/setup.sh
+      - name: Checkout the SDK
+        uses: actions/checkout@v4
+        with:
+          repository: RunanywhereAI/runanywhere-sdks
+          ref: ${{ env.SDK_REF }}
+          path: runanywhere-sdks
 
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES=arm64
+      # core/src/generated/proto/ is gitignored, so a fresh clone carries none
+      # and configure stops on the missing model_types.pb.cc.
+      - name: Generate the SDK protos
+        working-directory: runanywhere-sdks
+        run: bash idl/codegen/generate_cpp.sh
+
+      # Sherpa is where STT, TTS and VAD come from. Upstream ships only shared
+      # libraries for macOS, so the SDK builds it from source here; Linux and
+      # Windows get prebuilts. Without it the backend configures OFF and the
+      # binary loses three modalities with nothing worse than a status line.
+      - name: Read the pinned sherpa commit
+        id: sherpa
+        working-directory: runanywhere-sdks
+        run: echo "commit=$(grep '^SHERPA_ONNX_COMMIT_MACOS=' core/VERSIONS | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore sherpa
+        id: sherpa-cache
+        uses: actions/cache@v4
+        with:
+          path: runanywhere-sdks/core/third_party/sherpa-onnx-macos
+          key: sherpa-macos-${{ runner.arch }}-${{ steps.sherpa.outputs.commit }}
+
+      # Ten minutes or so from cold, which is why it is cached on the pinned
+      # commit rather than rebuilt every run.
+      - name: Build sherpa
+        if: steps.sherpa-cache.outputs.cache-hit != 'true'
+        working-directory: runanywhere-sdks
+        run: bash core/scripts/macos/download-sherpa-onnx.sh
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
 
       - name: Build
         run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
 
-      - name: Verify binary
+      # build/rcli-cxx is the cmake output on Apple: five engines, no MLX. The
+      # name differs from the shipping binary on purpose, so a plain cmake build
+      # cannot quietly replace it.
+      - name: Check the five-engine binary
         run: |
-          ./build/rcli --help | head -5
-          echo "Binary built successfully"
+          ./build/rcli-cxx --version
+          ./build/rcli-cxx --help > /dev/null
+          # The two streams answer two different questions. stdout lists the
+          # engines that registered; stderr names the ones compiled in that
+          # could not come up here. An engine absent from both was never built.
+          registered=$(./build/rcli-cxx engines 2>/dev/null)
+          reported=$(./build/rcli-cxx engines 2>&1)
+          echo "$reported"
+          for e in llamacpp neurt sherpa cloud onnx; do
+            echo "$reported" | grep -q "^${e} " || { echo "::error::engine ${e} was not built in"; exit 1; }
+          done
+          # neurt is exempt: a CI runner is a VM with no Apple Neural Engine, so
+          # it refuses to register while still shipping in the binary.
+          for e in llamacpp sherpa cloud onnx; do
+            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
+          done
 
-      - name: Smoke test — one-shot ask
-        run: |
-          # Download minimal models for testing
-          ./build/rcli setup --auto 2>&1 || echo "Setup requires interaction, skipping"
-          echo "Smoke test passed"
+      # MLX inference is Swift, and SwiftPM on the command line cannot compile
+      # Metal shaders, so only xcodebuild produces the six-engine binary.
+      - name: Link the shipping binary
+        run: RCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks" scripts/build-mlx.sh
 
-      - name: Build test harness
+      # Matching the priority column matters: a bare "^mlx" also matches the row
+      # that says MLX is linked and inert, which is the exact failure tested for.
+      - name: Check MLX registered
         run: |
-          if [ -f build/test_pipeline ]; then
-            echo "Test binary found"
-            ls -la build/test_pipeline
-          else
-            echo "Test binary not built (expected if test target not in default build)"
-          fi
+          ./build/rcli engines
+          ./build/rcli engines 2>/dev/null | grep -qE "^mlx[[:space:]]+[0-9]+" \
+            || { echo "::error::MLX is present but did not register"; exit 1; }
+
+      - name: Smoke test
+        run: bash scripts/smoke.sh ./build/rcli
+
+      - name: Package
+        run: bash scripts/package.sh
+
+      # A release that installs but cannot find its Metal bundle is the failure
+      # this catches: package.sh lays out libexec/ the way the formula does, and
+      # Homebrew then symlinks bin/rcli at it.
+      - name: Check the packaged binary behind a symlink
+        run: |
+          tarball=$(ls dist/*.tar.gz)
+          staging=$(mktemp -d)
+          tar xzf "${tarball}" -C "${staging}"
+          root=$(ls -d "${staging}"/*/)
+          mkdir -p "${root}bin"
+          ln -s ../libexec/rcli "${root}bin/rcli"
+          "${root}bin/rcli" engines 2>/dev/null | grep -qE "^mlx[[:space:]]+[0-9]+" \
+            || { echo "::error::MLX broke when installed behind a symlink"; exit 1; }
+
+  linux:
+    # MLX is Metal and NeuRT is the Apple Neural Engine, so neither exists here.
+    # Linux ships llama.cpp, sherpa and ONNX, and cmake/RunAnywhereSDK.cmake
+    # turns the Apple-only engines off rather than failing the configure.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: RCLI
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: RCLI
+
+      - name: Checkout the SDK
+        uses: actions/checkout@v4
+        with:
+          repository: RunanywhereAI/runanywhere-sdks
+          ref: ${{ env.SDK_REF }}
+          path: runanywhere-sdks
+
+      # libcurl is what the desktop adapter's HTTP transport links, and zlib is
+      # what src/media/png.cpp uses. patchelf makes the package relocatable.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev zlib1g-dev patchelf
+
+      - name: Generate the SDK protos
+        working-directory: runanywhere-sdks
+        run: bash idl/codegen/generate_cpp.sh
+
+      # Prebuilt here, unlike macOS where upstream ships no static libraries.
+      - name: Sherpa-ONNX prebuilts
+        working-directory: runanywhere-sdks
+        run: ./core/scripts/linux/download-sherpa-onnx.sh
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
+
+      - name: Build
+        run: cmake --build build --config Release -j$(nproc)
+
+      - name: Check the engines
+        run: |
+          ./build/rcli --version
+          ./build/rcli --help > /dev/null
+          registered=$(./build/rcli engines 2>/dev/null)
+          reported=$(./build/rcli engines 2>&1)
+          echo "$reported"
+          for e in llamacpp sherpa onnx; do
+            echo "$reported" | grep -q "^${e} " || { echo "::error::engine ${e} was not built in"; exit 1; }
+            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
+          done
+          # Apple-only, and their absence here is the intended outcome rather
+          # than a build that quietly lost them.
+          for e in mlx neurt; do
+            echo "$reported" | grep -q "^${e} " && { echo "::error::${e} should not exist on Linux"; exit 1; }
+          done
+          true
+
+      - name: Smoke test
+        run: bash scripts/smoke.sh ./build/rcli
+
+      # The staging is the part worth testing: package.sh reads the shared
+      # objects out of ldd, rewrites the rpath to $ORIGIN/lib, and then runs the
+      # staged copy from its own directory. A release is the wrong place to find
+      # out that any of that is wrong.
+      - name: Package
+        run: bash scripts/package.sh
+
+      # Unpack somewhere with no relation to the build tree and run it there,
+      # which is the closest CI gets to a user's machine.
+      - name: Check the packaged binary
+        run: |
+          tarball=$(ls dist/*.tar.gz)
+          staging=$(mktemp -d)
+          tar xzf "${tarball}" -C "${staging}"
+          root=$(ls -d "${staging}"/*/)
+          mkdir -p "${root}bin"
+          ln -s ../libexec/rcli "${root}bin/rcli"
+          engines=$("${root}bin/rcli" engines 2>/dev/null)
+          echo "${engines}"
+          for e in llamacpp sherpa onnx; do
+            echo "${engines}" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+              || { echo "::error::engine ${e} is missing from the package"; exit 1; }
+          done
+
+  windows:
+    # Native runner rather than a cross build. MinGW via vcpkg, matching the
+    # toolchain the SDK's own Windows rcli lane uses.
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: RCLI
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: RCLI
+
+      - name: Checkout the SDK
+        uses: actions/checkout@v4
+        with:
+          repository: RunanywhereAI/runanywhere-sdks
+          ref: ${{ env.SDK_REF }}
+          path: runanywhere-sdks
+
+      - name: Install static libcurl
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install curl:x64-mingw-static zlib:x64-mingw-static --host-triplet=x64-mingw-static
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
+
+      - name: Generate the SDK protos
+        working-directory: runanywhere-sdks
+        run: bash idl/codegen/generate_cpp.sh
+
+      - name: Sherpa-ONNX prebuilts
+        shell: cmd
+        working-directory: runanywhere-sdks
+        run: core\scripts\windows\download-sherpa-onnx.bat
+
+      - name: Configure
+        shell: pwsh
+        working-directory: RCLI
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          "-DRCLI_SDK_DIR=$env:GITHUB_WORKSPACE/runanywhere-sdks"
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-mingw-static
+          -DVCPKG_HOST_TRIPLET=x64-mingw-static
+          -DGGML_METAL=OFF
+
+      - name: Build
+        shell: pwsh
+        working-directory: RCLI
+        run: cmake --build build --config Release
+
+      # onnxruntime and sherpa ship as DLLs on Windows rather than being linked
+      # in, so the binary cannot start until they are findable.
+      # onnxruntime and sherpa ship as DLLs on Windows rather than being linked
+      # in, so the binary cannot start until they are findable. A missing one
+      # does not produce a helpful error: Windows fails to load the image and
+      # the shell reports 127, the same code it uses for a command that is not
+      # there at all. Hence failing here, where the cause is still obvious.
+      - name: Add native runtimes to PATH
+        shell: pwsh
+        run: |
+          $onnx = Get-ChildItem "$env:GITHUB_WORKSPACE/RCLI/build" -Filter onnxruntime.dll -File -Recurse |
+            Select-Object -First 1
+          if (-not $onnx) { throw "onnxruntime.dll is not under the build tree; the ONNX engine cannot load" }
+          Write-Host "onnxruntime.dll: $($onnx.FullName)"
+          $onnx.DirectoryName | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+          $sherpa = "$env:GITHUB_WORKSPACE\runanywhere-sdks\core\third_party\sherpa-onnx-windows\lib"
+          if (-not (Test-Path $sherpa)) { throw "$sherpa does not exist; the sherpa prebuilts did not land" }
+          Get-ChildItem $sherpa -Filter *.dll | ForEach-Object { Write-Host "sherpa: $($_.Name)" }
+          $sherpa | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # Names every DLL the binary imports and says which cannot be resolved.
+      # Without this a load failure is a bare 127 with nothing to act on.
+      - name: Resolve the import table
+        shell: pwsh
+        run: |
+          $exe = "$env:GITHUB_WORKSPACE/RCLI/build/rcli.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not produced by the build" }
+          # Only direct imports. A missing transitive one fails the same way, so
+          # a clean list here is necessary rather than sufficient; the run below
+          # is what actually settles it.
+          $dirs = @((Split-Path $exe), (Join-Path $env:SystemRoot 'System32')) +
+                  ($env:PATH -split ';' | Where-Object { $_ })
+          $missing = @()
+          foreach ($line in (& objdump -p $exe | Select-String '^\s*DLL Name:\s*(\S+)')) {
+              $dep = $line.Matches[0].Groups[1].Value
+              $at = $dirs | Where-Object { Test-Path -LiteralPath (Join-Path $_ $dep) -ErrorAction SilentlyContinue } |
+                    Select-Object -First 1
+              if ($at) { Write-Host "  ok      $dep  ($at)" }
+              else { Write-Host "  MISSING $dep"; $missing += $dep }
+          }
+          if ($missing) { throw "rcli.exe imports DLLs that are not on PATH: $($missing -join ', ')" }
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "rcli.exe will not start even though every direct import resolved" }
+
+      - name: Check the engines
+        run: |
+          ./build/rcli.exe --version
+          ./build/rcli.exe --help > /dev/null
+          registered=$(./build/rcli.exe engines 2>/dev/null)
+          reported=$(./build/rcli.exe engines 2>&1)
+          echo "$reported"
+          for e in llamacpp sherpa onnx; do
+            echo "$reported" | grep -q "^${e} " || { echo "::error::engine ${e} was not built in"; exit 1; }
+            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
+          done
+
+      - name: Smoke test
+        run: bash scripts/smoke.sh ./build/rcli.exe
+
+      # Neither this nor install.ps1 has ever run. The script stages the DLLs it
+      # finds in the import table and then runs the staged copy with PATH cut
+      # back to System32, so a DLL that is only present because the build tree
+      # is on PATH fails here rather than on a user's machine.
+      - name: Package
+        shell: pwsh
+        working-directory: RCLI
+        run: ./scripts/package-windows.ps1 -SdkDir "$env:GITHUB_WORKSPACE/runanywhere-sdks"
