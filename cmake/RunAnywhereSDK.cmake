@@ -56,6 +56,15 @@ if(NOT APPLE)
     set(RAC_BUILD_PLATFORM OFF CACHE BOOL "" FORCE)
 endif()
 
+if(WIN32)
+    # cpp-httplib calls GetAddrInfoExCancel, which ws2tcpip.h only declares when
+    # the target Windows version is Vista or later. MinGW defaults below that,
+    # so without this the server fails to compile with the API "not declared"
+    # while every other platform builds. Set before the SDK is added so its
+    # targets get it too.
+    add_compile_definitions(_WIN32_WINNT=0x0A00)
+endif()
+
 if(RCLI_SDK_DIR)
     if(NOT EXISTS "${RCLI_SDK_DIR}/CMakeLists.txt")
         message(FATAL_ERROR "RCLI_SDK_DIR=${RCLI_SDK_DIR} has no CMakeLists.txt")
