@@ -51,6 +51,26 @@ jobs:
         working-directory: runanywhere-sdks
         run: bash idl/codegen/generate_cpp.sh
 
+      # STT, TTS and VAD come from sherpa, and upstream ships only shared
+      # libraries for macOS, so the SDK builds it from source. Without this the
+      # backend configures OFF and the release quietly loses three modalities.
+      - name: Read the pinned sherpa commit
+        id: sherpa
+        working-directory: runanywhere-sdks
+        run: echo "commit=$(grep '^SHERPA_ONNX_COMMIT_MACOS=' core/VERSIONS | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore sherpa
+        id: sherpa-cache
+        uses: actions/cache@v4
+        with:
+          path: runanywhere-sdks/core/third_party/sherpa-onnx-macos
+          key: sherpa-macos-${{ runner.arch }}-${{ steps.sherpa.outputs.commit }}
+
+      - name: Build sherpa
+        if: steps.sherpa-cache.outputs.cache-hit != 'true'
+        working-directory: runanywhere-sdks
+        run: bash core/scripts/macos/download-sherpa-onnx.sh
+
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
 
@@ -64,12 +84,21 @@ jobs:
       - name: Link the shipping binary
         run: RCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks" scripts/build-mlx.sh
 
+      # Every engine must be built in. Matching the priority column separates
+      # an engine that registered from one that is linked and inert, which is
+      # the difference a release must not get wrong. neurt is exempt from the
+      # second check: a CI runner is a VM with no Apple Neural Engine, so it
+      # refuses to register here while still shipping in the binary.
       - name: Verify every engine registered
         run: |
           engines=$(./build/rcli engines)
           echo "$engines"
           for e in mlx llamacpp neurt sherpa cloud onnx; do
-            echo "$engines" | grep -q "^${e}" || { echo "::error::engine ${e} is missing"; exit 1; }
+            echo "$engines" | grep -q "^${e}\b" || { echo "::error::engine ${e} was not built in"; exit 1; }
+          done
+          for e in mlx llamacpp sherpa cloud onnx; do
+            echo "$engines" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
           done
 
       - name: Package

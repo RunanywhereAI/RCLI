@@ -28,7 +28,11 @@ fi
 # Refuse to ship the CMake-only binary by mistake: it is the same application
 # but MLX cannot register in it, and the difference is invisible until someone
 # tries to run an MLX model.
-if ! "$BUILD_DIR/rcli" engines 2>/dev/null | grep -q '^mlx'; then
+#
+# The priority column is what makes this a real check. A linked but inert MLX
+# still prints a row, so a bare '^mlx' match passes on exactly the binary this
+# is meant to reject.
+if ! "$BUILD_DIR/rcli" engines 2>/dev/null | grep -qE '^mlx[[:space:]]+[0-9]+'; then
     echo "ERROR: $BUILD_DIR/rcli has no MLX engine." >&2
     echo "       Run scripts/build-mlx.sh — cmake alone cannot link it." >&2
     exit 1

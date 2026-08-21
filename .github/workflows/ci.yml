@@ -47,6 +47,29 @@ jobs:
         working-directory: runanywhere-sdks
         run: bash idl/codegen/generate_cpp.sh
 
+      # Sherpa is where STT, TTS and VAD come from, and upstream ships only
+      # shared libraries for macOS, so the SDK builds it from source. Without
+      # this the backend configures OFF and the binary loses three modalities
+      # with nothing worse than a status line to say so.
+      - name: Read the pinned sherpa commit
+        id: sherpa
+        working-directory: runanywhere-sdks
+        run: echo "commit=$(grep '^SHERPA_ONNX_COMMIT_MACOS=' core/VERSIONS | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore sherpa
+        id: sherpa-cache
+        uses: actions/cache@v4
+        with:
+          path: runanywhere-sdks/core/third_party/sherpa-onnx-macos
+          key: sherpa-macos-${{ runner.arch }}-${{ steps.sherpa.outputs.commit }}
+
+      # Ten minutes or so from cold, which is why it is cached on the pinned
+      # commit rather than rebuilt every run.
+      - name: Build sherpa
+        if: steps.sherpa-cache.outputs.cache-hit != 'true'
+        working-directory: runanywhere-sdks
+        run: bash core/scripts/macos/download-sherpa-onnx.sh
+
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
 
@@ -56,6 +79,11 @@ jobs:
       # build/rcli-cxx is the cmake output on Apple: five engines, no MLX. The
       # name differs from the shipping binary on purpose, so a plain cmake build
       # cannot quietly replace it.
+      # An engine that is linked but cannot serve this host still prints a row
+      # explaining itself; one that was never compiled in prints nothing at all.
+      # Only the second is a build problem, and it is the one to catch: a CI
+      # runner is a VM with no Apple Neural Engine, so neurt legitimately
+      # refuses to register here while still being present in the binary.
       - name: Check the five-engine binary
         run: |
           ./build/rcli-cxx --version
@@ -63,19 +91,27 @@ jobs:
           engines=$(./build/rcli-cxx engines)
           echo "$engines"
           for e in llamacpp neurt sherpa cloud onnx; do
-            echo "$engines" | grep -q "^${e}" || { echo "::error::engine ${e} is missing"; exit 1; }
+            echo "$engines" | grep -q "^${e}\b" || { echo "::error::engine ${e} was not built in"; exit 1; }
+          done
+          # These three have no hardware excuse, so they must actually register.
+          for e in llamacpp sherpa onnx; do
+            echo "$engines" | grep -qE "^${e}[[:space:]]+[0-9]+" \
+              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
           done
 
       - name: Link the shipping binary
         run: RCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks" scripts/build-mlx.sh
 
       # The difference between the two binaries is invisible until someone runs
-      # an MLX model, so assert on it rather than trusting the build.
+      # an MLX model, so assert on it rather than trusting the build. Matching
+      # the priority column matters: a bare "^mlx" also matches the row that
+      # says MLX is linked and inert, which is the exact failure being tested.
       - name: Check MLX registered
         run: |
           engines=$(./build/rcli engines)
           echo "$engines"
-          echo "$engines" | grep -q "^mlx" || { echo "::error::MLX did not register"; exit 1; }
+          echo "$engines" | grep -qE "^mlx[[:space:]]+[0-9]+" \
+            || { echo "::error::MLX is present but did not register"; exit 1; }
 
       # No model is downloaded here: the smallest is hundreds of megabytes, and
       # this only needs to prove the commands parse, reach the SDK and exit
@@ -105,5 +141,5 @@ jobs:
           root=$(ls -d "${staging}"/*/)
           mkdir -p "${root}bin"
           ln -s ../libexec/rcli "${root}bin/rcli"
-          "${root}bin/rcli" engines | grep -q "^mlx" \
+          "${root}bin/rcli" engines | grep -qE "^mlx[[:space:]]+[0-9]+" \
             || { echo "::error::MLX broke when installed behind a symlink"; exit 1; }
