@@ -4,7 +4,13 @@
 #include <string>
 #include <thread>
 
+#if defined(_WIN32)
+// gethostname is Winsock on Windows, not unistd, and Winsock needs starting
+// before it answers. src/harness does the same for its port probe.
+#include <winsock2.h>
+#else
 #include <unistd.h>
+#endif
 
 #include "account/console.h"
 #include "account/credentials.h"
@@ -17,6 +23,13 @@ namespace {
 using out::Ink;
 
 std::string Hostname() {
+#if defined(_WIN32)
+    WSADATA data;
+    static const bool ready = WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    if (!ready) {
+        return "unknown";
+    }
+#endif
     char name[256] = {};
     if (gethostname(name, sizeof(name) - 1) == 0 && name[0] != '\0') {
         return name;
