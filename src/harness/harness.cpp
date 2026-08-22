@@ -1,5 +1,6 @@
 #include "harness/harness.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -116,6 +117,24 @@ std::string OpencodeConfig(const std::string& model, const std::string& base_url
            "\"model\":" + Quote("runanywhere/" + model) + "}";
 }
 
+constexpr const char* kConfigVariable = "OPENCODE_CONFIG_CONTENT";
+
+void SetConfigVariable(const std::string& value) {
+#if defined(_WIN32)
+    _putenv_s(kConfigVariable, value.c_str());
+#else
+    setenv(kConfigVariable, value.c_str(), 1);
+#endif
+}
+
+void UnsetConfigVariable() {
+#if defined(_WIN32)
+    _putenv_s(kConfigVariable, "");
+#else
+    unsetenv(kConfigVariable);
+#endif
+}
+
 int Spawn(const std::string& tool, const std::vector<std::string>& args) {
     std::vector<std::string> owned;
     owned.push_back(tool);
@@ -149,7 +168,15 @@ int Spawn(const std::string& tool, const std::vector<std::string>& args) {
         _exit(127);
     }
     int status = 0;
-    waitpid(child, &status, 0);
+    // status is undefined after a failed waitpid, so a bare 0 there would read
+    // as a clean exit while the child is still running.
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        out::Error("lost track of " + tool);
+        return 1;
+    }
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
     }
@@ -227,13 +254,21 @@ int Launch(const std::string& tool, const std::string& model,
     }
 
     const std::string config = OpencodeConfig(model, base_url, api_key);
-#if defined(_WIN32)
-    _putenv_s("OPENCODE_CONFIG_CONTENT", config.c_str());
-#else
-    setenv("OPENCODE_CONFIG_CONTENT", config.c_str(), 1);
-#endif
+    const char* previous = std::getenv(kConfigVariable);
+    const std::string restored = previous != nullptr ? previous : std::string();
+    const bool had_previous = previous != nullptr;
+    SetConfigVariable(config);
 
     const int status = Spawn(tool, args);
+
+    // Launch runs more than once in a process during tests, and a stale value
+    // here would override the tool's own configuration on a later call that
+    // named no model.
+    if (had_previous) {
+        SetConfigVariable(restored);
+    } else {
+        UnsetConfigVariable();
+    }
     if (serving) {
         rac_server_stop();
     }

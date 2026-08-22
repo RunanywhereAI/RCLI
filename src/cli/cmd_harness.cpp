@@ -17,8 +17,12 @@ void RegisterHarness(CLI::App& app, Options& options) {
     auto rest = std::make_shared<std::vector<std::string>>();
     auto* opencode =
         app.add_subcommand("opencode", "open a coding session in opencode, wired to a model");
-    opencode->add_option("model", *model, "a model on this machine, or one served upstream");
-    opencode->add_option("args", *rest, "passed through to opencode");
+    // A named option rather than a positional: with two positionals there is no
+    // way to tell `rcli opencode run` asking for passthrough from someone
+    // naming a model called run, and the first reading wins silently.
+    opencode->add_option("-m,--model", *model, "a model on this machine, or one served upstream");
+    opencode->add_option("args", *rest, "passed through to opencode")->allow_extra_args();
+    opencode->prefix_command();
     opencode->callback([&options, model, rest] {
         options.status = harness::Launch("opencode", *model, *rest);
     });

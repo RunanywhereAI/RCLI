@@ -1,12 +1,16 @@
 #include "account/credentials.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
+#include <pwd.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace rcli::account {
@@ -27,7 +31,14 @@ std::string HomeDirectory() {
     }
     return Env("HOMEDRIVE") + Env("HOMEPATH");
 #else
-    return Env("HOME");
+    const std::string home = Env("HOME");
+    if (!home.empty()) {
+        return home;
+    }
+    // Falling back to a relative path would drop a token file wherever the
+    // command happened to run, which is often a source tree.
+    const passwd* entry = getpwuid(getuid());
+    return entry != nullptr && entry->pw_dir != nullptr ? entry->pw_dir : std::string();
 #endif
 }
 
@@ -75,6 +86,21 @@ std::string Field(const std::string& document, const std::string& key) {
 
 }  // namespace
 
+namespace {
+
+/// Bearer and refresh tokens travel to this origin, so plain HTTP is only
+/// tolerable when it cannot leave the machine.
+bool LoopbackOrigin(const std::string& url) {
+    return url.rfind("http://localhost", 0) == 0 || url.rfind("http://127.0.0.1", 0) == 0 ||
+           url.rfind("http://[::1]", 0) == 0;
+}
+
+}  // namespace
+
+bool ConsoleUrlIsSafe(const std::string& url) {
+    return url.rfind("https://", 0) == 0 || LoopbackOrigin(url);
+}
+
 std::string DefaultConsoleUrl() {
     const std::string configured = Env("RCLI_CONSOLE_URL");
     return configured.empty() ? "http://localhost:8080" : configured;
@@ -87,7 +113,7 @@ std::string ProfileDirectory() {
     }
     const std::string home = HomeDirectory();
     if (home.empty()) {
-        return ".rcli";
+        return {};
     }
     return home + "/.config/rcli";
 }
@@ -117,6 +143,12 @@ Credentials Load() {
 
 bool Save(const Credentials& credentials, std::string* error) {
     const std::string directory = ProfileDirectory();
+    if (directory.empty()) {
+        if (error != nullptr) {
+            *error = "no home directory to store credentials in";
+        }
+        return false;
+    }
     std::error_code ec;
     std::filesystem::create_directories(directory, ec);
     if (ec) {
@@ -127,28 +159,61 @@ bool Save(const Credentials& credentials, std::string* error) {
     }
 
     const std::string path = directory + "/" + kFileName;
-    std::ofstream file(path, std::ios::trunc);
-    if (!file) {
+    std::ostringstream document;
+    document << "{\n"
+             << "  \"console_url\": " << Quote(credentials.console_url) << ",\n"
+             << "  \"email\": " << Quote(credentials.email) << ",\n"
+             << "  \"plan\": " << Quote(credentials.plan) << ",\n"
+             << "  \"access_token\": " << Quote(credentials.access_token) << ",\n"
+             << "  \"refresh_token\": " << Quote(credentials.refresh_token) << "\n"
+             << "}\n";
+    const std::string body = document.str();
+
+#if defined(_WIN32)
+    std::ofstream file(path, std::ios::trunc | std::ios::binary);
+    if (!file || !(file << body)) {
         if (error != nullptr) {
             *error = "could not write " + path;
         }
         return false;
     }
-    file << "{\n"
-         << "  \"console_url\": " << Quote(credentials.console_url) << ",\n"
-         << "  \"email\": " << Quote(credentials.email) << ",\n"
-         << "  \"plan\": " << Quote(credentials.plan) << ",\n"
-         << "  \"access_token\": " << Quote(credentials.access_token) << ",\n"
-         << "  \"refresh_token\": " << Quote(credentials.refresh_token) << "\n"
-         << "}\n";
-    file.close();
-
-#if !defined(_WIN32)
-    // The file holds a bearer token, so it is readable only by its owner. On
-    // Windows the profile directory under the user account carries that.
-    ::chmod(path.c_str(), S_IRUSR | S_IWUSR);
-#endif
     return true;
+#else
+    // Opened 0600 rather than written and then chmod'ed: the default umask
+    // makes the file world-readable, and the tokens are on disk for the whole
+    // window between the two calls.
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        if (error != nullptr) {
+            *error = "could not write " + path;
+        }
+        return false;
+    }
+    // An existing file keeps its old mode through O_CREAT, so tighten it too.
+    ::fchmod(fd, S_IRUSR | S_IWUSR);
+    std::size_t written = 0;
+    while (written < body.size()) {
+        const ssize_t chunk = ::write(fd, body.data() + written, body.size() - written);
+        if (chunk <= 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ::close(fd);
+            if (error != nullptr) {
+                *error = "could not write " + path;
+            }
+            return false;
+        }
+        written += static_cast<std::size_t>(chunk);
+    }
+    if (::close(fd) != 0) {
+        if (error != nullptr) {
+            *error = "could not finish writing " + path;
+        }
+        return false;
+    }
+    return true;
+#endif
 }
 
 bool Clear(std::string* error) {

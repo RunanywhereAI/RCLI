@@ -29,6 +29,10 @@ bool Clear(std::string* error);
 
 std::string DefaultConsoleUrl();
 
+/// True when tokens may be sent to this origin: HTTPS anywhere, or plain HTTP
+/// only on loopback, where the traffic cannot leave the machine.
+bool ConsoleUrlIsSafe(const std::string& url);
+
 }  // namespace rcli::account
 
 #endif  // RCLI_ACCOUNT_CREDENTIALS_H

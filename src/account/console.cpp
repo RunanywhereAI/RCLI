@@ -1,5 +1,7 @@
 #include "account/console.h"
 
+#include <cctype>
+#include <charconv>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -45,7 +47,9 @@ std::string Field(const std::string& document, const std::string& key) {
     }
     if (document[at] != '"') {
         std::string number;
-        while (at < document.size() && (std::isdigit(document[at]) != 0 || document[at] == '-')) {
+        while (at < document.size() &&
+               (std::isdigit(static_cast<unsigned char>(document[at])) != 0 ||
+                document[at] == '-')) {
             number += document[at++];
         }
         return number;
@@ -113,6 +117,16 @@ bool Call(const std::string& url, const char* method, const std::string& body,
     return true;
 }
 
+/// The body is whatever the console sent, so a long digit run must not take the
+/// process down through std::stol.
+long Number(const std::string& text) {
+    long value = 0;
+    const char* first = text.data();
+    const char* last = first + text.size();
+    const std::from_chars_result result = std::from_chars(first, last, value);
+    return result.ec == std::errc{} ? value : 0;
+}
+
 std::string Detail(const Reply& reply) {
     const std::string detail = Field(reply.body, "detail");
     return detail.empty() ? "the console returned " + std::to_string(reply.status) : detail;
@@ -136,8 +150,8 @@ bool BeginAuthorization(const std::string& console_url, const std::string& hostn
     authorization->request_code = Field(reply.body, "request_code");
     authorization->poll_secret = Field(reply.body, "poll_secret");
     authorization->verification_url = Field(reply.body, "verification_url");
-    authorization->expires_in = std::stoi("0" + Field(reply.body, "expires_in"));
-    const int interval = std::stoi("0" + Field(reply.body, "interval"));
+    authorization->expires_in = static_cast<int>(Number(Field(reply.body, "expires_in")));
+    const int interval = static_cast<int>(Number(Field(reply.body, "interval")));
     authorization->interval = interval > 0 ? interval : 2;
     if (authorization->request_code.empty() || authorization->verification_url.empty()) {
         if (error != nullptr) {
@@ -155,7 +169,7 @@ void ReadGrant(const std::string& body, Grant* grant) {
     grant->refresh_token = Field(body, "refresh_token");
     grant->email = Field(body, "email");
     grant->plan = Field(body, "plan");
-    grant->expires_in = std::stol("0" + Field(body, "expires_in"));
+    grant->expires_in = Number(Field(body, "expires_in"));
 }
 
 }  // namespace
@@ -231,8 +245,8 @@ bool WhoAmI(const std::string& console_url, const std::string& token, Identity* 
     }
     identity->email = Field(reply.body, "email");
     identity->plan = Field(reply.body, "plan");
-    identity->tokens_this_month = std::stol("0" + Field(reply.body, "tokens_this_month"));
-    identity->monthly_token_limit = std::stol("0" + Field(reply.body, "monthly_token_limit"));
+    identity->tokens_this_month = Number(Field(reply.body, "tokens_this_month"));
+    identity->monthly_token_limit = Number(Field(reply.body, "monthly_token_limit"));
     return true;
 }
 

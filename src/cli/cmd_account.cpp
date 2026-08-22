@@ -7,8 +7,12 @@
 #if defined(_WIN32)
 // gethostname is Winsock on Windows, not unistd, and Winsock needs starting
 // before it answers. src/harness does the same for its port probe.
+#include <process.h>
 #include <winsock2.h>
 #else
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -37,19 +41,52 @@ std::string Hostname() {
     return "unknown";
 }
 
-/// Only ever handed a URL this process just received from the console, so there
-/// is nothing user-supplied to quote around.
+/// The URL arrives in a console response and the console itself is whatever
+/// RCLI_CONSOLE_URL names, so it is untrusted input. It never reaches a shell:
+/// the opener is executed with an argument vector, and only after the scheme
+/// has been checked.
+bool OpensSafely(const std::string& url) {
+    return url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
+}
+
 void OpenBrowser(const std::string& url) {
-#if defined(__APPLE__)
-    const std::string command = "open '" + url + "' >/dev/null 2>&1";
-#elif defined(_WIN32)
-    const std::string command = "start \"\" \"" + url + "\"";
-#else
-    const std::string command = "xdg-open '" + url + "' >/dev/null 2>&1";
-#endif
-    if (std::system(command.c_str()) != 0) {
+    if (!OpensSafely(url)) {
+        out::Status("refusing to open a URL that is not http or https");
+        return;
+    }
+#if defined(_WIN32)
+    const intptr_t rc = _spawnlp(_P_NOWAIT, "rundll32", "rundll32", "url.dll,FileProtocolHandler",
+                                 url.c_str(), nullptr);
+    if (rc < 0) {
         out::Status("could not open a browser for you");
     }
+#else
+#if defined(__APPLE__)
+    const char* opener = "open";
+#else
+    const char* opener = "xdg-open";
+#endif
+    const pid_t child = fork();
+    if (child < 0) {
+        out::Status("could not open a browser for you");
+        return;
+    }
+    if (child == 0) {
+        const int devnull = ::open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        std::string target = url;
+        char* argv[] = {const_cast<char*>(opener), target.data(), nullptr};
+        execvp(opener, argv);
+        _exit(127);
+    }
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+    }
+#endif
 }
 
 bool Ready() {
@@ -65,6 +102,11 @@ int Login(bool open_browser) {
         return 1;
     }
     account::Credentials credentials = account::Load();
+    if (!account::ConsoleUrlIsSafe(credentials.console_url)) {
+        out::Error("refusing to send credentials to " + credentials.console_url);
+        out::Status("the console must be https, or http on loopback");
+        return 1;
+    }
 
     account::Authorization authorization;
     std::string failure;
@@ -81,8 +123,11 @@ int Login(bool open_browser) {
     }
     out::Status("waiting for approval");
 
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(authorization.expires_in);
+    // A console that omits expires_in would otherwise put the deadline in the
+    // past, so the loop never runs and the user is told it timed out before a
+    // single poll was sent.
+    const int window = authorization.expires_in > 0 ? authorization.expires_in : 600;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(window);
     account::Grant grant;
     while (std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::seconds(authorization.interval));
@@ -159,7 +204,12 @@ int WhoAmI() {
         credentials.refresh_token = grant.refresh_token;
         credentials.email = grant.email;
         credentials.plan = grant.plan;
-        account::Save(credentials, nullptr);
+        // The console has already rotated the refresh token, so losing this
+        // write costs the session. Say so rather than failing silently on the
+        // next command.
+        if (!account::Save(credentials, &failure)) {
+            out::Status("could not store the refreshed session: " + failure);
+        }
         if (!account::WhoAmI(credentials.console_url, credentials.access_token, &identity,
                              &failure)) {
             out::Error(failure);
