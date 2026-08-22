@@ -23,6 +23,7 @@ using rcli_socklen_t = socklen_t;
 
 #include "rac/server/rac_server.h"
 
+#include "account/credentials.h"
 #include "cli/commands.h"
 #include "cli/output.h"
 #include "sdk/llm.h"
@@ -33,17 +34,6 @@ namespace rcli::harness {
 namespace {
 
 using out::Ink;
-
-/// Google's OpenAI-compatible surface. Chosen as the default because it is the
-/// one we can reach today; the shape is the same for anything else that speaks
-/// OpenAI, which is the point of pinning the harness to that interface rather
-/// than to a vendor.
-constexpr const char* kDefaultUpstream = "https://generativelanguage.googleapis.com/v1beta/openai";
-
-std::string Env(const char* name) {
-    const char* value = std::getenv(name);
-    return value != nullptr ? std::string(value) : std::string();
-}
 
 /// A port nothing is listening on, found by letting the OS pick one and giving
 /// it straight back. There is a race between closing and the server binding,
@@ -225,20 +215,15 @@ int Launch(const std::string& tool, const std::string& model,
         serving = true;
         base_url = "http://127.0.0.1:" + std::to_string(port) + "/v1";
     } else {
-        base_url = Env("RCLI_UPSTREAM_URL");
-        if (base_url.empty()) {
-            base_url = kDefaultUpstream;
-        }
-        api_key = Env("RCLI_UPSTREAM_KEY");
-        if (api_key.empty()) {
-            api_key = Env("GEMINI_API_KEY");
-        }
-        if (api_key.empty()) {
-            out::Error(model + " is not on this machine, and no upstream key is set");
-            out::Status("set RCLI_UPSTREAM_KEY, or `rcli pull " + model + "` to run it here");
+        const account::Credentials credentials = account::Load();
+        if (!credentials.signed_in()) {
+            out::Error(model + " is not on this machine, and you are not signed in");
+            out::Status("run `rcli login`, or `rcli pull " + model + "` to run it here");
             return 1;
         }
-        out::Status("using " + model + " from " + base_url);
+        base_url = credentials.console_url + "/v1";
+        api_key = credentials.access_token;
+        out::Status("using " + model + " as " + credentials.email);
     }
 
     const std::string config = OpencodeConfig(model, base_url, api_key);

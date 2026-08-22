@@ -24,10 +24,13 @@ include(RunAnywhereSDK)
 # The Apple build adds a Swift one that registers the MLX callbacks first; both
 # call rcli_run(), so the app itself exists once.
 add_library(rcli_core STATIC
+    src/account/console.cpp
+    src/account/credentials.cpp
     src/audio/audio.cpp
     src/catalog/catalog.cpp
     src/chat/complete.cpp
     src/cli/app.cpp
+    src/cli/cmd_account.cpp
     src/cli/cmd_bench.cpp
     src/cli/cmd_chat.cpp
     src/cli/cmd_engines.cpp
