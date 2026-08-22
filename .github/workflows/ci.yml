@@ -24,10 +24,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Both RAC_ROOT_DIR (needed to configure at all) and the llama.cpp accelerator
-  # fix are on main now. Pin this to a tag once the SDK cuts one that contains
-  # them, so a build is reproducible from a fixed point.
-  SDK_REF: main
+  # A commit, not a branch, and the same one release.yml builds from. Tracking
+  # main meant an unrelated merge there could break a pull request here: a
+  # version bump landed pointing Package.swift at XCFrameworks for a release
+  # that had not been published, and every binary target 404'd. Move this
+  # deliberately when picking up SDK changes.
+  SDK_REF: a46517cf1c2a1fc258f137a81e6185d7ccc3b62d
 
 jobs:
   macos:
