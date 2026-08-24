@@ -1,189 +1,210 @@
-# rcli
+# RunAnywhere CLI (`rcli`)
 
-`rcli` runs AI models on your own machine: text generation, speech to text, text to speech, and
-image generation, all through the
-[RunAnywhere SDK](https://github.com/RunanywhereAI/runanywhere-sdks).
+Run, manage, and serve on-device AI models from the terminal. One binary, multi-modal: LLM chat, VLM image understanding, speech-to-text, text-to-speech, voice activity detection, and a full voice pipeline — all running locally on the RunAnywhere C++ core.
 
-It is a plain command-line tool with no full-screen interface. Results go to stdout, progress and
-errors go to stderr, so a redirect keeps the answer and leaves the progress bar on your terminal:
-
-```bash
-rcli run qwen3 "why is the sky blue" > answer.txt
+```console
+$ rcli models download qwen3
+pulling qwen3-0.6b ▕████████████▏ 100%  639 MB/639 MB  32 MB/s
+$ rcli llm generate --model qwen3 "Reply with exactly: RCLI WORKS" --reasoning off
+RCLI WORKS
+$ rcli tts synthesize "RunAnywhere runs models on device." --output hello.wav
+$ rcli stt transcribe hello.wav
+$ rcli serve qwen3        # OpenAI-compatible API on :8080
 ```
 
 ## Install
 
-On macOS and Linux:
+**Homebrew** (macOS Apple Silicon or Linux x86_64):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | bash
+brew install runanywhereai/tap/rcli
 ```
 
-That installs Homebrew if you do not have it, adds the tap, and installs rcli. To do the same by
-hand, note that this repo is its own tap, so tapping it needs the explicit URL form:
+**Install script** (macOS Apple Silicon or Linux x86_64):
 
 ```bash
-brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
-brew install runanywhereai/rcli/rcli
+curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | sh
 ```
 
-The name is spelled out because `runanywhereai/tap` also provides a formula called `rcli`. If you
-do not have that tap, plain `brew install rcli` works too.
-
-That covers an Apple Silicon Mac on macOS 14.5 or later, and x86-64 Linux through Homebrew on
-Linux. Nothing else to set up: models download when you first ask for one and are kept in
-`~/.local/share/runanywhere`.
-
-## Install on Windows
-
-There is no Homebrew on Windows, so the installer downloads the release and unpacks it itself. In
-PowerShell:
+**PowerShell** (Windows x86_64):
 
 ```powershell
 irm https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.ps1 | iex
 ```
 
-That puts `rcli` in `%LOCALAPPDATA%\Programs\rcli` and adds the directory to your user PATH, so
-open a new terminal before you run it. 64-bit x86 only, and models are kept in
-`%LOCALAPPDATA%\RunAnywhere`.
+The Windows installer verifies the release checksum, installs `rcli.exe` and pinned ONNX Runtime/Sherpa DLLs under `%LOCALAPPDATA%\Programs\rcli\bin`, and adds that directory to the user `PATH`.
 
-## Quick start
+| Platform | Engines | Notes |
+|---|---|---|
+| macOS Apple Silicon | llama.cpp, MLX, Sherpa-ONNX, ONNX Runtime, CoreML | Signed/notarized DMG in GitHub Releases |
+| Linux x86_64 | llama.cpp, Sherpa-ONNX, ONNX Runtime | |
+| Windows x86_64 | llama.cpp, Sherpa-ONNX, ONNX Runtime | `rcli serve` is macOS/Linux-only |
 
-```bash
-rcli list --all                    # everything in the catalog
-rcli pull qwen3-0.6b               # download one
-rcli run qwen3 "explain mmap"      # ask once and exit
-rcli run qwen3                     # interactive prompt, /? for commands
-rcli                               # same prompt, no model loaded yet
-```
+MLX is Apple Silicon only. Commands that require an unavailable engine return a clear unsupported-backend error.
 
-Models are named by id (`qwen3-0.6b`) or by the shorter alias (`qwen3`). `rcli run` on a model you
-have not downloaded pulls it first.
+**From source:** see [Building from source](#building-from-source).
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `rcli run [model] [prompt]` | Talk to a model. With a prompt it answers and exits; without one you get the interactive prompt. `chat` is the same command. |
-| `rcli list [-a]` | Models on this machine. `-a` / `--all` lists the whole catalog and marks what is downloaded. |
-| `rcli search <query>` | Match a query against catalog ids, aliases, and names. |
-| `rcli pull <model>` | Download a model and wait for it to land. |
-| `rcli rm <model>` | Delete a downloaded model and report the space freed. |
-| `rcli show <model>` | Catalog details: engine, kind, format, size, context length, whether it reasons. |
-| `rcli stt <file>` | Transcribe a 16-bit mono WAV. `-m` picks the speech model. |
-| `rcli tts <text>` | Speak text through the speakers, or write a WAV with `-o file`. `-m` picks the voice. |
-| `rcli imagine <prompt>` | Generate an image, draw a preview in the terminal, and print the path. `-m` picks the model, `-q` skips the preview. `draw` is the same command. |
-| `rcli bench [model]` | Measure tokens per second and time to first token, over one model or every downloaded model that generates text. |
-| `rcli engines` | Which engines came up and which primitives each one serves. Engines that were compiled in but did not start are listed with the reason. |
-| `rcli config [setting] [value]` | List settings, read one, or change one. |
-| `rcli where` | The directory models and generated images live in. |
+The command surface follows the SDK public API spec: one namespace per modality, the spec's verb under it, and option names that match the spec's option fields (`--max-output-tokens`, `--top-p`, `--reasoning`, `--speed`, `--guidance-scale`).
 
-Global flags: `--version`, `-v` / `--verbose` to let the engines log to stderr, and
-`--color auto|always|never`.
+| Command | Description |
+|---|---|
+| `rcli llm generate [prompt]` | Complete a prompt and print the result |
+| `rcli llm stream [prompt]` | Complete a prompt, printing tokens as they arrive |
+| `rcli vlm generate --image f.png [prompt]` | Answer a prompt about an image |
+| `rcli stt transcribe a.wav` | Transcribe an audio file (default: whisper-tiny) |
+| `rcli tts synthesize "…" -o o.wav` | Write spoken audio to a WAV file (default: Piper Lessac) |
+| `rcli vad detect a.wav` | Report speech segments with timestamps (default: silero) |
+| `rcli embed [text]` | Turn text into embedding vectors |
+| `rcli rerank <query> -m <model> -d "…"` | Score documents against a query, best first |
+| `rcli image generate -p "…" -o o.png` | Render an image from a prompt (Core ML, Apple only) |
+| `rcli diarize a.wav -m <model>` | Label who spoke when |
+| `rcli segment image.ppm -m <model>` | Label every pixel of an image by class |
+| `rcli rag query <question>` | Answer a question over `--doc` / `--file` documents |
+| `rcli voice a.wav [-o reply.wav]` | Hold one spoken turn: STT → LLM → TTS |
+| `rcli models list` | List models, downloaded ones by default (`--all` for the catalog) |
+| `rcli models get <model>` | Show one model's registry entry |
+| `rcli models register <url>` | Add a model from a URL or `hf.co` ref |
+| `rcli models download <model>` | Fetch a model, resuming a partial download |
+| `rcli models delete <model>` | Remove a model's files and registration (`-f` skips the prompt) |
+| `rcli models load <model>` | Load a model now instead of on first use |
+| `rcli models unload [category]` | Free loaded models, all of them by default |
+| `rcli models state` | Report resident models and disk usage |
+| `rcli lora {apply,remove,list,catalog}` | Attach LoRA adapters to a language model |
+| `rcli serve [model]` | OpenAI-compatible HTTP server (`/v1/chat/completions`, `/v1/models`, `/health`) |
+| `rcli bench [model]` | Benchmark downloaded LLM/STT/TTS/VLM models |
+| `rcli telemetry {emit,blast}` | Drive the control-plane telemetry pipeline (no model needed) |
+| `rcli backends` | Registered inference backends per primitive |
+| `rcli info` (`doctor`) / `rcli version` | Environment and version info |
+| `rcli auth login` | Authenticated control-plane login (production) |
 
-`rcli imagine` prints the image path alone on the last line of stdout, so `rcli imagine "a red
-apple" | xargs open` works.
+Generation, transcription and synthesis load what they need: name a model with `--model` and rcli downloads it if it is missing, then loads it before the first token. `rcli models load` is for paying that cost when you choose to.
 
-## The interactive prompt
+### Aliases
 
-`rcli run <model>` with no prompt opens a readline prompt with history and tab completion. Anything
-that does not start with `/` goes to the model.
+The shorter spellings are the same commands, not separate ones:
 
-| | |
-| --- | --- |
-| `/load <model>` | Load a model, downloading it first if needed |
-| `/models` | What is on this machine |
-| `/pull <model>` | Download from the catalog |
-| `/rm <model>` | Delete a downloaded model |
-| `/show` | Current settings |
-| `/set <key> <value>` | Change a setting |
-| `/image <path>` | Ask about a picture. Needs a vision model loaded, and the turn is single-turn |
-| `/doc <path>` | Put a text file in the context. Text only, truncated at 32000 characters |
-| `/imagine <text>` | Generate an image |
-| `/mic` | Record until you press enter, transcribe, and send |
-| `/say [text]` | Speak the text, or the last answer |
-| `/run <cmd>` | Run a shell command after you confirm it |
-| `/think` | Show or hide the model's reasoning |
-| `/history` | The conversation so far |
-| `/clear` | Forget the conversation |
-| `/bye` | Quit |
+| Alias | Namespaced form |
+|---|---|
+| `rcli run <model> [prompt]`, `rcli chat <model>` | `rcli llm stream` (REPL when no prompt is given) |
+| `rcli list`, `rcli ls` | `rcli models list` |
+| `rcli show <model>` | `rcli models get` |
+| `rcli pull <model>` | `rcli models download` |
+| `rcli rm`, `rcli remove` | `rcli models delete` |
+| `rcli stt --input a.wav` | `rcli stt transcribe a.wav` |
+| `rcli tts --text "…"` | `rcli tts synthesize "…"` |
+| `rcli vad --input a.wav` | `rcli vad detect a.wav` |
+| `rcli run --image f.png` | `rcli vlm generate --image f.png` |
 
-Reasoning tokens go to stderr and the answer goes to stdout, which is why redirecting a one-shot
-`run` captures the answer and nothing else.
+Older flag spellings keep working next to the spec names: `--max-tokens` for `--max-output-tokens`, `--temp` for `--temperature`, `--system` for `--system-prompt`, `--no-think` for `--reasoning off`, `--negative` for `--negative-prompt`, `--guidance` for `--guidance-scale`, `--min-duration` for `--minimum-duration-ms`, `--merge-gap` for `--merge-gap-ms`.
 
-## Settings
+Global flags: `--json` (one machine-readable document on stdout), `--home <dir>`, `-v/--verbose`, `-q/--quiet`, `--no-progress`, plus the control-plane trio `--environment <development|production>`, `--base-url <url>`, and `--api-key <key>` (see [docs/RELEASING.md](./docs/RELEASING.md)).
 
-`rcli config` with no arguments lists the settings and their current values:
+Exit codes: `0` ok · `1` runtime error · `2` usage error · `130` cancelled.
 
-| Setting | |
-| --- | --- |
-| `accelerator` | `auto`, `cpu`, `gpu`, or `npu`. Advisory; an engine may ignore it |
-| `engine` | Pin one engine instead of letting priority decide. The allowed values are the engines that actually registered on this machine |
-| `context-length` | Context window at load time. `0` leaves it to the engine |
-| `reasoning` | `auto`, `on`, or `off`. `auto` follows the model |
-| `temperature` | `0` is greedy, `2` is as random as the sampler goes |
-| `max-tokens` | Longest answer the model may produce, 4096 by default. A model that reasons spends this budget thinking before it answers, so lowering it much can leave no room for the answer itself |
+## Interactive REPL
 
-Settings live for one process. `rcli config temperature 0.2` changes it for that command and
-nothing else, so to use a setting you either set it in the interactive prompt with `/set` or accept
-the default. There is no config file.
+Launch with no prompt when stdin is a TTY:
 
-Two environment variables: `RUNANYWHERE_HOME` moves the storage directory, and `RCLI_LOG` names a
-file for the engine logs that `--verbose` would otherwise put on stderr.
+```bash
+rcli chat qwen3
+```
 
-## Engines
+Features line editing and history (`~/.local/state/runanywhere/history`; disable with `RUNANYWHERE_NOHISTORY=1`).
 
-A macOS build links six engines: mlx, llamacpp, neurt, sherpa, cloud, and onnx. Linux and Windows
-get llamacpp, sherpa, cloud, and onnx. MLX is Metal and NeuRT is the Apple Neural Engine, so
-neither has anything to link against elsewhere.
+Slash commands: `/set system <text>`, `/set temperature <f>`, `/set max-output-tokens <n>`, `/show`, `/bye` (or Ctrl-D). One Ctrl-C cancels the current generation.
 
-Which of those are usable also depends on the machine, so `rcli engines` is the honest answer for
-any given install: it lists what registered, and names anything that was compiled in but could not
-start, with the reason. A model's catalog entry names the engine that runs it, so pulling a model
-is also how you choose an engine.
+Thinking models (qwen3 family): thought tokens stream dimmed to **stderr**, answers to **stdout**. `--hide-thinking` keeps the thoughts off your terminal while the model still thinks; `--reasoning off` stops it thinking at all.
+
+## Model catalog
+
+`rcli models list --all` shows the built-in catalog — Qwen3, Llama 3.2, SmolLM2, SmolVLM2, Whisper, Piper voices, Silero VAD, MiniLM embeddings, and more. Short aliases work everywhere: `qwen3`, `whisper-tiny`, `piper`, `smolvlm2`, …
+
+Fetch models outside the catalog:
+
+```bash
+rcli models download hf.co/Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf
+rcli models download https://example.com/model.gguf
+```
+
+`rcli models register <url>` does the registration step alone, when you want the entry now and the bytes later.
+
+URL registrations persist under `<home>/RunAnywhere/Registry/`.
+
+## Storage layout
+
+One knob: the RunAnywhere home (`--home`, `$RUNANYWHERE_HOME`, default `~/.local/share/runanywhere`).
+
+```
+~/.local/share/runanywhere/Models/{LlamaCpp,Sherpa,ONNX,...}/<model-id>/…
+~/.local/share/runanywhere/Registry/        # persisted URL registrations
+~/.config/runanywhere/secure/               # secure store (0600 files)
+~/.local/state/runanywhere/history          # REPL history
+```
+
+Models pulled by `rcli` are shared with other RunAnywhere desktop apps using the same home directory.
 
 ## Building from source
 
-You need CMake 3.24 or later, Apple Clang for the C++ build, and Xcode for the MLX one. Point the
-build at a checkout of the SDK:
+This repo does **not** compile the SDK. Stage a C++ desktop kit first (from
+runanywhere-sdks: `cmake --preset cpp-desktop-macos-arm64` then
+`--target package-cpp-desktop`), then:
 
 ```bash
-cmake -B build -DRCLI_SDK_DIR=/path/to/runanywhere-sdks
-cmake --build build
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/path/to/cpp-desktop-macos-arm64
+cmake --build build -j "$(sysctl -n hw.logicalcpu)"
+./build/rcli-cxx version
+./build/rcli-cxx backends
 ```
 
-Without `RCLI_SDK_DIR` the SDK is fetched at the tag pinned in `cmake/RunAnywhereSDK.cmake`, which
-means a long first build. A sibling checkout reuses what is already built there.
-
-That build produces `build/rcli-cxx`, with five engines and no MLX. For the binary that ships:
+On Apple Silicon the shipping binary is the Swift MLX host:
 
 ```bash
 scripts/build-mlx.sh
 ```
 
-which produces `build/rcli` with all six.
+That writes `build/rcli`. CMake's binary is named `rcli-cxx` so a later
+`cmake --build` cannot overwrite it.
 
-The two steps are not interchangeable. MLX inference is Swift, and SwiftPM on the command line
-cannot compile Metal shaders; mlx-swift documents this in its own README. Only xcodebuild can, so
-xcodebuild has to own the final link. A binary built without the shaders still links MLX, registers
-nothing, and reports MLX as unavailable at runtime. `scripts/build-mlx.sh` harvests the link line
-CMake wrote and hands it to xcodebuild, which is why `cmake --build` has to run first.
+The kit version is pinned in `cmake/sdk-pin.cmake`. Pointing `RCLI_SDK_DIR` at
+SDK source is a configure error.
 
-One more thing that build produces: `mlx-swift_Cmlx.bundle`, next to the executable. mlx-swift keeps
-its Metal shaders in a resource bundle rather than inside the binary, so moving `rcli` somewhere
-without that directory beside it costs you MLX while the other five engines carry on as if nothing
-happened. The Homebrew formula installs both into `libexec` and symlinks the binary for this reason.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [docs/RELEASING.md](./docs/RELEASING.md).
 
-## Licence
+## Testing
 
-This repo is MIT (see [LICENSE](LICENSE)), but it links the RunAnywhere SDK, which is not. The SDK
-is source-available under the RunAnywhere License: free for individuals, for organizations with
-both less than $1M in total funding and less than $1M in gross annual revenue, and for educational
-institutions, non-profits, government bodies, and projects under an OSI-approved open source
-licence. Anyone outside those categories needs a commercial licence, and the contact for that is
-san@runanywhere.ai.
+```bash
+ctest --test-dir build --output-on-failure
+bash scripts/smoke.sh ./build/rcli-cxx
+```
 
-Read the [SDK's licence](https://github.com/RunanywhereAI/runanywhere-sdks/blob/main/LICENSE)
-before you build `rcli` into a commercial product. The summary above is not the terms.
+## Architecture
 
-Built by [RunAnywhere, Inc.](https://runanywhere.ai)
+`rcli` is a consumer of the `rac_*` C ABI via `find_package(RunAnywhere)`.
+Commands are thin wrappers: parse → bootstrap → one commons call → render.
+Inference, catalog, download, and lifecycle live in the kit, not here.
+
+## Known limitations
+
+- `serve` is LLM-only and single-model.
+- REPL turns are independent (no conversation memory yet).
+- `rcli voice` with thinking models may speak reasoning text — use a non-thinking LLM (`--llm lfm2`) until voice-agent thinking control lands.
+- macOS x86_64, Linux ARM64, and Windows ARM64 binaries are not published yet.
+- Spec verbs with no standalone command yet: `tts speak` (commons synthesizes to a buffer and has no playback path), and `rag open` / `rag ingest` (RAG indexes are in-memory per process). `rcli rag query` and `rcli rag search` open, ingest, then ask or retrieve in one invocation instead.
+- `VLMGenerationOptions` was deleted; `vlm generate` (and `run --image`) now share the exact `LLMGenerationOptions` the text path uses, so `--seed`, `--frequency-penalty`, and `--presence-penalty` all apply to VLM generation too.
+- `rcli lora import` was removed: `idl/lora_options.proto` deleted `LoraAdapterImportRequest`/`Result` outright, and commons permanently stubs `rac_lora_adapter_import_proto` to `RAC_ERROR_NOT_IMPLEMENTED`. No replacement verb exists in this namespace yet.
+- `models load` takes `--engine` and `--category` only. `ModelLoadRequest` carries no context length, thread count or GPU switch; `rcli serve` has `--context`, `--threads` and `--gpu-layers` for the server it runs.
+- `vad detect` exposes `--activation-threshold`. The spec's `minSpeechMs`, `minSilenceMs` and `prefixPaddingMs` are stream-level knobs that the per-frame `rac_vad_component_process` call does not accept.
+- `stt transcribe` has no `--translate-to-english`: `rac_stt_options_t` has no field for it.
+
+## Support
+
+- Documentation: [docs.runanywhere.ai](https://docs.runanywhere.ai)
+- Discord: [discord.gg/N359FBbDVd](https://discord.gg/N359FBbDVd)
+- Email: [founders@runanywhere.ai](mailto:founders@runanywhere.ai)
+
+## License
+
+See the repository [LICENSE](./LICENSE).

@@ -1,5 +1,5 @@
 {
-  "originHash" : "bb243accb7c56b9e531c48189b64ab16054f0daa45e8cb5c26d19c232a8f4d27",
+  "originHash" : "da2f1cb240f8d58086dcbdf26155d4d07ebff9accee41bd3478139793cd50c15",
   "pins" : [
     {
       "identity" : "devicekit",
@@ -53,6 +53,15 @@
       "state" : {
         "revision" : "5270d2957d828fa8e65121ab5386c115060522bd",
         "version" : "3.31.5"
+      }
+    },
+    {
+      "identity" : "runanywhere-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/RunanywhereAI/runanywhere-swift.git",
+      "state" : {
+        "revision" : "3626ecd3db1d33aa3411895bc80f87fc821eaa1e",
+        "version" : "0.20.25"
       }
     },
     {

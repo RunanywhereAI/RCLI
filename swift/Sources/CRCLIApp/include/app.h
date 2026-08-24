@@ -1,8 +1,16 @@
 #ifndef RCLI_APP_H
 #define RCLI_APP_H
 
-/// Implemented in C++ (src/cli/app.cpp) and linked in through librcli_bundle.a.
-void rcli_begin(int argc, char** argv);
-int rcli_run(int argc, char** argv);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/// Same entry the C++ `rcli-cxx` binary uses. The Swift MLX host registers
+/// MLX callbacks, then calls this so there is one application, two ways in.
+int rcli_run_main(int argc, char** argv);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif  // RCLI_APP_H
