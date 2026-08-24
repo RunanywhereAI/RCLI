@@ -80,13 +80,14 @@ jobs:
           $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
           $env:RCLI_SDK_KIT = $kit
           & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit
+      # Zip only. onnxruntime.dll lives next to rcli.exe *inside* the archive;
+      # uploading the loose DLL/exe made them look like first-class release assets.
       - uses: actions/upload-artifact@v4
         with:
           name: rcli-windows-x64
           path: |
             dist/*.zip
-            build/rcli.exe
-            build/onnxruntime.dll
+            dist/*.zip.sha256
           if-no-files-found: error
 
   publish:
@@ -112,8 +113,12 @@ jobs:
         with:
           tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
           name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
-          files: artifacts/**
+          files: |
+            artifacts/rcli-*.tar.gz
+            artifacts/rcli-*.tar.gz.sha256
+            artifacts/rcli-*.zip
+            artifacts/rcli-*.zip.sha256
           generate_release_notes: true
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -41,9 +41,17 @@ asset="RunAnywhere-cpp-desktop-${PLATFORM}-v${SDK_VERSION}.tar.gz"
 dl="$(mktemp -d)"
 trap 'rm -rf "$dl"' EXIT
 
-gh release download "v${SDK_VERSION}" \
+# Draft GitHub Releases are invisible to another repo's GITHUB_TOKEN
+# (`release not found`). The pin must point at a published release
+# (prerelease is fine; latest is not required).
+if ! gh release download "v${SDK_VERSION}" \
   --repo RunanywhereAI/runanywhere-sdks \
-  --pattern "$asset" --dir "$dl"
+  --pattern "$asset" --dir "$dl"; then
+  echo "error: could not download $asset from RunanywhereAI/runanywhere-sdks@v${SDK_VERSION}" >&2
+  echo "  that tag must be a published GitHub Release (drafts 404 for this token)." >&2
+  gh release view "v${SDK_VERSION}" --repo RunanywhereAI/runanywhere-sdks >&2 || true
+  exit 1
+fi
 
 file="${dl}/${asset}"
 if command -v shasum >/dev/null 2>&1; then
