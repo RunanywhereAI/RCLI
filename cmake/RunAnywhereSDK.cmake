@@ -73,6 +73,31 @@ if(NOT TARGET RunAnywhere::commons)
     message(FATAL_ERROR "find_package(RunAnywhere) did not import RunAnywhere::commons")
 endif()
 
+# MSVC link.exe cannot consume a DLL (LNK1107). Older kits globbed
+# third_party/onnxruntime.dll into INTERFACE_LINK_LIBRARIES. Drop any
+# .dll from the imported target and, when present, link the import lib.
+if(WIN32)
+    get_target_property(_rcli_ra_ifaces RunAnywhere::commons INTERFACE_LINK_LIBRARIES)
+    if(_rcli_ra_ifaces)
+        set(_rcli_ra_kept "")
+        foreach(_lib IN LISTS _rcli_ra_ifaces)
+            if(_lib MATCHES "\\.[Dd][Ll][Ll]$")
+                continue()
+            endif()
+            list(APPEND _rcli_ra_kept "${_lib}")
+        endforeach()
+        set_property(TARGET RunAnywhere::commons PROPERTY INTERFACE_LINK_LIBRARIES "${_rcli_ra_kept}")
+    endif()
+    if(DEFINED RunAnywhere_LIBRARY_DIR AND EXISTS "${RunAnywhere_LIBRARY_DIR}/onnxruntime.lib")
+        get_target_property(_rcli_ra_ifaces RunAnywhere::commons INTERFACE_LINK_LIBRARIES)
+        set(_rcli_ra_ifaces "${_rcli_ra_ifaces}")
+        if(NOT _rcli_ra_ifaces MATCHES "onnxruntime\\.lib")
+            set_property(TARGET RunAnywhere::commons APPEND PROPERTY
+                INTERFACE_LINK_LIBRARIES "${RunAnywhere_LIBRARY_DIR}/onnxruntime.lib")
+        endif()
+    endif()
+endif()
+
 # Back-compat name used by the rest of this CMakeLists.
 if(NOT TARGET rac_commons)
     add_library(rac_commons ALIAS RunAnywhere::commons)
