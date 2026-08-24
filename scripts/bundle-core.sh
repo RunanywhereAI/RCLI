@@ -87,6 +87,22 @@ if [[ ${#archives[@]} -eq 0 ]]; then
     exit 1
 fi
 
+# The Ninja link line lists many archives twice (ld then warns
+# "ignoring duplicate libraries"). libtool -static treats that as
+# duplicate member names and can fail the merge.
+uniq=()
+for a in "${archives[@]}"; do
+    already=0
+    for u in "${uniq[@]:-}"; do
+        if [[ "${u}" == "${a}" ]]; then
+            already=1
+            break
+        fi
+    done
+    [[ "${already}" -eq 0 ]] && uniq+=("${a}")
+done
+archives=("${uniq[@]}")
+
 # libtool rather than ar: it merges archives rather than nesting them, and it
 # is what ships with the toolchain that produced them.
 libtool -static -o "${OUT_LIB}" "${archives[@]}"

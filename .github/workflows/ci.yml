@@ -18,7 +18,8 @@ concurrency:
 
 jobs:
   macos:
-    runs-on: macos-14
+    # Swift tools-version 6.0; macos-14 is stuck on Xcode 15 / Swift 5.10.
+    runs-on: macos-15
     timeout-minutes: 90
     env:
       RCLI_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
