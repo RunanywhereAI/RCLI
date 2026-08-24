@@ -16,9 +16,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  SDK_VERSION: ${{ vars.RCLI_PINNED_SDK_VERSION || '0.20.25' }}
-
 jobs:
   macos:
     runs-on: macos-14
@@ -48,8 +45,10 @@ jobs:
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
       - name: Build
         run: cmake --build build -j "$(sysctl -n hw.logicalcpu)"
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
       - name: Smoke
-        run: bash scripts/smoke.sh ./build/rcli-cxx
+        run: bash scripts/e2e.sh ./build/rcli-cxx
 
   windows:
     runs-on: windows-2022
@@ -77,6 +76,8 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
       - name: Build
         run: cmake --build build --config Release
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure -C Release
       - name: Smoke
         shell: bash
-        run: bash scripts/smoke.sh ./build/rcli.exe
+        run: bash scripts/e2e.sh ./build/rcli.exe

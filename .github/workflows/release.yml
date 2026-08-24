@@ -15,7 +15,6 @@ permissions:
   contents: write
 
 env:
-  SDK_VERSION: ${{ vars.RCLI_PINNED_SDK_VERSION || '0.20.25' }}
   RCLI_VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
 jobs:
