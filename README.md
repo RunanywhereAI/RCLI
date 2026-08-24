@@ -36,7 +36,7 @@ The Windows installer verifies the release checksum, installs `rcli.exe` and pin
 
 | Platform | Engines | Notes |
 |---|---|---|
-| macOS Apple Silicon | llama.cpp, MLX, Sherpa-ONNX, ONNX Runtime, CoreML | Signed/notarized DMG in GitHub Releases |
+| macOS Apple Silicon | llama.cpp, MLX, Sherpa-ONNX, ONNX Runtime | One `rcli` binary (Swift host) |
 | Linux x86_64 | llama.cpp, Sherpa-ONNX, ONNX Runtime | |
 | Windows x86_64 | llama.cpp, Sherpa-ONNX, ONNX Runtime | `rcli serve` is macOS/Linux-only |
 
@@ -155,18 +155,13 @@ runanywhere-sdks: `cmake --preset cpp-desktop-macos-arm64` then
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/path/to/cpp-desktop-macos-arm64
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
-./build/rcli-cxx version
-./build/rcli-cxx backends
+./build/rcli version
+./build/rcli backends
 ```
 
-On Apple Silicon the shipping binary is the Swift MLX host:
-
-```bash
-scripts/build-mlx.sh
-```
-
-That writes `build/rcli`. CMake's binary is named `rcli-cxx` so a later
-`cmake --build` cannot overwrite it.
+On Apple Silicon that `rcli` is the Swift MLX host: llama.cpp, ONNX, Sherpa,
+and MLX in one process. Users never run `rcli-cxx`. Independent clones set
+`RCLI_SDK_SWIFT_PATH` to a runanywhere-sdks checkout.
 
 The kit version is pinned in `cmake/sdk-pin.cmake`. Pointing `RCLI_SDK_DIR` at
 SDK source is a configure error.
@@ -177,7 +172,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) and [docs/RELEASING.md](./docs/RELEASIN
 
 ```bash
 ctest --test-dir build --output-on-failure
-bash scripts/smoke.sh ./build/rcli-cxx
+bash scripts/e2e.sh ./build/rcli
 ```
 
 ## Architecture

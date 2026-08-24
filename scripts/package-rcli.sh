@@ -28,13 +28,19 @@ KIT="${KIT%%:*}"
 
 BIN=""
 if [[ "$(uname -s)" == Darwin ]]; then
-  cands=("${BUILD}/rcli" "${BUILD}/rcli-cxx" "${BUILD}/Release/rcli" "${BUILD}/Release/rcli.exe")
+  # The macOS bottle is the Swift MLX host. Never silently ship rcli-cxx.
+  if [[ ! -x "${BUILD}/rcli" ]]; then
+    echo "error: macOS bottle requires ${BUILD}/rcli (Swift MLX host)." >&2
+    echo "  cmake --build with RCLI_APPLE_MLX_HOST=ON, or scripts/build-mlx.sh" >&2
+    exit 1
+  fi
+  BIN="${BUILD}/rcli"
 else
   cands=("${BUILD}/rcli-cxx" "${BUILD}/rcli" "${BUILD}/Release/rcli" "${BUILD}/Release/rcli.exe")
+  for cand in "${cands[@]}"; do
+    if [[ -x "${cand}" ]]; then BIN="${cand}"; break; fi
+  done
 fi
-for cand in "${cands[@]}"; do
-  if [[ -x "${cand}" ]]; then BIN="${cand}"; break; fi
-done
 [[ -n "${BIN}" ]] || { echo "error: rcli binary not found under ${BUILD}" >&2; exit 1; }
 
 DIST="${ROOT}/dist"
@@ -47,9 +53,11 @@ mkdir -p "${STAGE}/bin" "${STAGE}/lib"
 cp "${BIN}" "${STAGE}/bin/rcli"
 chmod +x "${STAGE}/bin/rcli"
 [[ -f "${ROOT}/README.md" ]] && cp "${ROOT}/README.md" "${STAGE}/README.md"
-if [[ -d "${BUILD}/mlx-swift_Cmlx.bundle" ]]; then
-  cp -R "${BUILD}/mlx-swift_Cmlx.bundle" "${STAGE}/bin/"
-fi
+shopt -s nullglob
+for bundle in "${BUILD}"/*.bundle; do
+  cp -R "${bundle}" "${STAGE}/bin/"
+done
+shopt -u nullglob
 
 copy_kit_runtime() {
   local src="$1"

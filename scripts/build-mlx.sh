@@ -32,10 +32,17 @@ while IFS= read -r entry; do
     flags+=("${entry}")
 done < "${BUILD}/rcli-link-flags.txt"
 
-# Local monorepo: the SDK Package.swift lives at the workspace root. Independent
-# clones leave RCLI_SDK_SWIFT_PATH unset and pin runanywhere-swift by version.
+# The published runanywhere-swift tarball does not export RunAnywhereMLXRuntime
+# (Swift MLX without a second commons archive). Apple rcli therefore needs the
+# SDK source tree: nested monorepo, or RCLI_SDK_SWIFT_PATH in CI.
 if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" && -f "${ROOT}/../../Package.swift" ]]; then
     export RCLI_SDK_SWIFT_PATH="${ROOT}/../.."
+fi
+if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" || ! -f "${RCLI_SDK_SWIFT_PATH}/Package.swift" ]]; then
+    echo "error: Apple rcli needs the SDK Swift tree (RunAnywhereMLXRuntime)." >&2
+    echo "  export RCLI_SDK_SWIFT_PATH=/path/to/runanywhere-sdks" >&2
+    echo "  or build from EXTERNAL/RCLI inside that monorepo." >&2
+    exit 1
 fi
 
 cd "${ROOT}/swift"
@@ -60,8 +67,13 @@ PRODUCTS="${ROOT}/swift/.build/xcode/Build/Products/Release"
 [[ -x "${PRODUCTS}/RCLIMLX" ]] || { echo "the MLX build produced no binary" >&2; exit 1; }
 
 cp "${PRODUCTS}/RCLIMLX" "${BUILD}/rcli"
-if [[ -d "${PRODUCTS}/mlx-swift_Cmlx.bundle" ]]; then
-    rm -rf "${BUILD}/mlx-swift_Cmlx.bundle"
-    cp -R "${PRODUCTS}/mlx-swift_Cmlx.bundle" "${BUILD}/"
-fi
+# Metal shader bundles must sit next to the executable. Copy every .bundle
+# xcodebuild laid down (mlx-swift_Cmlx.bundle, mlx-swift_Cmlx.bundle, …).
+shopt -s nullglob
+for bundle in "${PRODUCTS}"/*.bundle; do
+    dest="${BUILD}/$(basename "${bundle}")"
+    rm -rf "${dest}"
+    cp -R "${bundle}" "${dest}"
+done
+shopt -u nullglob
 echo "built ${BUILD}/rcli"

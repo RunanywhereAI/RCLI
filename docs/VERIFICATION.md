@@ -17,8 +17,7 @@ Kit must contain `include/rac/**`, `lib/librac_commons.a` (or equivalent), `lib/
 ```bash
 cmake -B build -DCMAKE_PREFIX_PATH=<kit> -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
-# Apple shipping binary:
-#   scripts/build-mlx.sh
+# Apple product binary is build/rcli (Swift MLX host). Windows: build/rcli.exe
 ```
 
 `RCLI_SDK_DIR` pointing at SDK **source** must configure-fail.
@@ -32,7 +31,7 @@ cmake --build build -j "$(sysctl -n hw.logicalcpu)"
 | TTY bare `rcli` → REPL | | |
 | `backends` / `engines` (no stubs for missing packs) | | |
 | LLM generate + stream (llama.cpp) | | |
-| MLX (shipping `rcli`, not `rcli-cxx`) | n/a | |
+| MLX listed by `rcli backends` (same binary) | yes | n/a |
 | NeuRT (only with pack + `NEURUN_TOKEN`) | skip | |
 | STT / TTS / VAD (Sherpa) | | |
 | embed / rerank | | |

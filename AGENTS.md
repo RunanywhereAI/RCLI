@@ -78,8 +78,10 @@ keys. `ctest` is the default CI bar.
 
 Smoke / e2e (`scripts/smoke.sh`, `scripts/e2e.sh`) prove the product promise
 against a **pinned kit**, not SDK source. Optional `RCLI_E2E_MODEL` covers
-download + generate. Apple MLX shipping binary: `scripts/build-mlx.sh` +
-`scripts/smoke-mlx.sh`.
+download + generate. There is one CLI named `rcli`. On Apple, `cmake --build`
+links the Swift MLX host as `build/rcli` (llama.cpp + ONNX + Sherpa + MLX).
+Windows is `build/rcli.exe` (no MLX). `rcli-cxx` is an Apple compile artifact,
+not the product. Full MLX model smoke: `scripts/smoke-mlx.sh`.
 
 ## CI
 
@@ -97,11 +99,16 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/path/to/cpp-desktop-<os>-<arch>
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
 ctest --test-dir build --output-on-failure
-bash scripts/e2e.sh ./build/rcli-cxx   # Windows: ./build/rcli.exe
+# Apple: ./build/rcli   Windows: ./build/rcli.exe
+bash scripts/e2e.sh ./build/rcli
 ```
 
-Apple shipping binary is the Swift MLX host (`scripts/build-mlx.sh`) wrapping
-`rcli_run_main`. CMake output on Apple is `rcli-cxx` so the two cannot clobber.
+On Apple Silicon, `cmake --build` produces `build/rcli` (Swift host wrapping
+`rcli_run_main`). Users never run `rcli-cxx`; that name exists only so CMake
+cannot overwrite the product binary. Independent clones set
+`RCLI_SDK_SWIFT_PATH` to a runanywhere-sdks checkout (CI does this). Nested
+`EXTERNAL/RCLI` finds `../../Package.swift` automatically. Disable the host
+with `-DRCLI_APPLE_MLX_HOST=OFF` only for a C++-only compile loop.
 
 NeuRT and QHexRT are optional private packs (`NEURUN_TOKEN`), never required to
 configure or link the public bottle. QHexRT is not shipped for Windows x64.

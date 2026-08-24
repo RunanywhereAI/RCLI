@@ -3,7 +3,8 @@ import Darwin
 import Foundation
 import MLXRuntime
 
-/// Apple entry point: register MLX callbacks, then run the C++ CLI.
+/// Product `rcli` on Apple: install MLX callbacks, then the same C++ CLI
+/// (`rcli_run_main`) that Windows runs as `rcli.exe`. One command surface.
 @main
 struct RCLIMLX {
     static func main() {

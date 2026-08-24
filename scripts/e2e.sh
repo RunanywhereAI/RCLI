@@ -33,6 +33,20 @@ check() {
 
 echo "e2e (modelless extras): ${RCLI}"
 check "info" "${RCLI}" info
+
+# Product `rcli` on Apple Silicon includes MLX. Intermediate `rcli-cxx` does not.
+expected_backends=(llamacpp onnx sherpa)
+base="$(basename "${RCLI}")"
+base="${base%.exe}"
+if [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 && "${base}" == "rcli" ]]; then
+    expected_backends+=(mlx)
+fi
+if bash "${ROOT}/scripts/assert-backends.sh" "${RCLI}" "${expected_backends[@]}"; then
+    echo "  ok    backends ${expected_backends[*]}"
+else
+    echo "  FAIL  backends ${expected_backends[*]}"
+    fail=1
+fi
 if "${RCLI}" models list --help >/dev/null 2>&1; then
     check "models list" "${RCLI}" models list
 fi

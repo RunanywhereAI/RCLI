@@ -15,20 +15,18 @@ bash scripts/fetch-kit.sh macos-arm64 /tmp/kit
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/tmp/kit
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
 ctest --test-dir build --output-on-failure
-bash scripts/e2e.sh ./build/rcli-cxx
+bash scripts/e2e.sh ./build/rcli
 ```
 
-Optional real generate: `RCLI_E2E_MODEL=qwen3-0.6b bash scripts/e2e.sh ./build/rcli-cxx`.
+`cmake --build` on Apple links the Swift MLX host as `build/rcli` (the only
+binary users run). e2e asserts `llamacpp`, `onnx`, `sherpa`, and `mlx`.
 
-Apple shipping binary (MLX host):
+Optional real generate: `RCLI_E2E_MODEL=qwen3-0.6b bash scripts/e2e.sh ./build/rcli`.
+Full MLX LLM/TTS/STT/VLM: `bash scripts/smoke-mlx.sh` (downloads models).
 
-```bash
-bash scripts/build-mlx.sh
-bash scripts/smoke-mlx.sh
-```
-
-C++ `rcli-cxx` cannot exercise MLX (needs Swift host callbacks). That is
-expected, not a skip to paper over.
+Independent clones: `export RCLI_SDK_SWIFT_PATH=/path/to/runanywhere-sdks`.
+Nested `EXTERNAL/RCLI` finds `../../Package.swift`. C++-only loop:
+`-DRCLI_APPLE_MLX_HOST=OFF` then e2e `./build/rcli-cxx` (no MLX).
 
 ## Windows x64
 
@@ -49,5 +47,6 @@ cannot load ORT. Do not tarball `swift/` (multi-GB).
 
 ## Bar
 
-CI already runs unit + modelless e2e on macos-14 and windows-2022. A pin bump
+CI builds the Apple product `rcli` (MLX host) and Windows `rcli.exe`, then
+runs unit + modelless e2e (backends include MLX on macOS arm64). A pin bump
 is not done until those are green. Linux e2e is optional (`scripts/e2e-linux.sh`).

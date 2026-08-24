@@ -30,28 +30,23 @@ The prefix is `dist/cpp-desktop-macos-arm64` in that checkout.
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/path/to/cpp-desktop-macos-arm64
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
-./build/rcli-cxx version    # Apple: cmake output is rcli-cxx
-./build/rcli-cxx backends
+./build/rcli version
+./build/rcli backends
 ```
+
+On Apple Silicon that `rcli` is the Swift MLX host (llama.cpp, ONNX, Sherpa,
+and MLX in one process). `rcli-cxx` is only a CMake intermediate. Independent
+clones need `RCLI_SDK_SWIFT_PATH` pointing at a runanywhere-sdks tree.
 
 `RCLI_SDK_DIR` / `RCLI_SDK_KIT` is an alias for that **kit prefix**. Pointing it
-at a source tree is a configure error.
-
-On Apple, the binary that ships is the Swift MLX host:
-
-```bash
-scripts/build-mlx.sh
-```
-
-That produces `build/rcli` and must not be replaced by a later `cmake --build`
-(`rcli-cxx` is the CMake name so the two cannot clobber each other).
+at a source tree is a configure error. C++-only: `-DRCLI_APPLE_MLX_HOST=OFF`.
 
 ## Tests
 
 ```bash
 cmake --build build --target test_rcli_unit
 ctest --test-dir build -R rcli --output-on-failure
-bash scripts/smoke.sh ./build/rcli-cxx
+bash scripts/e2e.sh ./build/rcli
 ```
 
 ## Layout
@@ -75,5 +70,5 @@ swift/            Apple entry: register MLX, then rcli_run_main
 
 ## Pull requests
 
-Branch off `main`. `cmake --build` must stay green. On Apple, if you touch the
-host or link line, run `scripts/build-mlx.sh` as well.
+Branch off `main`. `cmake --build` must stay green. On Apple that includes the
+MLX host (`build/rcli`). Do not add a second CLI binary.

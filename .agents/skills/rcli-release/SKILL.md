@@ -21,7 +21,8 @@ Repo: `RunanywhereAI/RCLI`. Product version is `CMakeLists.txt` /
 
 1. Confirm pin: `grep RCLI_PINNED cmake/sdk-pin.cmake`
 2. Download kits (never clone the SDK): `bash scripts/fetch-kit.sh <platform> <dest>`
-3. macOS: configure + build against the kit. Shipping binary: `scripts/build-mlx.sh`.
+3. macOS: configure + build against the kit. `cmake --build` produces `build/rcli`
+   (Swift MLX host). Do not package `rcli-cxx`.
 4. Windows x64: MSVC after `vcvarsall x64`, same kit, `/MD`. No QHexRT on x64.
 5. Sign: Developer ID + notary (macOS), Authenticode (Windows). Secrets live
    in **this** repo (`docs/RELEASING.md`).

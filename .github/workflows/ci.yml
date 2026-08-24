@@ -19,9 +19,17 @@ concurrency:
 jobs:
   macos:
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 90
+    env:
+      RCLI_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout SDK Swift tree (MLX runtime)
+        uses: actions/checkout@v4
+        with:
+          repository: RunanywhereAI/runanywhere-sdks
+          ref: v0.20.27
+          path: .deps/runanywhere-sdks
       - name: Install ninja
         run: brew install ninja
       - name: Download C++ desktop kit
@@ -47,8 +55,8 @@ jobs:
         run: cmake --build build -j "$(sysctl -n hw.logicalcpu)"
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
-      - name: Smoke
-        run: bash scripts/e2e.sh ./build/rcli-cxx
+      - name: Product e2e (MLX host)
+        run: bash scripts/e2e.sh ./build/rcli
 
   windows:
     runs-on: windows-2022

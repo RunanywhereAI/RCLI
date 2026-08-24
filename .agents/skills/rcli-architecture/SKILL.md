@@ -35,6 +35,7 @@ belongs in the SDK, then a new kit — not a workaround here.
 - `add_subdirectory` / FetchContent of the SDK, or `RCLI_SDK_DIR` at source.
 - Compiling `*.pb.cc` or `find_package(Protobuf)` (Homebrew).
 - Hardcoded engine names, path patterns, or a local model catalog.
-- Business rules in Swift (`swift/`) or the REPL.
+- Business rules in Swift (`swift/`) or the REPL. Swift is the Apple **entry**
+  (register MLX callbacks, then `rcli_run_main`). It is not a second CLI.
 - Logging API keys / tokens.
 - Forcing MSVC `/MT` — the kit is `/MD`.

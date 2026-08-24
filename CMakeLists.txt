@@ -152,6 +152,25 @@ endif()
 
 install(TARGETS rcli RUNTIME DESTINATION bin)
 
+# Apple product binary is the Swift MLX host (`build/rcli`), not `rcli-cxx`.
+# Users still type `rcli`; llama.cpp / ONNX / Sherpa register from C++ bootstrap
+# and MLX from the Swift entry. Turn off only for a C++-only compile loop.
+option(RCLI_APPLE_MLX_HOST
+    "On Apple, link the Swift MLX host as build/rcli (the product CLI)" ON)
+if(APPLE AND RCLI_APPLE_MLX_HOST)
+    if(NOT RCLI_SDK_ROOT)
+        message(FATAL_ERROR "RCLI_SDK_ROOT is empty; cannot build the MLX host")
+    endif()
+    add_custom_target(rcli-mlx ALL
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "RCLI_SDK_KIT=${RCLI_SDK_ROOT}"
+            bash "${CMAKE_SOURCE_DIR}/scripts/build-mlx.sh" "${CMAKE_BINARY_DIR}"
+        DEPENDS rcli
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Swift MLX host → ${CMAKE_BINARY_DIR}/rcli"
+        VERBATIM)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_subdirectory(tests)
