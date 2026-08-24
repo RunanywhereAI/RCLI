@@ -81,3 +81,6 @@ dist/
 .agents/*
 !.agents/skills/
 !.agents/skills/**
+
+# Local review notes — never part of the product repo.
+/comments/
