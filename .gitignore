@@ -32,9 +32,6 @@ deps/
 *.swo
 *~
 
-# AI assistant config (developer-only)
-CLAUDE.md
-
 # Release artifacts
 *.tar.gz
 
