@@ -37,18 +37,22 @@ jobs:
       - name: Install ninja
         run: brew install ninja
 
-      - name: Require staging backend origin
+      - name: Resolve staging backend origin
+        id: origin
         env:
           STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
           RA_OSS_BASE_URL: ${{ vars.RA_OSS_BASE_URL }}
         run: |
           set -euo pipefail
           if [[ -z "${STAGING_BASE_URL:-}" && -z "${RA_OSS_BASE_URL:-}" ]]; then
-            echo "::error::Set repository secret STAGING_BASE_URL (or variable RA_OSS_BASE_URL) to the public staging backend origin."
-            exit 1
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::STAGING_BASE_URL / RA_OSS_BASE_URL not set; skipping the OSS keyless blast (nothing to hit)."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Fetch kit + build rcli + keyless blast
+        if: steps.origin.outputs.skip != 'true'
         env:
           STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
           RA_OSS_BASE_URL: ${{ vars.RA_OSS_BASE_URL || secrets.STAGING_BASE_URL }}
