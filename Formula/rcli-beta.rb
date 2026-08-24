@@ -38,6 +38,6 @@ class RcliBeta < Formula
     assert_match "rcli", shell_output("#{bin}/rcli-beta --version")
     # Proves the Metal bundle survived the install: without it MLX drops out
     # silently and the other five engines carry on.
-    assert_match "mlx", shell_output("#{bin}/rcli-beta engines")
+    assert_match "mlx", shell_output("#{bin}/rcli-beta backends")
   end
 end

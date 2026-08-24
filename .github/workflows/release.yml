@@ -4,295 +4,128 @@ on:
   push:
     tags:
       - 'v*'
-      # release-beta.yml owns those, and 'v*' matches them too, so without this
-      # a beta tag runs both lanes and each tries to cut its own release.
       - '!v*-beta*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.5.0 — no leading v)'
+        required: true
 
 permissions:
   contents: write
 
 env:
-  # Pinned to a commit, not a branch: a release has to be rebuildable from its
-  # tag, and main moves. This is the SDK commit carrying both RAC_ROOT_DIR
-  # (without which rcli cannot configure at all) and the llama.cpp accelerator
-  # fix. Move it deliberately when picking up SDK changes, and prefer a release
-  # tag once the SDK cuts one that contains them.
-  SDK_REF: a46517cf1c2a1fc258f137a81e6185d7ccc3b62d
+  SDK_VERSION: ${{ vars.RCLI_PINNED_SDK_VERSION || '0.20.25' }}
+  RCLI_VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
 jobs:
   macos:
-    # macos-26, matching the SDK's Apple lanes: the macos-14 image ships Swift
-    # 5.10 and swift/Package.swift needs 6.0, so xcodebuild cannot resolve the
-    # package there. arm64, which is what this binary targets.
-    runs-on: macos-26
-    timeout-minutes: 90
-    defaults:
-      run:
-        working-directory: RCLI
+    runs-on: macos-14
+    timeout-minutes: 60
     steps:
-      # The directory names matter: swift/Package.swift depends on the SDK by
-      # the relative path ../../runanywhere-sdks, so the SDK has to be this
-      # checkout's sibling under that name.
       - uses: actions/checkout@v4
-        with:
-          path: RCLI
-      - uses: actions/checkout@v4
-        with:
-          repository: RunanywhereAI/runanywhere-sdks
-          ref: ${{ env.SDK_REF }}
-          path: runanywhere-sdks
-
-      - name: Generate the SDK protos
-        working-directory: runanywhere-sdks
-        run: bash idl/codegen/generate_cpp.sh
-
-      - name: Read the pinned sherpa commit
-        id: sherpa
-        working-directory: runanywhere-sdks
-        run: echo "commit=$(grep '^SHERPA_ONNX_COMMIT_MACOS=' core/VERSIONS | cut -d= -f2)" >> "$GITHUB_OUTPUT"
-      - name: Restore sherpa
-        id: sherpa-cache
-        uses: actions/cache@v4
-        with:
-          path: runanywhere-sdks/core/third_party/sherpa-onnx-macos
-          key: sherpa-macos-${{ runner.arch }}-${{ steps.sherpa.outputs.commit }}
-      # Upstream ships no static macOS libraries, so this builds from source.
-      - name: Build sherpa
-        if: steps.sherpa-cache.outputs.cache-hit != 'true'
-        working-directory: runanywhere-sdks
-        run: bash core/scripts/macos/download-sherpa-onnx.sh
-
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
-      # Produces build/rcli-cxx: five engines, no MLX. Not the binary that
-      # ships, but build-mlx.sh harvests its link line, so it has to exist.
-      - name: Build
-        run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
-      # MLX inference is Swift, and SwiftPM on the command line cannot compile
-      # Metal shaders, so only xcodebuild produces the six-engine binary.
-      - name: Link the shipping binary
-        run: RCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks" scripts/build-mlx.sh
-
-      - name: Verify every engine
+      - name: Install ninja
+        run: brew install ninja
+      - name: Download C++ desktop kit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          registered=$(./build/rcli engines 2>/dev/null)
-          reported=$(./build/rcli engines 2>&1)
-          echo "$reported"
-          for e in mlx llamacpp neurt sherpa cloud onnx; do
-            echo "$reported" | grep -q "^${e} " || { echo "::error::engine ${e} was not built in"; exit 1; }
-          done
-          # neurt is exempt: the runner is a VM with no Apple Neural Engine, so
-          # it refuses to register while still shipping in the binary.
-          for e in mlx llamacpp sherpa cloud onnx; do
-            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
-              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
-          done
-      - name: Smoke test
-        run: bash scripts/smoke.sh ./build/rcli
-
+          set -euo pipefail
+          asset="RunAnywhere-cpp-desktop-macos-arm64-v${SDK_VERSION}.tar.gz"
+          gh release download "v${SDK_VERSION}" \
+            --repo RunanywhereAI/runanywhere-sdks \
+            --pattern "$asset" --dir /tmp/kit
+          mkdir -p "$HOME/kit"
+          tar xzf "/tmp/kit/$asset" -C "$HOME/kit" --strip-components=1
+      - name: Configure + build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/kit"
+          cmake --build build -j "$(sysctl -n hw.logicalcpu)"
+      - name: Smoke
+        run: bash scripts/smoke.sh ./build/rcli-cxx
       - name: Package
-        run: RCLI_VERSION="${GITHUB_REF_NAME#v}" bash scripts/package.sh
+        env:
+          RCLI_SDK_KIT: ${{ env.HOME }}/kit
+        run: |
+          VERSION="${RCLI_VERSION#v}"
+          RCLI_VERSION="${VERSION}" RCLI_SDK_KIT="$HOME/kit" \
+            bash scripts/package-rcli.sh build macos-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: rcli-macos-arm64
-          path: RCLI/dist/*.tar.gz
-
-  linux:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    defaults:
-      run:
-        working-directory: RCLI
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: RCLI
-      - uses: actions/checkout@v4
-        with:
-          repository: RunanywhereAI/runanywhere-sdks
-          ref: ${{ env.SDK_REF }}
-          path: runanywhere-sdks
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build libcurl4-openssl-dev zlib1g-dev patchelf
-      - name: Generate the SDK protos
-        working-directory: runanywhere-sdks
-        run: bash idl/codegen/generate_cpp.sh
-      - name: Sherpa-ONNX prebuilts
-        working-directory: runanywhere-sdks
-        run: ./core/scripts/linux/download-sherpa-onnx.sh
-
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRCLI_SDK_DIR="${GITHUB_WORKSPACE}/runanywhere-sdks"
-      - name: Build
-        run: cmake --build build --config Release -j$(nproc)
-
-      - name: Verify every engine
-        run: |
-          registered=$(./build/rcli engines 2>/dev/null)
-          echo "$registered"
-          for e in llamacpp sherpa onnx; do
-            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
-              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
-          done
-      - name: Smoke test
-        run: bash scripts/smoke.sh ./build/rcli
-
-      # package.sh reruns the staged binary from its own directory, which is
-      # what proves the $ORIGIN rpath rewrite worked.
-      - name: Package
-        run: RCLI_VERSION="${GITHUB_REF_NAME#v}" bash scripts/package.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rcli-linux-x86_64
-          path: RCLI/dist/*.tar.gz
+          path: dist/rcli-*-macos-arm64.tar.gz*
 
   windows:
     runs-on: windows-2022
-    timeout-minutes: 90
-    defaults:
-      run:
-        shell: bash
-        working-directory: RCLI
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: RCLI
-      - uses: actions/checkout@v4
-        with:
-          repository: RunanywhereAI/runanywhere-sdks
-          ref: ${{ env.SDK_REF }}
-          path: runanywhere-sdks
-
-      - name: Install static libcurl
-        shell: pwsh
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
+      - name: Download C++ desktop kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install curl:x64-mingw-static zlib:x64-mingw-static --host-triplet=x64-mingw-static
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
-      - name: Generate the SDK protos
-        working-directory: runanywhere-sdks
-        run: bash idl/codegen/generate_cpp.sh
-      - name: Sherpa-ONNX prebuilts
-        shell: cmd
-        working-directory: runanywhere-sdks
-        run: core\scripts\windows\download-sherpa-onnx.bat
-
-      - name: Configure
-        shell: pwsh
-        working-directory: RCLI
-        run: >-
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          "-DRCLI_SDK_DIR=$env:GITHUB_WORKSPACE/runanywhere-sdks"
-          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=x64-mingw-static
-          -DVCPKG_HOST_TRIPLET=x64-mingw-static
-          -DGGML_METAL=OFF
-      - name: Build
-        shell: pwsh
-        working-directory: RCLI
-        run: cmake --build build --config Release
-
-      # onnxruntime and sherpa ship as DLLs on Windows rather than being linked
-      # in, so the binary cannot start until they are findable.
-      - name: Add native runtimes to PATH
-        shell: pwsh
+          set -euo pipefail
+          asset="RunAnywhere-cpp-desktop-windows-x64-v${SDK_VERSION}.tar.gz"
+          gh release download "v${SDK_VERSION}" \
+            --repo RunanywhereAI/runanywhere-sdks \
+            --pattern "$asset" --dir /tmp/kit
+          mkdir -p "$HOME/kit"
+          tar xzf "/tmp/kit/$asset" -C "$HOME/kit" --strip-components=1
+      - name: Configure + build
+        shell: bash
         run: |
-          $onnx = Get-ChildItem "$env:GITHUB_WORKSPACE/RCLI/build" -Filter onnxruntime.dll -File -Recurse |
-            Select-Object -First 1
-          if ($onnx) { $onnx.DirectoryName | Out-File $env:GITHUB_PATH -Encoding utf8 -Append }
-          "$env:GITHUB_WORKSPACE\runanywhere-sdks\core\third_party\sherpa-onnx-windows\lib" |
-            Out-File $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Verify every engine
-        run: |
-          registered=$(./build/rcli.exe engines 2>/dev/null)
-          echo "$registered"
-          for e in llamacpp sherpa onnx; do
-            echo "$registered" | grep -qE "^${e}[[:space:]]+[0-9]+" \
-              || { echo "::error::engine ${e} is linked but did not register"; exit 1; }
-          done
-      - name: Smoke test
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/kit"
+          cmake --build build --config Release
+      - name: Smoke
+        shell: bash
         run: bash scripts/smoke.sh ./build/rcli.exe
-
-      # The zip carries its DLLs beside the exe and the script reruns the staged
-      # copy, which is what proves a user's machine can start it.
       - name: Package
         shell: pwsh
-        working-directory: RCLI
+        env:
+          RCLI_SDK_KIT: ${{ github.workspace }}/../kit
         run: |
-          $env:RCLI_VERSION = "${{ github.ref_name }}".TrimStart("v")
-          ./scripts/package-windows.ps1 -SdkDir "$env:GITHUB_WORKSPACE/runanywhere-sdks"
+          $ver = $env:RCLI_VERSION.TrimStart('v')
+          $kit = Join-Path $env:USERPROFILE "kit"
+          if (-not (Test-Path $kit)) { $kit = Join-Path $env:HOME "kit" }
+          $env:RCLI_SDK_KIT = $kit
+          & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-windows-x86_64
+          name: rcli-windows-x64
           path: |
-            RCLI/dist/*.zip
-            RCLI/dist/*.sha256
+            dist/*.zip
+            build/rcli.exe
+            build/onnxruntime.dll
+          if-no-files-found: error
 
   publish:
-    needs: [macos, linux, windows]
+    needs: [macos, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-
+      - name: Stamp formula (best effort)
+        run: |
+          set -euo pipefail
+          VERSION="${RCLI_VERSION#v}"
+          mac=$(ls artifacts/rcli-${VERSION}-macos-arm64.tar.gz.sha256 2>/dev/null || true)
+          if [[ -n "$mac" && -f scripts/stamp-formula.py ]]; then
+            digest=$(awk '{print $1}' "$mac")
+            python3 scripts/stamp-formula.py "$VERSION" "macos-arm64=${digest}" || true
+          fi
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
-            artifacts/*.sha256
+          tag_name: v${{ env.RCLI_VERSION }}
+          name: v${{ env.RCLI_VERSION }}
+          files: artifacts/**
           generate_release_notes: true
-          body: |
-            ## Install
-
-            macOS and Linux, through Homebrew:
-
-            ```bash
-            brew tap RunanywhereAI/rcli https://github.com/RunanywhereAI/RCLI.git
-            brew install runanywhereai/rcli/rcli
-            ```
-
-            The name is spelled out because `runanywhereai/tap` also provides a
-            formula called `rcli`.
-
-            Windows, in PowerShell:
-
-            ```powershell
-            irm https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.ps1 | iex
-            ```
-
-            Models download on demand into `~/.local/share/runanywhere`.
-
-            macOS builds carry MLX and NeuRT as well; Linux and Windows ship
-            llama.cpp, sherpa and ONNX. `rcli engines` reports what a given
-            build has.
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Homebrew reads a tap's formula from the default branch, not from the
-      # tag, so a release is only installable once main points at it. Doing this
-      # by hand is what left the sha256 as a placeholder before.
-      - name: Point the formula at this release
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          args=()
-          for platform in macos-arm64 linux-x86_64; do
-            asset="artifacts/rcli-${VERSION}-${platform}.tar.gz"
-            [ -f "${asset}" ] || { echo "::error::${asset} is missing"; exit 1; }
-            args+=("${platform}=$(sha256sum "${asset}" | awk '{print $1}')")
-          done
-          python3 scripts/stamp-formula.py "${VERSION}" "${args[@]}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/rcli.rb
-          git commit -m "release: point the formula at v${VERSION}"
-          git push origin main

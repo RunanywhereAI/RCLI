@@ -1,37 +1,29 @@
+/**
+ * @file repl.h
+ * @brief Thin RAII wrapper over vendored linenoise (history + line input).
+ */
+
 #ifndef RCLI_REPL_REPL_H
 #define RCLI_REPL_REPL_H
 
-#include <functional>
-#include <optional>
 #include <string>
-#include <vector>
 
 namespace rcli::repl {
 
-/// The interactive prompt: line editing, history across runs, and Tab
-/// completion supplied by the caller.
-///
-/// linenoise rather than readline, matching the SDK's rcli — readline is GPL
-/// and this ships under a permissive licence. When stdin is not a terminal it
-/// falls back to plain getline, so `echo /help | rcli run` works and the test
-/// harnesses do not need a pty.
-class Line {
+class LineEditor {
    public:
-    /// `history_path` is created if its directory exists; an unwritable path is
-    /// not an error, it just means no history between runs.
-    explicit Line(std::string history_path);
-    ~Line();
+    /** history_path may be empty (no persistence, e.g. RUNANYWHERE_NOHISTORY). */
+    explicit LineEditor(std::string history_path);
+    ~LineEditor();
 
-    /// Offers completions for the word being typed. Return the full replacement
-    /// lines, not just the tail.
-    void OnComplete(std::function<std::vector<std::string>(const std::string&)> handler);
+    /** False on EOF (Ctrl-D). Empty lines are returned as empty strings. */
+    bool read_line(const std::string& prompt, std::string* out_line);
 
-    /// Nothing when the user asked to end the session (EOF or interrupt).
-    std::optional<std::string> Read(const std::string& prompt);
+    /** Record a line in history (skips empties/duplicates of last entry). */
+    void add_history(const std::string& line);
 
    private:
     std::string history_path_;
-    bool interactive_;
 };
 
 }  // namespace rcli::repl

@@ -44,9 +44,18 @@ Write-Info "Latest version: v$Version"
 # PROCESSOR_ARCHITECTURE reports the process, not the machine, so a 32-bit host
 # under WOW64 says x86 while ARCHITEW6432 names what is really underneath.
 $Arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
-if ($Arch -ne 'AMD64') { Fail "RCLI requires 64-bit x86 Windows. Detected: $Arch" }
-
+# Prism on Windows ARM64 runs the x64 zip. Native arm64 zips are preferred when present.
 $AssetName = "rcli-$Version-windows-x86_64.zip"
+if ($Arch -eq 'ARM64') {
+    $ArmAsset = $Release.assets | Where-Object { $_.name -eq "rcli-$Version-windows-arm64.zip" } | Select-Object -First 1
+    if ($ArmAsset) {
+        $AssetName = "rcli-$Version-windows-arm64.zip"
+    } else {
+        Write-Warn "No native ARM64 zip; installing the x64 build (Windows on ARM can run it)."
+    }
+} elseif ($Arch -ne 'AMD64') {
+    Fail "RCLI requires 64-bit Windows. Detected: $Arch"
+}
 $Asset = $Release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
 if (-not $Asset) {
     Fail "v$Version does not publish $AssetName. Open an issue at https://github.com/$Repo/issues"
@@ -126,6 +135,6 @@ Write-Info 'Getting started:'
 Write-Host '    rcli list --all              every model in the catalog'
 Write-Host '    rcli pull qwen3-0.6b         download one'
 Write-Host '    rcli run qwen3-0.6b          talk to it, /? for commands'
-Write-Host '    rcli engines                 which backends are available here'
+Write-Host '    rcli backends                which engines this build linked'
 Write-Host ''
 Write-Host '  Models download on demand into %LOCALAPPDATA%\RunAnywhere'
