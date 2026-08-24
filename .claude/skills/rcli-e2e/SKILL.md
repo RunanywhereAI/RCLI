@@ -62,6 +62,37 @@ for SwiftPM.
 - Ninja lists archives twice; `libtool -static` then fails on duplicate
   members unless you dedupe.
 
+`scripts/build-mlx.sh` must dump the xcodebuild log on failure (`Undefined
+symbols` does not contain `error:`). Do not grep bare `error:` — every
+CompileC line contains `-Werror=`. Observed CI `32786359915`: grep
+`error:|Metal|BUILD` left only `clang: error: linker command failed`.
+
+Never put `#` comments in a `\`-continued `xcodebuild` invocation. Bash
+cuts the command there, so `OTHER_LDFLAGS` and the log redirect never
+run (empty `xcodebuild-mlx.log`, status taken from a later assignment).
+
+Link flags that must survive the Swift host:
+
+- `-Wl,-force_load,$BUILD/librcli_plugins.a` then `-L$BUILD -lrcli_bundle`.
+  Force-load **only** the plugin backends (static registrars). Do **not**
+  force-load llama-common: that pulls `download.cpp.o`, which references
+  cpp-httplib `Client::Get` methods the kit never emitted as objects
+  (`rcli-cxx` never needed that TU). Observed locally after revealing the
+  real `Ld` log.
+- `-L$KIT/third_party -lonnxruntime` and `-Wl,-rpath,$KIT/third_party` —
+  `bundle-core.sh` rewrites the kit dylib to `-l` and must keep `-L` plus the
+  rpath `rcli-cxx` already had, or the Swift host abort-traps at launch
+  (`Library not loaded: @rpath/libonnxruntime.dylib`). Harvest `-l*` as well
+  as dylib conversions (`-ldl`, `-lbz2`).
+- Canonicalize `RCLI_SDK_SWIFT_PATH` with `cd && pwd`. SwiftPM's local package
+  identity is the **directory name**, so `…/EXTERNAL/RCLI/../..` registers as
+  `..`. Nested checkouts named `sdks1` must use that name in
+  `.product(..., package:)`.
+
+Do not point `RCLI_SDK_SWIFT_PATH` at an unreleased `Package.swift` whose
+`sdkVersion` zips 404 (`v0.20.28` before publish). CI checks out the **tagged**
+SDK tree (`ref: v$SDK`) whose binaryTargets already exist.
+
 CI macOS runner is **macos-26** (Xcode 26 / Swift 6.2). The MLX host resolves
 `RunanywhereAI/runanywhere-sdks` `Package.swift`, which is
 `swift-tools-version: 6.2`. macos-15 is Xcode 16.4 / Swift 6.1 and fails after

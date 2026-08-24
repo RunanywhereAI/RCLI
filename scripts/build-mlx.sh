@@ -31,7 +31,9 @@ done < "${BUILD}/rcli-link-flags.txt"
 # (Swift MLX without a second commons archive). Apple rcli therefore needs the
 # SDK source tree: nested monorepo, or RCLI_SDK_SWIFT_PATH in CI.
 if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" && -f "${ROOT}/../../Package.swift" ]]; then
-    export RCLI_SDK_SWIFT_PATH="${ROOT}/../.."
+    # Canonicalize: SwiftPM's local package identity is the last path
+    # component, so a trailing `/../..` would register the package as `..`.
+    export RCLI_SDK_SWIFT_PATH="$(cd "${ROOT}/../.." && pwd)"
 fi
 if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" || ! -f "${RCLI_SDK_SWIFT_PATH}/Package.swift" ]]; then
     echo "error: Apple rcli needs the SDK Swift tree (RunAnywhereMLXRuntime)." >&2
@@ -41,7 +43,17 @@ if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" || ! -f "${RCLI_SDK_SWIFT_PATH}/Package.swif
 fi
 
 cd "${ROOT}/swift"
-set +o pipefail
+xcode_log="${BUILD}/xcodebuild-mlx.log"
+# Bare .a paths are ignored by SwiftPM's swiftc; -Wl,-force_load is not.
+# Only plugin backends are force-loaded (static registrars). The rest of the
+# C++ objects, including llama-common, are a regular archive so download.cpp.o
+# is not pulled (it references cpp-httplib methods the kit never emitted).
+# Comments must not sit in a `\` continuation — they cut the command in half.
+plugin_ldflags=()
+if [[ -f "${BUILD}/librcli_plugins.a" ]]; then
+    plugin_ldflags+=("-Wl,-force_load,${BUILD}/librcli_plugins.a")
+fi
+set +e
 RUNANYWHERE_BUILD_MLX_DISTRIBUTION_FRAMEWORK=1 \
     xcodebuild build \
     -scheme rcli-mlx \
@@ -49,14 +61,19 @@ RUNANYWHERE_BUILD_MLX_DISTRIBUTION_FRAMEWORK=1 \
     -configuration Release \
     -derivedDataPath .build/xcode \
     HEADER_SEARCH_PATHS="\$(inherited) ${KIT}/include ${ROOT}/include" \
-    OTHER_LDFLAGS="${BUILD}/librcli_bundle.a ${flags[*]}" \
-    | grep -E "error:|warning: .*[Mm]etal|BUILD"
-xcodebuild_status=${PIPESTATUS[0]}
-set -o pipefail
+    OTHER_LDFLAGS="${plugin_ldflags[*]} -L${BUILD} -lrcli_bundle -lc++ ${flags[*]}" \
+    >"${xcode_log}" 2>&1
+xcodebuild_status=$?
+set -e
 if [[ "${xcodebuild_status}" -ne 0 ]]; then
     echo "error: xcodebuild failed with status ${xcodebuild_status}" >&2
+    # Do not match `-Werror=` on every CompileC line.
+    grep -E "error: |Undefined symbols|library not found|clang: error|ld: error" "${xcode_log}" >&2 || true
+    echo "----- tail of ${xcode_log} -----" >&2
+    tail -80 "${xcode_log}" >&2
     exit "${xcodebuild_status}"
 fi
+grep -E "error: |warning: .*[Mm]etal|BUILD SUCCEEDED" "${xcode_log}" || true
 
 PRODUCTS="${ROOT}/swift/.build/xcode/Build/Products/Release"
 [[ -x "${PRODUCTS}/RCLIMLX" ]] || { echo "the MLX build produced no binary" >&2; exit 1; }

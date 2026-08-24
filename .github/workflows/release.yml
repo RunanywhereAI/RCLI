@@ -48,7 +48,9 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
           cmake --build build -j "$(sysctl -n hw.logicalcpu)"
-      - name: Smoke product binary
+      - name: Product e2e
+        env:
+          RCLI_SDK_KIT: ${{ github.workspace }}/kit
         run: bash scripts/e2e.sh ./build/rcli
       - name: Package
         run: |

@@ -25,8 +25,14 @@ let mlxPackage: Package.Dependency = {
     return .package(url: "https://github.com/RunanywhereAI/runanywhere-swift.git", exact: "0.20.25")
 }()
 
-let mlxPackageName = Context.environment["RCLI_SDK_SWIFT_PATH"].map { _ in "runanywhere-sdks" }
-    ?? "runanywhere-swift"
+let mlxPackageName: String = {
+    if let local = Context.environment["RCLI_SDK_SWIFT_PATH"], !local.isEmpty {
+        // SwiftPM identity for a path dependency is the directory name, not
+        // Package.swift's `name:`. Canonicalize so `/foo/bar/../..` is not `..`.
+        return URL(fileURLWithPath: local).standardizedFileURL.lastPathComponent
+    }
+    return "runanywhere-swift"
+}()
 let mlxProductName = Context.environment["RCLI_SDK_SWIFT_PATH"].map { _ in "RunAnywhereMLXRuntime" }
     ?? "RunAnywhereMLX"
 
