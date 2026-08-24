@@ -4,9 +4,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <dirent.h>
 #include <string>
-#include <sys/stat.h>
+#include <system_error>
 #include <vector>
 
 #include "model_types.pb.h"
@@ -46,20 +45,25 @@ bool is_local_path(const std::string &ref) {
     return false;
   }
   // Only treat something as a path when it looks like one. A bare word is a
-  // model id; requiring a separator or an explicit `.`/`~` prefix keeps
-  // `rcli run qwen3` from stat()ing the cwd and finding a stray directory.
-  if (ref.find('/') == std::string::npos) {
+  // model id; requiring a separator (or a Windows drive prefix) keeps
+  // `rcli run qwen3` from probing the cwd and finding a stray directory.
+  const bool has_sep = ref.find('/') != std::string::npos ||
+                       ref.find('\\') != std::string::npos;
+  const bool win_drive = ref.size() >= 2 &&
+                         std::isalpha(static_cast<unsigned char>(ref[0])) &&
+                         ref[1] == ':';
+  if (!has_sep && !win_drive) {
     return false;
   }
-  struct stat st {};
-  return ::stat(ref.c_str(), &st) == 0;
+  std::error_code ec;
+  return std::filesystem::exists(std::filesystem::path(ref), ec);
 }
 
 // A trailing `/` carries no meaning but would break both the basename split
 // and the `.mlpackage` suffix tests below, so strip it once, here.
 std::string without_trailing_slashes(const std::string &path) {
   std::string out = path;
-  while (out.size() > 1 && out.back() == '/') {
+  while (out.size() > 1 && (out.back() == '/' || out.back() == '\\')) {
     out.pop_back();
   }
   return out;
@@ -124,11 +128,12 @@ void infer_local_kind(const std::string &path,
   *framework = runanywhere::v1::INFERENCE_FRAMEWORK_UNSPECIFIED;
   *format = runanywhere::v1::MODEL_FORMAT_UNSPECIFIED;
 
-  struct stat st {};
-  if (::stat(path.c_str(), &st) != 0) {
+  std::error_code ec;
+  const std::filesystem::path p(path);
+  if (!std::filesystem::exists(p, ec)) {
     return;
   }
-  if (!S_ISDIR(st.st_mode)) {
+  if (!std::filesystem::is_directory(p, ec)) {
     if (path.ends_with(".gguf")) {
       *framework = runanywhere::v1::INFERENCE_FRAMEWORK_LLAMA_CPP;
       *format = runanywhere::v1::MODEL_FORMAT_GGUF;
@@ -146,16 +151,16 @@ void infer_local_kind(const std::string &path,
   }
   // A directory holding at least one .mlpackage is an Apple bundle — the shape
   // every runanywhere/*_ANE repo ships.
-  if (DIR *dir = ::opendir(path.c_str())) {
-    while (dirent *ent = ::readdir(dir)) {
-      const std::string name = ent->d_name;
-      if (name.ends_with(".mlpackage") || name.ends_with(".mlmodelc")) {
-        *framework = runanywhere::v1::INFERENCE_FRAMEWORK_COREML;
-        *format = runanywhere::v1::MODEL_FORMAT_MLPACKAGE;
-        break;
-      }
+  for (const auto &entry : std::filesystem::directory_iterator(p, ec)) {
+    if (ec) {
+      break;
     }
-    ::closedir(dir);
+    const std::string name = entry.path().filename().string();
+    if (name.ends_with(".mlpackage") || name.ends_with(".mlmodelc")) {
+      *framework = runanywhere::v1::INFERENCE_FRAMEWORK_COREML;
+      *format = runanywhere::v1::MODEL_FORMAT_MLPACKAGE;
+      break;
+    }
   }
 }
 
