@@ -18,6 +18,12 @@ if(RCLI_SDK_DIR AND NOT RCLI_SDK_KIT)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/sdk-pin.cmake")
+if(RCLI_SDK_VERSION AND NOT RCLI_SDK_VERSION STREQUAL RCLI_PINNED_SDK_VERSION)
+    message(FATAL_ERROR
+        "RCLI_SDK_VERSION=${RCLI_SDK_VERSION} does not match "
+        "RCLI_PINNED_SDK_VERSION=${RCLI_PINNED_SDK_VERSION} in cmake/sdk-pin.cmake. "
+        "Bump the pin (and kit checksums) instead of overriding the version.")
+endif()
 if(NOT RCLI_SDK_VERSION)
     set(RCLI_SDK_VERSION "${RCLI_PINNED_SDK_VERSION}")
 endif()
