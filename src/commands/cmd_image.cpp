@@ -109,10 +109,10 @@ bool load_diffusion_model(const GlobalOptions& options, const std::string& model
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::ModelLoadResult result;
-    if (rac_model_lifecycle_load_proto(rac_get_model_registry(),
+    const rac_result_t proto_rc = rac_model_lifecycle_load_proto(rac_get_model_registry(),
                                        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
-                                       &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+                                       &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("diffusion model load failed: " + error);
         return false;
     }
@@ -150,6 +150,14 @@ bool write_image(const v1::DiffusionImage& image_result, const std::string& out_
         (image_result.width() > 0 && image_result.height() > 0 &&
          image.size() == static_cast<size_t>(image_result.width()) * image_result.height() * 4);
     if (is_raw_rgba) {
+        const size_t expected = static_cast<size_t>(image_result.width()) *
+                                static_cast<size_t>(image_result.height()) * 4;
+        if (image.size() != expected) {
+            if (error) {
+                *error = "raw RGBA buffer length does not match width*height*4";
+            }
+            return false;
+        }
         return image::write_png(out_path, reinterpret_cast<const uint8_t*>(image.data()),
                                 image_result.width(), image_result.height(), error);
     }
@@ -234,9 +242,9 @@ int run_image_generate(const GlobalOptions& options, const ImageParams& params) 
     rac_proto_buffer_t out_buffer;
     rac_proto_buffer_init(&out_buffer);
     v1::DiffusionResult result;
-    if (rac_diffusion_generate_lifecycle_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                               bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+    const rac_result_t proto_rc = rac_diffusion_generate_lifecycle_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                               bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("image generation failed: " + error);
         return 1;
     }

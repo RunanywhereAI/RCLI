@@ -45,8 +45,8 @@ int run_list(const GlobalOptions& options, bool show_all) {
     rac_proto_buffer_t all_out;
     rac_proto_buffer_init(&all_out);
     v1::ModelInfoList all_models;
-    if (rac_model_registry_list_proto_buffer(rac_get_model_registry(), &all_out) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&all_out, &all_models, &error)) {
+    const rac_result_t proto_rc = rac_model_registry_list_proto_buffer(rac_get_model_registry(), &all_out);
+    if (!proto::parse_proto_buffer(&all_out, &all_models, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("failed to list models: " + error);
         return 1;
     }

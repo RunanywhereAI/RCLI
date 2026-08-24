@@ -94,7 +94,8 @@ try {
 
     Write-Info "Installing RCLI v$Version to $InstallDir..."
     Expand-Archive -LiteralPath $Zip -DestinationPath $Temp -Force
-    $Unpacked = Join-Path $Temp "rcli-$Version-windows-x86_64\libexec"
+    $Stem = [IO.Path]::GetFileNameWithoutExtension($AssetName)
+    $Unpacked = Join-Path $Temp "$Stem\libexec"
     if (-not (Test-Path -LiteralPath $Unpacked)) {
         Fail "$AssetName does not have the layout this installer expects. Open an issue at https://github.com/$Repo/issues"
     }

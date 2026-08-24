@@ -15,6 +15,7 @@
 
 #include "commands/commands.h"
 
+#include <cctype>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -107,19 +108,31 @@ std::string uuid4() {
 // Minimal field extraction from the backend's SDKTelemetryBatchResponse JSON
 // ({"success":true,"events_received":N,"events_stored":N,"events_skipped":N,
 // "storage_version":"V2"}). The CLI deliberately carries no JSON parser.
-int extract_int_field(const std::string& json, const std::string& key) {
+size_t value_offset_after_key(const std::string& json, const std::string& key) {
     const std::string needle = "\"" + key + "\":";
     const size_t pos = json.find(needle);
     if (pos == std::string::npos) {
+        return std::string::npos;
+    }
+    size_t i = pos + needle.size();
+    while (i < json.size() &&
+           std::isspace(static_cast<unsigned char>(json[i]))) {
+        ++i;
+    }
+    return i;
+}
+
+int extract_int_field(const std::string& json, const std::string& key) {
+    const size_t i = value_offset_after_key(json, key);
+    if (i == std::string::npos) {
         return -1;
     }
-    return std::atoi(json.c_str() + pos + needle.size());
+    return std::atoi(json.c_str() + i);
 }
 
 bool extract_bool_field(const std::string& json, const std::string& key) {
-    const std::string needle = "\"" + key + "\":";
-    const size_t pos = json.find(needle);
-    return pos != std::string::npos && json.compare(pos + needle.size(), 4, "true") == 0;
+    const size_t i = value_offset_after_key(json, key);
+    return i != std::string::npos && json.compare(i, 4, "true") == 0;
 }
 
 // Per-endpoint accounting accumulated inside the telemetry HTTP callback.
@@ -143,8 +156,9 @@ void telemetry_http_callback(void* user_data, const char* endpoint, const char* 
     if (context == nullptr || endpoint == nullptr) {
         return;
     }
+    const size_t n = json_body != nullptr ? json_length : 0;
     const net::HttpResult result = net::control_plane_post(
-        endpoint, std::string(json_body != nullptr ? json_body : "", json_length),
+        endpoint, std::string(json_body != nullptr ? json_body : "", n),
         requires_auth == RAC_TRUE);
 
     EndpointStats& stats = context->endpoints[endpoint];

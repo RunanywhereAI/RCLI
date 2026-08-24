@@ -27,7 +27,12 @@ KIT="${RCLI_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
 KIT="${KIT%%:*}"
 
 BIN=""
-for cand in "${BUILD}/rcli-cxx" "${BUILD}/rcli" "${BUILD}/Release/rcli" "${BUILD}/Release/rcli.exe"; do
+if [[ "$(uname -s)" == Darwin ]]; then
+  cands=("${BUILD}/rcli" "${BUILD}/rcli-cxx" "${BUILD}/Release/rcli" "${BUILD}/Release/rcli.exe")
+else
+  cands=("${BUILD}/rcli-cxx" "${BUILD}/rcli" "${BUILD}/Release/rcli" "${BUILD}/Release/rcli.exe")
+fi
+for cand in "${cands[@]}"; do
   if [[ -x "${cand}" ]]; then BIN="${cand}"; break; fi
 done
 [[ -n "${BIN}" ]] || { echo "error: rcli binary not found under ${BUILD}" >&2; exit 1; }
@@ -42,6 +47,9 @@ mkdir -p "${STAGE}/bin" "${STAGE}/lib"
 cp "${BIN}" "${STAGE}/bin/rcli"
 chmod +x "${STAGE}/bin/rcli"
 [[ -f "${ROOT}/README.md" ]] && cp "${ROOT}/README.md" "${STAGE}/README.md"
+if [[ -d "${BUILD}/mlx-swift_Cmlx.bundle" ]]; then
+  cp -R "${BUILD}/mlx-swift_Cmlx.bundle" "${STAGE}/bin/"
+fi
 
 copy_kit_runtime() {
   local src="$1"

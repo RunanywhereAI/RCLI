@@ -32,24 +32,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          asset="RunAnywhere-cpp-desktop-macos-arm64-v${SDK_VERSION}.tar.gz"
-          gh release download "v${SDK_VERSION}" \
-            --repo RunanywhereAI/runanywhere-sdks \
-            --pattern "$asset" --dir /tmp/kit
-          mkdir -p "$HOME/kit"
-          tar xzf "/tmp/kit/$asset" -C "$HOME/kit" --strip-components=1
-          if [[ ! -f "$HOME/kit/include/runanywhere/proto/model_types.pb.h" ]]; then
+          kit="${GITHUB_WORKSPACE}/kit"
+          bash scripts/fetch-kit.sh macos-arm64 "$kit"
+          if [[ ! -f "$kit/include/runanywhere/proto/model_types.pb.h" ]]; then
             echo "kit missing generated proto headers; listing prefix:" >&2
-            find "$HOME/kit" -maxdepth 4 -type d -print >&2
+            find "$kit" -maxdepth 4 -type d -print >&2
             exit 1
           fi
-          if [[ ! -f "$HOME/kit/share/runanywhere/SCHEMA_LOCK" ]]; then
+          if [[ ! -f "$kit/share/runanywhere/SCHEMA_LOCK" ]]; then
             echo "kit missing share/runanywhere/SCHEMA_LOCK" >&2
-            find "$HOME/kit/share" -print >&2
+            find "$kit/share" -print >&2
             exit 1
           fi
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/kit"
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
       - name: Build
         run: cmake --build build -j "$(sysctl -n hw.logicalcpu)"
       - name: Smoke
@@ -68,16 +64,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          asset="RunAnywhere-cpp-desktop-windows-x64-v${SDK_VERSION}.tar.gz"
-          gh release download "v${SDK_VERSION}" \
-            --repo RunanywhereAI/runanywhere-sdks \
-            --pattern "$asset" --dir /tmp/kit
-          mkdir -p "$HOME/kit"
-          tar xzf "/tmp/kit/$asset" -C "$HOME/kit" --strip-components=1
-          test -f "$HOME/kit/include/runanywhere/proto/model_types.pb.h"
+          kit="${GITHUB_WORKSPACE}/kit"
+          bash scripts/fetch-kit.sh windows-x64 "$kit"
+          test -f "$kit/include/runanywhere/proto/model_types.pb.h"
       - name: Configure
         shell: bash
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/kit"
+        run: |
+          prefix="${GITHUB_WORKSPACE}/kit"
+          if command -v cygpath >/dev/null 2>&1; then
+            prefix="$(cygpath -m "$prefix")"
+          fi
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
       - name: Build
         run: cmake --build build --config Release
       - name: Smoke

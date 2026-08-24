@@ -167,10 +167,10 @@ int run_load(const GlobalOptions& options, const std::string& ref, const std::st
     rac_proto_buffer_t out_buffer;
     rac_proto_buffer_init(&out_buffer);
     v1::ModelLoadResult result;
-    if (rac_model_lifecycle_load_proto(rac_get_model_registry(),
+    const rac_result_t proto_rc = rac_model_lifecycle_load_proto(rac_get_model_registry(),
                                        reinterpret_cast<const uint8_t*>(bytes.data()),
-                                       bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+                                       bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("model load failed: " + error);
         return 1;
     }
@@ -221,9 +221,9 @@ int run_unload(const GlobalOptions& options, const std::string& category_name) {
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::ModelUnloadResult result;
-    if (rac_model_lifecycle_unload_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                         bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+    const rac_result_t proto_rc = rac_model_lifecycle_unload_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                         bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("unload failed: " + error);
         return 1;
     }
@@ -263,9 +263,9 @@ std::string loaded_model_id(v1::ModelCategory category) {
     rac_proto_buffer_t out_buffer;
     rac_proto_buffer_init(&out_buffer);
     v1::CurrentModelResult result;
-    if (rac_model_lifecycle_current_model_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                                bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, nullptr) || !result.found()) {
+    const rac_result_t proto_rc = rac_model_lifecycle_current_model_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                                bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, nullptr) || proto_rc != RAC_SUCCESS || !result.found()) {
         return {};
     }
     return result.model_id();

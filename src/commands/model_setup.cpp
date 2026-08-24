@@ -25,11 +25,11 @@ bool resolve_paths(const std::string &model_id, ResolvedModelPaths *out,
   rac_proto_buffer_t out_buffer;
   rac_proto_buffer_init(&out_buffer);
   v1::ModelLoadResult result;
-  if (rac_model_lifecycle_resolve_paths_proto(
+  const rac_result_t proto_rc = rac_model_lifecycle_resolve_paths_proto(
           rac_get_model_registry(),
           reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size(),
-          &out_buffer) != RAC_SUCCESS ||
-      !proto::parse_proto_buffer(&out_buffer, &result, error)) {
+          &out_buffer);
+  if (!proto::parse_proto_buffer(&out_buffer, &result, error) || proto_rc != RAC_SUCCESS) {
     return false;
   }
   if (result.has_error()) {

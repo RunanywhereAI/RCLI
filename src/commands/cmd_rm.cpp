@@ -148,10 +148,10 @@ int run_rm(const GlobalOptions &options, const std::string &ref, bool force) {
   rac_proto_buffer_t remove_out;
   rac_proto_buffer_init(&remove_out);
   v1::ModelDeleteResult remove_result;
-  if (rac_model_registry_remove_proto_buffer(rac_get_model_registry(),
+  const rac_result_t proto_rc = rac_model_registry_remove_proto_buffer(rac_get_model_registry(),
                                              resolved.model_id.c_str(),
-                                             &remove_out) != RAC_SUCCESS ||
-      !proto::parse_proto_buffer(&remove_out, &remove_result, &error)) {
+                                             &remove_out);
+  if (!proto::parse_proto_buffer(&remove_out, &remove_result, &error) || proto_rc != RAC_SUCCESS) {
     out::status_line("warning: registry unregister failed: " + error);
   }
 

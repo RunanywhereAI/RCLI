@@ -44,7 +44,7 @@ void serve_signal_handler(int /*signum*/) {
 
 int run_serve(const GlobalOptions& options, const std::string& ref, const std::string& host,
               uint16_t port, int32_t context_size, int32_t threads, int32_t gpu_layers,
-              bool no_cors) {
+              bool cors) {
     Bootstrapped env;
     if (bootstrap(options, &env) != RAC_SUCCESS) {
         return 1;
@@ -65,7 +65,7 @@ int run_serve(const GlobalOptions& options, const std::string& ref, const std::s
     config.context_size = context_size;
     config.threads = threads;
     config.gpu_layers = gpu_layers;
-    config.enable_cors = no_cors ? RAC_FALSE : RAC_TRUE;
+    config.enable_cors = cors ? RAC_TRUE : RAC_FALSE;
     config.verbose = options.verbose ? RAC_TRUE : RAC_FALSE;
 
     const rac_result_t rc = rac_server_start(&config);
@@ -112,7 +112,7 @@ void register_serve(CLI::App& app, GlobalOptions& options) {
     auto context = std::make_shared<int32_t>(8192);
     auto threads = std::make_shared<int32_t>(4);
     auto gpu_layers = std::make_shared<int32_t>(0);
-    auto no_cors = std::make_shared<bool>(false);
+    auto cors = std::make_shared<bool>(false);
     cmd->add_option("model", *ref,
                     "LLM to serve (default: " + std::string(kDefaultServeModel) + ")");
     cmd->add_option("--host,-H", *host, "Bind to this address (default 127.0.0.1)");
@@ -121,10 +121,10 @@ void register_serve(CLI::App& app, GlobalOptions& options) {
                     "Size the context window in tokens (default 8192)");
     cmd->add_option("--threads,-t", *threads, "Run inference on this many threads (default 4)");
     cmd->add_option("--gpu-layers,--ngl", *gpu_layers, "Offload this many layers to the GPU");
-    cmd->add_flag("--no-cors", *no_cors, "Refuse cross-origin browser requests");
-    cmd->callback([&options, ref, host, port, context, threads, gpu_layers, no_cors]() {
+    cmd->add_flag("--cors", *cors, "Allow cross-origin browser requests (off by default)");
+    cmd->callback([&options, ref, host, port, context, threads, gpu_layers, cors]() {
         const int exit_code = run_serve(options, *ref, *host, *port, *context, *threads,
-                                        *gpu_layers, *no_cors);
+                                        *gpu_layers, *cors);
         if (exit_code != 0) {
             throw CLI::RuntimeError(exit_code);
         }

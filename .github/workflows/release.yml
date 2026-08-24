@@ -31,24 +31,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          asset="RunAnywhere-cpp-desktop-macos-arm64-v${SDK_VERSION}.tar.gz"
-          gh release download "v${SDK_VERSION}" \
-            --repo RunanywhereAI/runanywhere-sdks \
-            --pattern "$asset" --dir /tmp/kit
-          mkdir -p "$HOME/kit"
-          tar xzf "/tmp/kit/$asset" -C "$HOME/kit" --strip-components=1
+          bash scripts/fetch-kit.sh macos-arm64 "${GITHUB_WORKSPACE}/kit"
       - name: Configure + build
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/kit"
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
           cmake --build build -j "$(sysctl -n hw.logicalcpu)"
       - name: Smoke
         run: bash scripts/smoke.sh ./build/rcli-cxx
       - name: Package
-        env:
-          RCLI_SDK_KIT: ${{ env.HOME }}/kit
         run: |
           VERSION="${RCLI_VERSION#v}"
-          RCLI_VERSION="${VERSION}" RCLI_SDK_KIT="$HOME/kit" \
+          RCLI_VERSION="${VERSION}" RCLI_SDK_KIT="${GITHUB_WORKSPACE}/kit" \
             bash scripts/package-rcli.sh build macos-arm64
       - uses: actions/upload-artifact@v4
         with:
@@ -68,28 +61,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          asset="RunAnywhere-cpp-desktop-windows-x64-v${SDK_VERSION}.tar.gz"
-          gh release download "v${SDK_VERSION}" \
-            --repo RunanywhereAI/runanywhere-sdks \
-            --pattern "$asset" --dir /tmp/kit
-          mkdir -p "$HOME/kit"
-          tar xzf "/tmp/kit/$asset" -C "$HOME/kit" --strip-components=1
+          bash scripts/fetch-kit.sh windows-x64 "${GITHUB_WORKSPACE}/kit"
       - name: Configure + build
         shell: bash
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/kit"
+          prefix="${GITHUB_WORKSPACE}/kit"
+          if command -v cygpath >/dev/null 2>&1; then
+            prefix="$(cygpath -m "$prefix")"
+          fi
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
           cmake --build build --config Release
       - name: Smoke
         shell: bash
         run: bash scripts/smoke.sh ./build/rcli.exe
       - name: Package
         shell: pwsh
-        env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/../kit
         run: |
           $ver = $env:RCLI_VERSION.TrimStart('v')
-          $kit = Join-Path $env:USERPROFILE "kit"
-          if (-not (Test-Path $kit)) { $kit = Join-Path $env:HOME "kit" }
+          $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
           $env:RCLI_SDK_KIT = $kit
           & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit
       - uses: actions/upload-artifact@v4
@@ -122,8 +111,8 @@ jobs:
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.RCLI_VERSION }}
-          name: v${{ env.RCLI_VERSION }}
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
+          name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
           files: artifacts/**
           generate_release_notes: true
           fail_on_unmatched_files: false

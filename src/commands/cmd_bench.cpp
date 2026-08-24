@@ -259,7 +259,7 @@ double load_model_timed(const std::string& model_id, v1::ModelCategory category,
     const int64_t t1 = rac_monotonic_now_ms();
     v1::ModelLoadResult result;
     std::string parse_err;
-    if (rc != RAC_SUCCESS || !proto::parse_proto_buffer(&out, &result, &parse_err)) {
+    if (!proto::parse_proto_buffer(&out, &result, &parse_err) || rc != RAC_SUCCESS) {
         *out_error = parse_err.empty() ? "load failed" : parse_err;
         return -1.0;
     }
@@ -289,7 +289,7 @@ bool llm_generate(int32_t max_tokens, bool system_prompt, v1::LLMGenerationResul
     rac_proto_buffer_init(&buf);
     const rac_result_t rc =
         rac_llm_generate_proto(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), &buf);
-    if (rc != RAC_SUCCESS || !proto::parse_proto_buffer(&buf, out, err)) {
+    if (!proto::parse_proto_buffer(&buf, out, err) || rc != RAC_SUCCESS) {
         if (err->empty()) {
             *err = rac_error_message(rc);
         }
@@ -314,7 +314,7 @@ bool stt_transcribe(const std::string& pcm, v1::STTOutput* out, std::string* err
     rac_proto_buffer_init(&buf);
     const rac_result_t rc = rac_stt_transcribe_lifecycle_proto(
         reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), &buf);
-    if (rc != RAC_SUCCESS || !proto::parse_proto_buffer(&buf, out, err)) {
+    if (!proto::parse_proto_buffer(&buf, out, err) || rc != RAC_SUCCESS) {
         if (err->empty()) {
             *err = rac_error_message(rc);
         }
@@ -333,7 +333,7 @@ bool tts_synthesize(const std::string& text, v1::TTSOutput* out, std::string* er
     rac_proto_buffer_init(&buf);
     const rac_result_t rc = rac_tts_synthesize_lifecycle_proto(
         reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), &buf);
-    if (rc != RAC_SUCCESS || !proto::parse_proto_buffer(&buf, out, err)) {
+    if (!proto::parse_proto_buffer(&buf, out, err) || rc != RAC_SUCCESS) {
         if (err->empty()) {
             *err = rac_error_message(rc);
         }
@@ -356,7 +356,7 @@ bool vlm_process(const std::string& image_path, int32_t max_tokens, v1::VLMResul
     rac_proto_buffer_init(&buf);
     const rac_result_t rc =
         rac_vlm_generate_proto(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), &buf);
-    if (rc != RAC_SUCCESS || !proto::parse_proto_buffer(&buf, out, err)) {
+    if (!proto::parse_proto_buffer(&buf, out, err) || rc != RAC_SUCCESS) {
         if (err->empty()) {
             *err = rac_error_message(rc);
         }

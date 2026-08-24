@@ -29,8 +29,9 @@ void register_version(CLI::App& app, GlobalOptions& options) {
         const rac_version_t commons = rac_get_version();
         const std::string commons_version =
             commons.string ? commons.string : "unknown";
-        const bool pin_ok = commons.string && RCLI_PINNED_SDK_VERSION[0] != '\0' &&
-                            std::strcmp(commons.string, RCLI_PINNED_SDK_VERSION) == 0;
+        const bool pin_ok = RCLI_PINNED_SDK_VERSION[0] == '\0' ||
+                            (commons.string &&
+                             std::strcmp(commons.string, RCLI_PINNED_SDK_VERSION) == 0);
         if (options.json) {
             out::JsonWriter json;
             json.begin_object()

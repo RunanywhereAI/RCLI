@@ -155,8 +155,7 @@ int pull_model_flow(const GlobalOptions &options, const std::string &model_id) {
       reinterpret_cast<const uint8_t *>(start_bytes.data()), start_bytes.size(),
       &start_out);
   v1::DownloadStartResult start;
-  if (rc != RAC_SUCCESS ||
-      !proto::parse_proto_buffer(&start_out, &start, &error)) {
+  if (!proto::parse_proto_buffer(&start_out, &start, &error) || rc != RAC_SUCCESS) {
     rac_download_set_progress_proto_callback(nullptr, nullptr);
     g_state = nullptr;
     out::error_line("download start failed: " +
@@ -199,6 +198,7 @@ int pull_model_flow(const GlobalOptions &options, const std::string &model_id) {
             reinterpret_cast<const uint8_t *>(cancel_bytes.data()),
             cancel_bytes.size(), &cancel_out);
         rac_proto_buffer_free(&cancel_out);
+        std::signal(SIGINT, previous_handler);
         lock.lock();
       }
     }

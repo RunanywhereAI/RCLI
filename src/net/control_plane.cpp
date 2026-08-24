@@ -194,7 +194,8 @@ rac_result_t login(LoginSummary* out, std::string* error) {
         const int auth_rc = rac_auth_handle_authenticate_response(response.body.c_str());
         if (auth_rc != RAC_SUCCESS && auth_rc != RAC_ERROR_SECURE_STORAGE_FAILED) {
             if (error != nullptr) {
-                *error = "authentication response rejected: " + single_line_preview(response.body);
+                *error = "authentication response rejected: " +
+                         out::describe_result(static_cast<rac_result_t>(auth_rc));
             }
             return RAC_ERROR_INVALID_RESPONSE;
         }

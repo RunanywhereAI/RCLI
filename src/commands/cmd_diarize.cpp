@@ -17,10 +17,8 @@
  * repo layering.
  */
 
-#include <filesystem>
 #include <memory>
 #include <string>
-#include <system_error>
 #include <vector>
 
 #include "commands/commands.h"
@@ -36,16 +34,10 @@ namespace {
 
 constexpr int kDiarizationSampleRate = 16000;
 
-// Resolve `ref` to a local model path: an existing on-disk path is used as-is;
-// otherwise it is a catalog/registry id resolved + auto-pulled through commons
-// (same flow as the speech commands). Returns 0 on success, else an exit code.
+// Same resolve path as the speech commands: catalog/registry first, local
+// path only when the ref looks like one. Never probe cwd with exists(ref).
 int resolve_model_path(const GlobalOptions& options, const std::string& ref,
                        std::string* out_path) {
-    std::error_code ec;
-    if (std::filesystem::exists(ref, ec)) {
-        *out_path = ref;
-        return 0;
-    }
     ResolvedModelPaths model;
     const int setup = ensure_model_ready(options, ref, &model);
     if (setup != 0) {

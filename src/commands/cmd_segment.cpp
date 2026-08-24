@@ -19,10 +19,8 @@
  */
 
 #include <cstdio>
-#include <filesystem>
 #include <memory>
 #include <string>
-#include <system_error>
 #include <vector>
 
 #include "commands/commands.h"
@@ -36,15 +34,11 @@ namespace rcli::commands {
 
 namespace {
 
-// Resolve `ref` to a local model path: an existing on-disk path is used as-is;
-// otherwise it is a catalog/registry id resolved + auto-pulled through commons.
+// Resolve through ensure_model_ready so a catalog id is never shadowed by a
+// same-named file in cwd. Local paths still work: model_ref requires a
+// separator (or Windows drive) before treating a ref as an on-disk path.
 int resolve_model_path(const GlobalOptions& options, const std::string& ref,
                        std::string* out_path) {
-    std::error_code ec;
-    if (std::filesystem::exists(ref, ec)) {
-        *out_path = ref;
-        return 0;
-    }
     ResolvedModelPaths model;
     const int setup = ensure_model_ready(options, ref, &model);
     if (setup != 0) {

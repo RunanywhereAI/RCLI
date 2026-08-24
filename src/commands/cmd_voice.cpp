@@ -65,6 +65,10 @@ int run_voice(const GlobalOptions& options, const std::string& input, const std:
     }
     const std::vector<int16_t> pcm16 = wav::resample(audio.samples, audio.sample_rate,
                                                      kTurnSampleRate);
+    if (pcm16.empty()) {
+        out::error_line("resampled audio is empty");
+        return 1;
+    }
 
     rac_voice_agent_handle_t agent = nullptr;
     rac_result_t rc = rac_voice_agent_create_standalone(&agent);
@@ -100,7 +104,7 @@ int run_voice(const GlobalOptions& options, const std::string& input, const std:
 
     int exit_code = 0;
     runanywhere::v1::VoiceAgentResult result;
-    if (rc != RAC_SUCCESS || !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || rc != RAC_SUCCESS) {
         out::error_line("voice turn failed: " +
                         (rc != RAC_SUCCESS ? out::describe_result(rc) : error));
         exit_code = 1;

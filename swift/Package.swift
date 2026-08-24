@@ -27,6 +27,8 @@ let mlxPackage: Package.Dependency = {
 
 let mlxPackageName = Context.environment["RCLI_SDK_SWIFT_PATH"].map { _ in "runanywhere-sdks" }
     ?? "runanywhere-swift"
+let mlxProductName = Context.environment["RCLI_SDK_SWIFT_PATH"].map { _ in "RunAnywhereMLXRuntime" }
+    ?? "RunAnywhereMLX"
 
 let package = Package(
     name: "rcli-mlx",
@@ -38,7 +40,7 @@ let package = Package(
             name: "RCLIMLX",
             dependencies: [
                 "CRCLIApp",
-                .product(name: "RunAnywhereMLXRuntime", package: mlxPackageName),
+                .product(name: mlxProductName, package: mlxPackageName),
             ]
         ),
     ]

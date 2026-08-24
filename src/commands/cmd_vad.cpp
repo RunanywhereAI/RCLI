@@ -103,8 +103,13 @@ int run_vad(const GlobalOptions& options, const VadParams& params) {
     for (size_t offset = 0; offset + kVadFrameSamples <= samples.size();
          offset += kVadFrameSamples) {
         rac_bool_t frame_is_speech = RAC_FALSE;
-        rac_vad_component_process(vad, samples.data() + offset, kVadFrameSamples,
-                                  &frame_is_speech);
+        if (rac_vad_component_process(vad, samples.data() + offset, kVadFrameSamples,
+                                      &frame_is_speech) != RAC_SUCCESS) {
+            out::error_line("VAD process failed");
+            rac_vad_component_stop(vad);
+            rac_vad_component_destroy(vad);
+            return 1;
+        }
         const bool active = frame_is_speech == RAC_TRUE;
         const double t = static_cast<double>(offset + kVadFrameSamples) / kVadSampleRate;
         if (active && !in_speech) {

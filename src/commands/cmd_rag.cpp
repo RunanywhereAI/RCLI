@@ -150,10 +150,13 @@ bool open_and_ingest(const GlobalOptions& options, const RagParams& params,
         rac_proto_buffer_t stats_buffer;
         rac_proto_buffer_init(&stats_buffer);
         v1::RAGStatistics stats;
-        if (rac_rag_ingest_proto(*session, reinterpret_cast<const uint8_t*>(doc_bytes.data()),
-                                 doc_bytes.size(), &stats_buffer) != RAC_SUCCESS ||
-            !proto::parse_proto_buffer(&stats_buffer, &stats, &error)) {
-            out::error_line("RAG ingest failed: " + error);
+        const rac_result_t ingest_rc =
+            rac_rag_ingest_proto(*session, reinterpret_cast<const uint8_t*>(doc_bytes.data()),
+                                 doc_bytes.size(), &stats_buffer);
+        if (!proto::parse_proto_buffer(&stats_buffer, &stats, &error) ||
+            ingest_rc != RAC_SUCCESS) {
+            out::error_line("RAG ingest failed: " +
+                            (error.empty() ? out::describe_result(ingest_rc) : error));
             rac_rag_session_destroy_proto(*session);
             *session = nullptr;
             return false;
@@ -211,9 +214,9 @@ int run_rag_query(const GlobalOptions& options, const RagParams& params,
     rac_proto_buffer_init(&result_buffer);
     v1::RAGResult result;
     std::string error;
-    if (rac_rag_query_proto(session, reinterpret_cast<const uint8_t*>(query_bytes.data()),
-                            query_bytes.size(), &result_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&result_buffer, &result, &error)) {
+    const rac_result_t proto_rc = rac_rag_query_proto(session, reinterpret_cast<const uint8_t*>(query_bytes.data()),
+                            query_bytes.size(), &result_buffer);
+    if (!proto::parse_proto_buffer(&result_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("RAG query failed: " + error);
         rac_rag_session_destroy_proto(session);
         return 1;
@@ -299,9 +302,9 @@ int run_rag_search(const GlobalOptions& options, const RagParams& params,
     rac_proto_buffer_init(&response_buffer);
     v1::RAGSearchResponse response;
     std::string error;
-    if (rac_rag_search_proto(session, reinterpret_cast<const uint8_t*>(request_bytes.data()),
-                             request_bytes.size(), &response_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&response_buffer, &response, &error)) {
+    const rac_result_t proto_rc = rac_rag_search_proto(session, reinterpret_cast<const uint8_t*>(request_bytes.data()),
+                             request_bytes.size(), &response_buffer);
+    if (!proto::parse_proto_buffer(&response_buffer, &response, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("RAG search failed: " + error);
         rac_rag_session_destroy_proto(session);
         return 1;

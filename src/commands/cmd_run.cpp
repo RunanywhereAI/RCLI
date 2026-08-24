@@ -254,7 +254,26 @@ int stream_once(const GlobalOptions& options, const std::string& model_id,
         exit_code = 1;
     } else {
         std::unique_lock<std::mutex> lock(state.mutex);
-        state.cv.wait(lock, [&state] { return state.done; });
+        while (!state.done) {
+            if (state.cv.wait_for(lock, std::chrono::milliseconds(200),
+                                  [&state] { return state.done; })) {
+                break;
+            }
+            if (g_interrupted) {
+                lock.unlock();
+                rac_proto_buffer_t cancel_event;
+                rac_proto_buffer_init(&cancel_event);
+                rac_llm_cancel_proto(&cancel_event);
+                rac_proto_buffer_free(&cancel_event);
+                lock.lock();
+                if (!state.cv.wait_for(lock, std::chrono::seconds(2),
+                                       [&state] { return state.done; })) {
+                    state.done = true;
+                    state.cancelled = true;
+                }
+                break;
+            }
+        }
         if (!state.answer.empty() && state.answer.back() != '\n' && !options.json) {
             std::fprintf(stdout, "\n");
         }
@@ -300,9 +319,9 @@ int generate_once(const GlobalOptions& options, const std::string& model_id,
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::LLMGenerationResult result;
-    if (rac_llm_generate_proto(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
-                               &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+    const rac_result_t proto_rc = rac_llm_generate_proto(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
+                               &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("generation failed: " + error);
         return 1;
     }
@@ -356,10 +375,10 @@ bool load_model(const GlobalOptions& options, const std::string& model_id,
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::ModelLoadResult result;
-    if (rac_model_lifecycle_load_proto(rac_get_model_registry(),
+    const rac_result_t proto_rc = rac_model_lifecycle_load_proto(rac_get_model_registry(),
                                        reinterpret_cast<const uint8_t*>(bytes.data()),
-                                       bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+                                       bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("model load failed: " + error);
         return false;
     }
@@ -428,9 +447,9 @@ int run_vlm(const GlobalOptions& options, const std::string& model_id,
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::VLMResult result;
-    if (rac_vlm_generate_proto(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
-                               &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+    const rac_result_t proto_rc = rac_vlm_generate_proto(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
+                               &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("vlm generation failed: " + error);
         return 1;
     }

@@ -105,10 +105,10 @@ bool load_embeddings_model(const GlobalOptions& options, const std::string& mode
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::ModelLoadResult result;
-    if (rac_model_lifecycle_load_proto(rac_get_model_registry(),
+    const rac_result_t proto_rc = rac_model_lifecycle_load_proto(rac_get_model_registry(),
                                        reinterpret_cast<const uint8_t*>(bytes.data()),
-                                       bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+                                       bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("embedding model load failed: " + error);
         return false;
     }
@@ -220,9 +220,9 @@ int run_embed(const GlobalOptions& options, const std::string& ref, const std::s
     v1::EmbeddingsResult result;
     // EmbeddingsResult carries no error field: failures travel out-of-band on
     // the rac_proto_buffer_t status envelope, already checked here.
-    if (rac_embeddings_embed_batch_lifecycle_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                                   bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+    const rac_result_t proto_rc = rac_embeddings_embed_batch_lifecycle_proto(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                                   bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("embedding failed: " + error);
         return 1;
     }

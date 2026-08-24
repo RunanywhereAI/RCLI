@@ -125,10 +125,10 @@ bool load_model(const GlobalOptions& options, const std::string& model_id,
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::ModelLoadResult result;
-    if (rac_model_lifecycle_load_proto(rac_get_model_registry(),
+    const rac_result_t proto_rc = rac_model_lifecycle_load_proto(rac_get_model_registry(),
                                        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
-                                       &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+                                       &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("model load failed: " + error);
         return false;
     }

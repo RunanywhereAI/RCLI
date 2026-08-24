@@ -106,9 +106,9 @@ int run_rerank(const GlobalOptions& options, const std::string& model_ref,
     rac_proto_buffer_init(&out_buffer);
     std::string error;
     v1::RerankResult result;
-    if (rac_rerank_component_rerank_proto(reranker, reinterpret_cast<const uint8_t*>(bytes.data()),
-                                          bytes.size(), &out_buffer) != RAC_SUCCESS ||
-        !proto::parse_proto_buffer(&out_buffer, &result, &error)) {
+    const rac_result_t proto_rc = rac_rerank_component_rerank_proto(reranker, reinterpret_cast<const uint8_t*>(bytes.data()),
+                                          bytes.size(), &out_buffer);
+    if (!proto::parse_proto_buffer(&out_buffer, &result, &error) || proto_rc != RAC_SUCCESS) {
         out::error_line("rerank failed: " + error);
         rac_rerank_component_destroy(reranker);
         return 1;

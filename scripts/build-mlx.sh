@@ -39,6 +39,7 @@ if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" && -f "${ROOT}/../../Package.swift" ]]; then
 fi
 
 cd "${ROOT}/swift"
+set +o pipefail
 RUNANYWHERE_BUILD_MLX_DISTRIBUTION_FRAMEWORK=1 \
     xcodebuild build \
     -scheme rcli-mlx \
@@ -47,7 +48,13 @@ RUNANYWHERE_BUILD_MLX_DISTRIBUTION_FRAMEWORK=1 \
     -derivedDataPath .build/xcode \
     HEADER_SEARCH_PATHS="\$(inherited) ${KIT}/include ${ROOT}/include" \
     OTHER_LDFLAGS="${BUILD}/librcli_bundle.a ${flags[*]}" \
-    | grep -E "error:|warning: .*[Mm]etal|BUILD" || true
+    | grep -E "error:|warning: .*[Mm]etal|BUILD"
+xcodebuild_status=${PIPESTATUS[0]}
+set -o pipefail
+if [[ "${xcodebuild_status}" -ne 0 ]]; then
+    echo "error: xcodebuild failed with status ${xcodebuild_status}" >&2
+    exit "${xcodebuild_status}"
+fi
 
 PRODUCTS="${ROOT}/swift/.build/xcode/Build/Products/Release"
 [[ -x "${PRODUCTS}/RCLIMLX" ]] || { echo "the MLX build produced no binary" >&2; exit 1; }
