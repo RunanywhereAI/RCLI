@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Download and verify a pinned C++ desktop kit, then extract it to DEST.
 #
-#   scripts/fetch-kit.sh <macos-arm64|windows-x64> <dest-dir>
+#   scripts/fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest-dir>
 #
 # Requires: gh, and either shasum or sha256sum.
 # Pins live in cmake/sdk-pin.cmake. SDK_VERSION, if set, must equal
@@ -9,13 +9,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PLATFORM="${1:?usage: fetch-kit.sh <macos-arm64|windows-x64> <dest>}"
-DEST="${2:?usage: fetch-kit.sh <macos-arm64|windows-x64> <dest>}"
+PLATFORM="${1:?usage: fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest>}"
+DEST="${2:?usage: fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest>}"
 PIN="${ROOT}/cmake/sdk-pin.cmake"
 
 case "$PLATFORM" in
   macos-arm64) SHA_VAR=RCLI_PINNED_KIT_SHA256_MACOS_ARM64 ;;
   windows-x64) SHA_VAR=RCLI_PINNED_KIT_SHA256_WINDOWS_X64 ;;
+  windows-arm64) SHA_VAR=RCLI_PINNED_KIT_SHA256_WINDOWS_ARM64 ;;
   *) echo "error: unknown platform '$PLATFORM'" >&2; exit 2 ;;
 esac
 
@@ -73,3 +74,9 @@ fi
 mkdir -p "$DEST"
 tar xzf "$file" -C "$DEST" --strip-components=1
 echo "kit verified and extracted to $DEST"
+
+# Optional NeuRT / QHexRT overlay. Missing overlay is not a failure unless
+# RCLI_REQUIRE_PRIVATE=1 — public bottles stay OSS.
+if [[ -x "$ROOT/scripts/fetch-private-pack.sh" ]]; then
+  "$ROOT/scripts/fetch-private-pack.sh" "$PLATFORM" "$DEST"
+fi
