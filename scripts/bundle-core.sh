@@ -14,17 +14,14 @@ LINK_TXT="${BUILD}/CMakeFiles/rcli.dir/link.txt"
 OUT_LIB="${BUILD}/librcli_bundle.a"
 OUT_FLAGS="${BUILD}/rcli-link-flags.txt"
 
-# Ninja never writes CMakeFiles/<tgt>.dir/link.txt (Makefiles only). Harvest
-# the link line from the build graph so the Swift MLX host can still bundle
-# the C++ archives.
+# Ninja never writes CMakeFiles/<tgt>.dir/link.txt (Makefiles only). The last
+# command ninja runs for `rcli` is the link; compile lines also contain
+# `CMakeFiles/rcli.dir/` so grepping for "rcli" picks compiles.
 if [[ ! -s "${LINK_TXT}" && -f "${BUILD}/build.ninja" ]]; then
     mkdir -p "${BUILD}/CMakeFiles/rcli.dir"
     ninja_bin="$(command -v ninja || command -v ninja-build || true)"
     if [[ -n "${ninja_bin}" ]]; then
-        "${ninja_bin}" -C "${BUILD}" -t commands rcli \
-            | grep -E 'clang\+\+|c\+\+|g\+\+' \
-            | grep -E -- '-o[[:space:]]+[^[:space:]]*rcli' \
-            | tail -1 > "${LINK_TXT}" || true
+        "${ninja_bin}" -C "${BUILD}" -t commands rcli | tail -1 > "${LINK_TXT}" || true
     fi
 fi
 
@@ -35,11 +32,32 @@ fi
 
 line="$(cat "${LINK_TXT}")"
 
+# Expand CMake @response files so archives listed only there are visible.
+expand_link_tokens() {
+    local token rsp
+    for token in "$@"; do
+        case "${token}" in
+            @*)
+                rsp="${token#@}"
+                if [[ ! -f "${rsp}" && -f "${BUILD}/${rsp}" ]]; then
+                    rsp="${BUILD}/${rsp}"
+                fi
+                if [[ -f "${rsp}" ]]; then
+                    # shellcheck disable=SC2046
+                    expand_link_tokens $(cat "${rsp}")
+                fi
+                ;;
+            *)
+                printf '%s\n' "${token}"
+                ;;
+        esac
+    done
+}
+
 archives=()
-for token in ${line}; do
+while IFS= read -r token; do
     case "${token}" in
         *.a)
-            # Paths in link.txt are relative to the build directory.
             if [[ "${token}" = /* ]]; then
                 archives+=("${token}")
             else
@@ -47,16 +65,17 @@ for token in ${line}; do
             fi
             ;;
     esac
-done
+done < <(expand_link_tokens ${line})
 
 if [[ ${#archives[@]} -eq 0 ]]; then
     echo "found no static archives in ${LINK_TXT}" >&2
+    echo "link line: ${line}" >&2
     exit 1
 fi
 
 # libtool rather than ar: it merges archives rather than nesting them, and it
 # is what ships with the toolchain that produced them.
-libtool -static -o "${OUT_LIB}" "${archives[@]}" 2>/dev/null
+libtool -static -o "${OUT_LIB}" "${archives[@]}"
 
 # What is left is frameworks and system libraries, which the Swift link needs
 # verbatim. .tbd and .dylib entries matter as much as -l flags: zlib, bz2 and
