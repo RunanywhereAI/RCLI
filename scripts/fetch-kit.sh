@@ -58,6 +58,10 @@ if [[ "$actual" != "$EXPECTED" ]]; then
   exit 1
 fi
 
+# GitHub Windows runners pass GITHUB_WORKSPACE as D:\a\...; msys tar cannot -C that.
+if command -v cygpath >/dev/null 2>&1; then
+  DEST="$(cygpath -u "$DEST")"
+fi
 mkdir -p "$DEST"
 tar xzf "$file" -C "$DEST" --strip-components=1
 echo "kit verified and extracted to $DEST"

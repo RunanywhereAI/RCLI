@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-#include <nlohmann/json.hpp>
+#include <cctype>
 #include <unistd.h>
 
 #include "app.h"
@@ -487,23 +487,164 @@ int run_cli_capture(const std::vector<std::string> &args,
   return exit_code;
 }
 
+size_t json_skip_ws(const std::string &s, size_t i) {
+  while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) {
+    ++i;
+  }
+  return i;
+}
+
+size_t json_match_bracket(const std::string &s, size_t open) {
+  const char close = s[open] == '{' ? '}' : ']';
+  int depth = 0;
+  bool in_str = false;
+  bool esc = false;
+  for (size_t i = open; i < s.size(); ++i) {
+    const char c = s[i];
+    if (in_str) {
+      if (esc) {
+        esc = false;
+      } else if (c == '\\') {
+        esc = true;
+      } else if (c == '"') {
+        in_str = false;
+      }
+      continue;
+    }
+    if (c == '"') {
+      in_str = true;
+    } else if (c == s[open]) {
+      ++depth;
+    } else if (c == close) {
+      --depth;
+      if (depth == 0) {
+        return i;
+      }
+    }
+  }
+  return std::string::npos;
+}
+
+bool json_string_field(const std::string &obj, const char *key, std::string *value) {
+  const std::string pat = std::string("\"") + key + "\"";
+  size_t i = 0;
+  while ((i = obj.find(pat, i)) != std::string::npos) {
+    size_t c = json_skip_ws(obj, i + pat.size());
+    if (c >= obj.size() || obj[c] != ':') {
+      ++i;
+      continue;
+    }
+    c = json_skip_ws(obj, c + 1);
+    if (c >= obj.size() || obj[c] != '"') {
+      ++i;
+      continue;
+    }
+    ++c;
+    std::string out;
+    while (c < obj.size()) {
+      const char ch = obj[c++];
+      if (ch == '"') {
+        *value = std::move(out);
+        return true;
+      }
+      if (ch == '\\' && c < obj.size()) {
+        out.push_back(obj[c++]);
+        continue;
+      }
+      out.push_back(ch);
+    }
+    return false;
+  }
+  return false;
+}
+
 bool backend_has_primitives(const std::string &json_text, const std::string &backend_name,
                             std::initializer_list<std::string> expected,
                             std::string *error) {
   try {
-    const auto document = nlohmann::json::parse(json_text);
-    for (const auto &backend : document.value("backends", nlohmann::json::array())) {
-      if (backend.value("name", "") != backend_name) {
+    const auto backends_key = json_text.find("\"backends\"");
+    if (backends_key == std::string::npos) {
+      if (error) {
+        *error = "no backends field";
+      }
+      return false;
+    }
+    const auto arr = json_text.find('[', backends_key);
+    if (arr == std::string::npos) {
+      if (error) {
+        *error = "backends is not an array";
+      }
+      return false;
+    }
+    const auto arr_end = json_match_bracket(json_text, arr);
+    if (arr_end == std::string::npos) {
+      if (error) {
+        *error = "unterminated backends array";
+      }
+      return false;
+    }
+    size_t i = arr + 1;
+    while (i < arr_end) {
+      i = json_skip_ws(json_text, i);
+      if (i >= arr_end || json_text[i] == ']') {
+        break;
+      }
+      if (json_text[i] == ',') {
+        ++i;
+        continue;
+      }
+      if (json_text[i] != '{') {
+        break;
+      }
+      const auto obj_end = json_match_bracket(json_text, i);
+      if (obj_end == std::string::npos || obj_end > arr_end) {
+        break;
+      }
+      const std::string obj = json_text.substr(i, obj_end - i + 1);
+      i = obj_end + 1;
+      const auto primitives_at = obj.find("\"primitives\"");
+      const std::string header =
+          primitives_at == std::string::npos ? obj : obj.substr(0, primitives_at);
+      std::string name;
+      if (!json_string_field(header, "name", &name) || name != backend_name) {
         continue;
       }
       std::set<std::string> primitives;
-      for (const auto &primitive : backend.value("primitives", nlohmann::json::array())) {
-        primitives.insert(primitive.value("name", ""));
+      if (primitives_at != std::string::npos) {
+        const auto pb = obj.find('[', primitives_at);
+        if (pb != std::string::npos) {
+          const auto pe = json_match_bracket(obj, pb);
+          if (pe != std::string::npos) {
+            size_t p = pb + 1;
+            while (p < pe) {
+              p = json_skip_ws(obj, p);
+              if (p >= pe || obj[p] == ']') {
+                break;
+              }
+              if (obj[p] == ',') {
+                ++p;
+                continue;
+              }
+              if (obj[p] != '{') {
+                break;
+              }
+              const auto one_end = json_match_bracket(obj, p);
+              if (one_end == std::string::npos) {
+                break;
+              }
+              std::string pname;
+              if (json_string_field(obj.substr(p, one_end - p + 1), "name", &pname)) {
+                primitives.insert(std::move(pname));
+              }
+              p = one_end + 1;
+            }
+          }
+        }
       }
-      for (const auto &name : expected) {
-        if (!primitives.contains(name)) {
+      for (const auto &want : expected) {
+        if (!primitives.contains(want)) {
           if (error) {
-            *error = "missing primitive " + name;
+            *error = "missing primitive " + want;
           }
           return false;
         }

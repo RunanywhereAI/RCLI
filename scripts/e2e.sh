@@ -9,7 +9,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RCLI="${1:?usage: e2e.sh <path-to-rcli>}"
-[ -x "${RCLI}" ] || { echo "not executable: ${RCLI}" >&2; exit 1; }
+if [[ ! -e "${RCLI}" ]]; then
+    echo "not found: ${RCLI}" >&2
+    exit 1
+fi
+if [[ ! -x "${RCLI}" && "${RCLI}" != *.exe && "${RCLI}" != *.EXE ]]; then
+    echo "not executable: ${RCLI}" >&2
+    exit 1
+fi
 
 bash "${ROOT}/scripts/smoke.sh" "${RCLI}"
 

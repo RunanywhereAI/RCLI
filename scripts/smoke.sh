@@ -5,7 +5,14 @@
 set -euo pipefail
 
 RCLI="${1:?usage: smoke.sh <path-to-rcli>}"
-[ -x "${RCLI}" ] || { echo "not executable: ${RCLI}" >&2; exit 1; }
+if [[ ! -e "${RCLI}" ]]; then
+    echo "not found: ${RCLI}" >&2
+    exit 1
+fi
+if [[ ! -x "${RCLI}" && "${RCLI}" != *.exe && "${RCLI}" != *.EXE ]]; then
+    echo "not executable: ${RCLI}" >&2
+    exit 1
+fi
 
 fail=0
 check() {
