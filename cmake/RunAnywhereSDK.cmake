@@ -96,6 +96,16 @@ if(WIN32)
                 INTERFACE_LINK_LIBRARIES "${RunAnywhere_LIBRARY_DIR}/onnxruntime.lib")
         endif()
     endif()
+    # Static libcurl/libarchive in 0.20.26 kits omit these Windows imports.
+    # Keep them here until a later kit bakes them into SYSTEM_LIBS.
+    foreach(_sys IN ITEMS iphlpapi xmllite ole32)
+        get_target_property(_rcli_ra_ifaces RunAnywhere::commons INTERFACE_LINK_LIBRARIES)
+        set(_rcli_ra_ifaces "${_rcli_ra_ifaces}")
+        if(NOT _rcli_ra_ifaces MATCHES "${_sys}")
+            set_property(TARGET RunAnywhere::commons APPEND PROPERTY
+                INTERFACE_LINK_LIBRARIES "${_sys}")
+        endif()
+    endforeach()
 endif()
 
 # Back-compat name used by the rest of this CMakeLists.
