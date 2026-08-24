@@ -9,7 +9,7 @@ class Rcli < Formula
   on_macos do
     on_arm do
       url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.5.0/rcli-0.5.0-macos-arm64.tar.gz"
-      sha256 "cf5f28cc6d189592415a6e2ab6528279a3a1dc45d47a10e5f957bf033016ddca"
+      sha256 "aa524eef31405d99c1fda4b90c3b1f3e8f74302fe209ba7fe81b343a1f92a266"
     end
   end
 
