@@ -56,15 +56,29 @@ expand_link_tokens() {
 
 archives=()
 while IFS= read -r token; do
+    archive=""
     case "${token}" in
+        -Wl,-force_load,*)
+            # Apple ld emits one token: -Wl,-force_load,/abs/path/lib.a
+            archive="${token#-Wl,-force_load,}"
+            ;;
+        -Wl,--whole-archive|--whole-archive|-Wl,--no-whole-archive|--no-whole-archive|-force_load)
+            continue
+            ;;
+        -*)
+            continue
+            ;;
         *.a)
-            if [[ "${token}" = /* ]]; then
-                archives+=("${token}")
-            else
-                archives+=("${BUILD}/${token}")
-            fi
+            archive="${token}"
             ;;
     esac
+    [[ -n "${archive}" ]] || continue
+    if [[ "${archive}" != /* ]]; then
+        archive="${BUILD}/${archive}"
+    fi
+    if [[ -f "${archive}" ]]; then
+        archives+=("${archive}")
+    fi
 done < <(expand_link_tokens ${line})
 
 if [[ ${#archives[@]} -eq 0 ]]; then
