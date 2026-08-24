@@ -25,9 +25,12 @@ jobs:
       RCLI_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Checkout SDK Swift tree (MLX runtime)
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           repository: RunanywhereAI/runanywhere-sdks
           ref: v0.20.27
           path: .deps/runanywhere-sdks
@@ -60,6 +63,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
       - name: Download C++ desktop kit
@@ -103,6 +108,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           path: artifacts

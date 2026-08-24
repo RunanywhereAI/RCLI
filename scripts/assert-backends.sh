@@ -36,7 +36,8 @@ printf '%s\n' "${json}" | sed 's/^/  /'
 
 fail=0
 for name in "$@"; do
-    if printf '%s\n' "${json}" | grep -qiE "\"name\"[[:space:]]*:[[:space:]]*\"${name}\"|[[:space:]]${name}([,[:space:]]|$)"; then
+    safe_name="$(printf '%s' "${name}" | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+    if printf '%s\n' "${json}" | grep -qiE "\"name\"[[:space:]]*:[[:space:]]*\"${safe_name}\"|[[:space:]]${safe_name}([,[:space:]]|$)"; then
         echo "  ok    ${name}"
     else
         echo "  FAIL  ${name} not registered"

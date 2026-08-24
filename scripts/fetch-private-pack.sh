@@ -44,23 +44,16 @@ if [[ -n "${RCLI_PRIVATE_OVERLAY:-}" ]]; then
   exit 0
 fi
 
-TOKEN="${NEURUN_TOKEN:-${GH_TOKEN:-}}"
-if [[ -z "$TOKEN" ]]; then
-  if [[ "${RCLI_REQUIRE_PRIVATE:-}" == "1" ]]; then
-    echo "error: NEURUN_TOKEN required (RCLI_REQUIRE_PRIVATE=1)" >&2
-    exit 1
-  fi
-  echo "skip: no NEURUN_TOKEN; OSS kit only"
-  exit 0
-fi
-
 # Prefer a tarball already sitting next to the kit (CI drops artifacts here).
+# Check this BEFORE any token gate — a staged overlay must apply without
+# NEURUN_TOKEN / GH_TOKEN (those are unused; there is no remote fetch path).
 shopt -s nullglob
 local_hits=("$DEST"/../RunAnywhere-cpp-desktop-"${PLATFORM}"-"${ENGINE}"-private-v*.tar.gz)
 if [[ ${#local_hits[@]} -gt 0 ]]; then
   apply_tar "${local_hits[0]}"
   exit 0
 fi
+shopt -u nullglob
 
 if [[ "${RCLI_REQUIRE_PRIVATE:-}" == "1" ]]; then
   echo "error: no private ${ENGINE} overlay found for $PLATFORM" >&2

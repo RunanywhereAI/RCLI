@@ -147,17 +147,17 @@ if(WIN32 AND EXISTS "${RunAnywhere_THIRD_PARTY_DIR}/onnxruntime.dll")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${RunAnywhere_THIRD_PARTY_DIR}/onnxruntime.dll"
             "$<TARGET_FILE_DIR:rcli>/onnxruntime.dll"
-        COMMENT "Stage onnxruntime.dll next to rcli.exe")
+        COMMENT "Stage onnxruntime.dll next to rcli.exe"
+        VERBATIM)
 endif()
 if(WIN32 AND DEFINED RunAnywhere_LIBRARY_DIR)
-    file(GLOB _overlay_dlls "${RunAnywhere_LIBRARY_DIR}/../bin/*.dll")
-    foreach(_dll IN LISTS _overlay_dlls)
-        add_custom_command(TARGET rcli POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_dll}"
-                "$<TARGET_FILE_DIR:rcli>/"
-            COMMENT "Stage overlay DLL next to rcli.exe")
-    endforeach()
+    add_custom_command(TARGET rcli POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            "-DSRC_DIR=${RunAnywhere_LIBRARY_DIR}/../bin"
+            "-DDST_DIR=$<TARGET_FILE_DIR:rcli>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy-overlay-dlls.cmake"
+        COMMENT "Stage overlay DLLs next to rcli.exe"
+        VERBATIM)
 endif()
 
 install(TARGETS rcli RUNTIME DESTINATION bin)

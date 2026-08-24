@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh 
 rcli pull qwen3          # download
 rcli run qwen3           # chat
 rcli run qwen3 "Hello"   # one-shot
-rcli serve qwen3         # OpenAI-compatible API on :8080
+rcli serve qwen3         # OpenAI-compatible API on :8080 (macOS/Linux)
 ```
 
 `rcli models list --all` is the full catalog. Short names work everywhere (`qwen3`, `llama3.2`, `whisper-tiny`, `piper`, …). Any Hugging Face GGUF works too:
@@ -60,13 +60,12 @@ One `rcli` binary. The kit picks the engine; you do not.
 | [MLX](https://github.com/ml-explore/mlx) | yes | — | — | — |
 | [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | yes | yes | — | yes |
 | [ONNX Runtime](https://onnxruntime.ai) | yes | yes | — | yes |
-| NeuRT (Apple Neural Engine) | overlay | — | — | — |
+| NeuRT (Apple Neural Engine + Core ML) | overlay | — | — | — |
 | QHexRT (Qualcomm Hexagon NPU) | — | — | overlay | — |
-| Core ML | yes (image gen) | — | — | — |
 
 `rcli backends` prints what this binary actually registered.
 
-MLX is Apple GPU. NeuRT is Apple Neural Engine (private overlay, not in the public bottle). QHexRT is Snapdragon NPU on Windows ARM64 only (private overlay; x64 Windows has no Hexagon path). llama.cpp / Sherpa / ONNX do not configure on MSVC ARM64 today, so the public Windows ARM64 kit is commons + the desktop adapter.
+MLX is Apple GPU. NeuRT is Apple Neural Engine — Core ML is the stack NeuRT uses, not a separate backend. Image generation (`sd15`) runs on NeuRT. NeuRT and QHexRT are private overlays, not in the public bottle. QHexRT is Snapdragon NPU on Windows ARM64 only (x64 Windows has no Hexagon path). llama.cpp / Sherpa / ONNX do not configure on MSVC ARM64 today, so the public Windows ARM64 kit is commons + the desktop adapter.
 
 ## Models
 
@@ -129,13 +128,13 @@ rcli stt transcribe hello.wav
 | [BAAI](https://huggingface.co/BAAI) | BGE Reranker | rerank | `bge-reranker` |
 | NVIDIA | Sortformer | diarization | `sortformer` |
 | [NVIDIA / Hugging Face](https://huggingface.co/nvidia) | SegFormer | segmentation | `segformer` |
-| Stability AI / Apple | Stable Diffusion 1.5 | image gen (Core ML) | `sd15` |
+| Stability AI / Apple | Stable Diffusion 1.5 | image gen (NeuRT) | `sd15` |
 
 ## macOS vs Windows
 
-**macOS Apple Silicon** is the full product: llama.cpp + MLX + Sherpa + ONNX in one binary. Pull `qwen3` (CPU/Metal GGUF) or `mlx-qwen3` (Apple GPU). Image generation (`sd15`) is Core ML. NeuRT (ANE) links when the private overlay is present.
+**macOS Apple Silicon** is the full product: llama.cpp + MLX + Sherpa + ONNX in one binary. Pull `qwen3` (CPU/Metal GGUF) or `mlx-qwen3` (Apple GPU). Image generation (`sd15`) is NeuRT (Apple Neural Engine / Core ML). NeuRT links when the private overlay is present.
 
-**Windows x64** runs the GGUF / ONNX / Sherpa catalog: Qwen, Llama, Gemma, Granite, Whisper, Piper, MiniLM, and the rest of the non-`mlx-*` rows. No MLX, no Core ML, no QHexRT.
+**Windows x64** runs the GGUF / ONNX / Sherpa catalog: Qwen, Llama, Gemma, Granite, Whisper, Piper, MiniLM, and the rest of the non-`mlx-*` rows. No MLX, no NeuRT, no QHexRT.
 
 **Windows ARM64** (Snapdragon): public kit has no llama.cpp/ONNX/Sherpa yet. With the QHexRT overlay, Hexagon NPU models run on device. Do not expect `mlx-*` or `sd15` here.
 
@@ -157,7 +156,8 @@ rcli stt transcribe hello.wav
 | `rcli vad detect` | voice activity |
 | `rcli embed` | embeddings |
 | `rcli rerank` | rerank documents |
-| `rcli serve` | OpenAI-compatible HTTP |
+| `rcli image generate` | text → image (NeuRT / Apple Silicon) |
+| `rcli serve` | OpenAI-compatible HTTP (macOS/Linux) |
 | `rcli backends` | registered engines |
 | `rcli info` | versions and paths |
 
@@ -165,17 +165,31 @@ rcli stt transcribe hello.wav
 
 ## Build from source
 
-Stage a C++ desktop kit from [runanywhere-sdks](https://github.com/RunanywhereAI/runanywhere-sdks), then:
+Stage a C++ desktop kit from [runanywhere-sdks](https://github.com/RunanywhereAI/runanywhere-sdks). The pin is `cmake/sdk-pin.cmake` (`RCLI_PINNED_SDK_VERSION`).
+
+**C++-only** (`rcli-cxx` on Apple; `rcli` elsewhere):
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/path/to/kit
 cmake --build build
+./build/rcli version   # ./build/rcli-cxx on Apple
+./build/rcli backends
+```
+
+**Apple Silicon product binary** is the Swift MLX host (`build/rcli`). Independent clones need the SDK Swift tree (`RCLI_SDK_SWIFT_PATH`) and `RCLI_APPLE_MLX_HOST=ON` (the default):
+
+```bash
+export RCLI_SDK_SWIFT_PATH=/path/to/runanywhere-sdks
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/path/to/kit
+cmake --build build
+# or: scripts/build-mlx.sh build
 ./build/rcli version
 ./build/rcli backends
 ```
 
-On Apple Silicon the product binary is `build/rcli` (Swift MLX host). See [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Docs
 

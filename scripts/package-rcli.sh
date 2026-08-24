@@ -36,7 +36,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
   fi
   BIN="${BUILD}/rcli"
 else
-  cands=("${BUILD}/rcli-cxx" "${BUILD}/rcli" "${BUILD}/Release/rcli" "${BUILD}/Release/rcli.exe")
+  cands=("${BUILD}/rcli-cxx" "${BUILD}/rcli" "${BUILD}/rcli.exe" "${BUILD}/Release/rcli" "${BUILD}/Release/rcli.exe")
   for cand in "${cands[@]}"; do
     if [[ -x "${cand}" ]]; then BIN="${cand}"; break; fi
   done
@@ -58,6 +58,13 @@ for bundle in "${BUILD}"/*.bundle; do
   cp -R "${bundle}" "${STAGE}/bin/"
 done
 shopt -u nullglob
+if [[ "$(uname -s)" == Darwin ]]; then
+  if [[ ! -d "${STAGE}/bin/mlx-swift_Cmlx.bundle" ]]; then
+    echo "error: macOS bottle requires mlx-swift_Cmlx.bundle next to rcli (Metal shaders)." >&2
+    echo "  cmake --build with RCLI_APPLE_MLX_HOST=ON, or scripts/build-mlx.sh" >&2
+    exit 1
+  fi
+fi
 
 copy_kit_runtime() {
   local src="$1"
