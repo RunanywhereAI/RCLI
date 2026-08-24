@@ -38,8 +38,16 @@ jobs:
             --pattern "$asset" --dir /tmp/kit
           mkdir -p "$HOME/kit"
           tar xzf "/tmp/kit/$asset" -C "$HOME/kit" --strip-components=1
-          test -f "$HOME/kit/include/runanywhere/proto/model_types.pb.h"
-          test -f "$HOME/kit/share/runanywhere/SCHEMA_LOCK"
+          if [[ ! -f "$HOME/kit/include/runanywhere/proto/model_types.pb.h" ]]; then
+            echo "kit missing generated proto headers; listing prefix:" >&2
+            find "$HOME/kit" -maxdepth 4 -type d -print >&2
+            exit 1
+          fi
+          if [[ ! -f "$HOME/kit/share/runanywhere/SCHEMA_LOCK" ]]; then
+            echo "kit missing share/runanywhere/SCHEMA_LOCK" >&2
+            find "$HOME/kit/share" -print >&2
+            exit 1
+          fi
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/kit"
       - name: Build
