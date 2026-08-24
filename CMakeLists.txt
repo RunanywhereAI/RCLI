@@ -83,9 +83,8 @@ target_include_directories(rcli_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/linenoise"
 )
 
-find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
-target_link_libraries(rcli_core PUBLIC rac_commons ZLIB::ZLIB Threads::Threads)
+target_link_libraries(rcli_core PUBLIC rac_commons Threads::Threads)
 target_compile_definitions(rcli_core PUBLIC
     RCLI_VERSION="${PROJECT_VERSION}"
     RCLI_PINNED_SDK_VERSION="${RCLI_PINNED_SDK_VERSION}"
