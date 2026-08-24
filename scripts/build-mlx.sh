@@ -12,11 +12,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="${1:-${ROOT}/build}"
 
-if [[ ! -f "${BUILD}/CMakeFiles/rcli.dir/link.txt" ]]; then
-    echo "error: ${BUILD}/CMakeFiles/rcli.dir/link.txt missing — cmake --build first" >&2
-    exit 1
-fi
-
 KIT="${RCLI_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
 KIT="${KIT%%:*}"
 if [[ -z "${KIT}" || ! -d "${KIT}/include" ]]; then

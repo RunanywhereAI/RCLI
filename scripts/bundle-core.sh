@@ -14,8 +14,22 @@ LINK_TXT="${BUILD}/CMakeFiles/rcli.dir/link.txt"
 OUT_LIB="${BUILD}/librcli_bundle.a"
 OUT_FLAGS="${BUILD}/rcli-link-flags.txt"
 
-if [[ ! -f "${LINK_TXT}" ]]; then
-    echo "no ${LINK_TXT} — build the rcli target first" >&2
+# Ninja never writes CMakeFiles/<tgt>.dir/link.txt (Makefiles only). Harvest
+# the link line from the build graph so the Swift MLX host can still bundle
+# the C++ archives.
+if [[ ! -s "${LINK_TXT}" && -f "${BUILD}/build.ninja" ]]; then
+    mkdir -p "${BUILD}/CMakeFiles/rcli.dir"
+    ninja_bin="$(command -v ninja || command -v ninja-build || true)"
+    if [[ -n "${ninja_bin}" ]]; then
+        "${ninja_bin}" -C "${BUILD}" -t commands rcli \
+            | grep -E 'clang\+\+|c\+\+|g\+\+' \
+            | grep -E -- '-o[[:space:]]+[^[:space:]]*rcli' \
+            | tail -1 > "${LINK_TXT}" || true
+    fi
+fi
+
+if [[ ! -s "${LINK_TXT}" ]]; then
+    echo "no ${LINK_TXT} — build the rcli target first (Ninja or Makefiles)" >&2
     exit 1
 fi
 

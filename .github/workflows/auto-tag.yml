@@ -1,0 +1,98 @@
+name: Auto-Tag Release
+
+# When a PR is merged to main with release:patch|minor|major, tag v<version>
+# from CMakeLists.txt and dispatch release.yml. Tag pushes with GITHUB_TOKEN
+# do not trigger other workflows, so the dispatch is required.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-tag:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect release label on merged PR
+        id: label
+        env:
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          set -euo pipefail
+          NAMES=$(echo "$PR_LABELS" | jq -r '.[].name')
+          echo "PR labels: $NAMES"
+          BUMP=""
+          COUNT=0
+          for name in $NAMES; do
+            case "$name" in
+              release:patch) BUMP="patch"; COUNT=$((COUNT + 1)) ;;
+              release:minor) BUMP="minor"; COUNT=$((COUNT + 1)) ;;
+              release:major) BUMP="major"; COUNT=$((COUNT + 1)) ;;
+            esac
+          done
+          if [ "$COUNT" -gt 1 ]; then
+            echo "::error::Merged PR has multiple release:* labels; exactly one is allowed."
+            exit 1
+          elif [ -z "$BUMP" ]; then
+            echo "No release:* label — nothing to do."
+            echo "should-release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release label found: release:$BUMP"
+            echo "should-release=true" >> "$GITHUB_OUTPUT"
+            echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the reviewed merge commit
+        if: steps.label.outputs.should-release == 'true'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read version from CMakeLists.txt
+        if: steps.label.outputs.should-release == 'true'
+        id: version
+        run: |
+          set -euo pipefail
+          REVIEWED=$(sed -nE 's/^project\(rcli VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | head -1)
+          if [ -z "$REVIEWED" ]; then
+            echo "::error::Could not read project(rcli VERSION ...) from CMakeLists.txt"
+            exit 1
+          fi
+          echo "Reviewed version: $REVIEWED"
+          echo "new-version=$REVIEWED" >> "$GITHUB_OUTPUT"
+
+      - name: Push reviewed release tag
+        if: steps.label.outputs.should-release == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new-version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "v${NEW_VERSION}" >/dev/null 2>&1; then
+            echo "::notice::Tag v${NEW_VERSION} already exists; dispatching release anyway."
+          else
+            git tag "v${NEW_VERSION}"
+            git push origin "v${NEW_VERSION}"
+            echo "::notice::Pushed tag v${NEW_VERSION} at $(git rev-parse HEAD)"
+          fi
+
+      - name: Dispatch release workflow at tag
+        if: steps.label.outputs.should-release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new-version }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml \
+            --repo "${{ github.repository }}" \
+            --ref "v${NEW_VERSION}" \
+            --field "version=${NEW_VERSION}"
+          echo "::notice::Dispatched release.yml at v${NEW_VERSION}"
