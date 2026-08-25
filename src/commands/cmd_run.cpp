@@ -692,8 +692,9 @@ void add_generation_options(CLI::App* cmd, const std::shared_ptr<RunParams>& par
     cmd->add_option("--lora-scale", params->lora_scale,
                     "How strongly the LoRA applies (default 1.0)");
     cmd->add_option("--engine", params->engine,
-                    "Engine hint (neurt|coreml|ane, mlx, llamacpp, onnx, sherpa). Honoured for "
-                    "catalog models too, not just URL/HF refs.");
+                    "Engine hint (neurt|coreml|ane, mlx, llamacpp, onnx, sherpa, qhexrt). "
+                    "Honoured for catalog models too, not just URL/HF refs. Omit to let "
+                    "catalog framework / plugin priority pick.");
     cmd->add_option("--temperature,--temp", params->temperature,
                     "Raise for more random sampling (0 = engine default)");
     cmd->add_option("--top-p", params->top_p, "Keep the smallest token set above this probability");

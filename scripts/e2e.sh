@@ -5,7 +5,8 @@
 #
 # Always runs scripts/smoke.sh (no model download). Set RCLI_E2E_MODEL to also
 # pull a catalog model and run one generation — that needs network + disk.
-# Overlay backends: RCLI_E2E_MLX_MODEL, RCLI_E2E_NEURT_MODEL, RCLI_E2E_QHEXRT_MODEL.
+# Overlay / device round-trips live in scripts/e2e-modalities.sh and are keyed
+# by primitive, not engine. Public CI leaves those knobs unset (skip).
 # CMAKE_PREFIX_PATH is optional; RCLI_SDK_KIT is preferred. Unset is fine.
 set -euo pipefail
 
@@ -148,70 +149,17 @@ for name in "${expected_backends[@]}"; do
     esac
 done
 
-roundtrip() {
-    local label="$1"
-    local model="$2"
-    local kind="${3:-llm}"
-    echo "e2e (${label}): ${model}"
-    export RUNANYWHERE_HOME="${RUNANYWHERE_HOME:-$(mktemp -d)}"
-    if [[ -e "${model}" ]]; then
-        echo "  ok    local path ${model}"
-    elif "${RCLI}" models download "${model}"; then
-        echo "  ok    models download ${model}"
-    elif "${RCLI}" pull "${model}"; then
-        echo "  ok    pull ${model}"
+# Modality round-trips (engine-agnostic). Skip when no model is discovered.
+# RCLI_E2E_MODALITIES=0 disables this so public CI can stay modelless-only.
+if [[ "${RCLI_E2E_MODALITIES:-1}" != "0" ]]; then
+    if bash "${ROOT}/scripts/e2e-modalities.sh" "${RCLI}"; then
+        echo "  ok    modalities"
     else
-        echo "  FAIL  download ${model}"
-        return 1
+        echo "  FAIL  modalities"
+        fail=1
     fi
-    case "${kind}" in
-        image)
-            local out
-            out="$(mktemp -t rcli-e2e-img).png"
-            if "${RCLI}" image generate --model "${model}" --prompt "a red square" --out "${out}" --steps 4 >/dev/null 2>&1 \
-                && [[ -s "${out}" ]]; then
-                echo "  ok    image generate"
-                rm -f "${out}"
-                return 0
-            fi
-            echo "  FAIL  image generate"
-            return 1
-            ;;
-        *)
-            if "${RCLI}" llm generate --model "${model}" "Reply with exactly: ok" --max-output-tokens 8 >/dev/null 2>&1 \
-                || "${RCLI}" run "${model}" "Reply with exactly: ok" >/dev/null 2>&1; then
-                echo "  ok    generate"
-                return 0
-            fi
-            echo "  FAIL  generate"
-            return 1
-            ;;
-    esac
-}
-
-# Default one-model path (any backend). Specific engines below can also be set.
-if [[ -n "${RCLI_E2E_MODEL:-}" ]]; then
-    roundtrip "model" "${RCLI_E2E_MODEL}" llm || fail=1
 else
-    echo "  skip  model round-trip (set RCLI_E2E_MODEL to enable)"
-fi
-
-# Newly added backends: run a real model when the tester asks, never in
-# default CI (downloads are large; NeuRT/QHexRT overlays are private).
-if [[ -n "${RCLI_E2E_MLX_MODEL:-}" ]]; then
-    roundtrip "mlx" "${RCLI_E2E_MLX_MODEL}" llm || fail=1
-elif printf '%s\n' "${expected_backends[@]}" | grep -qx mlx; then
-    echo "  skip  mlx round-trip (set RCLI_E2E_MLX_MODEL, e.g. mlx-qwen3)"
-fi
-if [[ -n "${RCLI_E2E_NEURT_MODEL:-}" ]]; then
-    roundtrip "neurt" "${RCLI_E2E_NEURT_MODEL}" image || fail=1
-elif printf '%s\n' "${expected_backends[@]}" | grep -qx neurt; then
-    echo "  skip  neurt round-trip (set RCLI_E2E_NEURT_MODEL, e.g. sd15)"
-fi
-if [[ -n "${RCLI_E2E_QHEXRT_MODEL:-}" ]]; then
-    roundtrip "qhexrt" "${RCLI_E2E_QHEXRT_MODEL}" llm || fail=1
-elif printf '%s\n' "${expected_backends[@]}" | grep -qx qhexrt; then
-    echo "  skip  qhexrt round-trip (set RCLI_E2E_QHEXRT_MODEL)"
+    echo "  skip  modalities (RCLI_E2E_MODALITIES=0)"
 fi
 
 exit "${fail}"

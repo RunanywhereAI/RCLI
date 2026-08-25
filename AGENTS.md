@@ -77,11 +77,17 @@ Hermetic unit tests (`tests/test_rcli_unit.cpp`): no models, no network, no real
 keys. `ctest` is the default CI bar.
 
 Smoke / e2e (`scripts/smoke.sh`, `scripts/e2e.sh`) prove the product promise
-against a **pinned kit**, not SDK source. Optional `RCLI_E2E_MODEL` covers
-download + generate. There is one CLI named `rcli`. On Apple, `cmake --build`
-links the Swift MLX host as `build/rcli` (llama.cpp + ONNX + Sherpa + MLX).
-Windows is `build/rcli.exe` (no MLX). `rcli-cxx` is an Apple compile artifact,
-not the product. Full MLX model smoke: `scripts/smoke-mlx.sh`.
+against a **pinned kit**, not SDK source. `scripts/e2e-modalities.sh` (called
+from `e2e.sh`) runs optional round-trips **by modality** — LLM, STT, TTS, VLM,
+embed, image, VAD, rerank, segment — and never requires `--engine`. Discover
+models via `RCLI_E2E_<MOD>` (path or catalog id), `RCLI_E2E_MODEL_ROOTS`, or
+`RCLI_E2E_AUTO=1`. Legacy `RCLI_E2E_MODEL` / `RCLI_E2E_MLX_MODEL` /
+`RCLI_E2E_NEURT_MODEL` / `RCLI_E2E_QHEXRT_MODEL` still map onto those
+primitives. Public CI leaves every knob unset (skip). There is one CLI named
+`rcli`. On Apple, `cmake --build` links the Swift MLX host as `build/rcli`
+(llama.cpp + ONNX + Sherpa + MLX). Windows is `build/rcli.exe` (no MLX).
+`rcli-cxx` is an Apple compile artifact, not the product. Full MLX model
+smoke: `scripts/smoke-mlx.sh`.
 
 ## CI
 
