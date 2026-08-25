@@ -19,7 +19,9 @@ of the SDK kit pin in `cmake/sdk-pin.cmake`.
 argv / flags / env
   -> src/commands/cmd_*.cpp     thin: parse → bootstrap() → one rac_* → render
   -> C++ desktop kit            catalog, download, lifecycle, generate, serve
-  -> engines (in the kit)       llama.cpp, Sherpa, ONNX, MLX (Apple host)
+  -> engines (in the kit)       llama.cpp, Sherpa, ONNX, MLX (Apple host);
+                                NeuRT / QHexRT only when the private overlay
+                                was applied at configure time
 ```
 
 The kit owns truth: models, backends, proto contracts, download, inference.
@@ -63,6 +65,9 @@ only for a C++-only compile loop.
 
 NeuRT image gen is `#if RCLI_HAS_NEURT` in `src/commands/cmd_image.cpp`, which
 is true only when the NeuRT overlay is applied. Public bottles stay OSS.
+`--engine qhexrt` / `qnn` / `npu` / `hexagon` map to
+`INFERENCE_FRAMEWORK_QHEXRT`. Local HNPU trees are inferred from `v75`/`v79`/
+`v81`, `context.bin`, or `*_HNPU` directory names.
 
 ## Skills trees
 

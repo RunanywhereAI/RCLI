@@ -1669,11 +1669,15 @@ constexpr CatalogEntry kCatalog[] = {
     // and `rcli list` shows it. The palettized CoreML bundle is a directory of
     // compiled .mlmodelc sub-models served by the `coreml` engine; a
     // pre-fetched bundle can also be passed to `--model` as a local path.
+    // The Hugging Face *repo page* is HTML (~160 KB) and is not a model.
+    // Point at the compiled split-einsum zip (~1.5 GB).
     {"stable-diffusion-v1-5-coreml", "sd15", "Stable Diffusion 1.5 (CoreML)",
      v1::MODEL_CATEGORY_IMAGE_GENERATION, v1::INFERENCE_FRAMEWORK_COREML,
      v1::MODEL_FORMAT_MLPACKAGE,
-     "https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized",
-     nullptr, 0, 1200 * MB, 0, false},
+     "https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized/"
+     "resolve/main/"
+     "coreml-stable-diffusion-v1-5-palettized_split_einsum_v2_compiled.zip",
+     nullptr, 0, 1500 * MB, 0, false},
 
     // --- MLX (Apple Silicon / Apple GPU via mlx-swift-lm) ---
     {"mlx-qwen3-0.6b-4bit", "mlx-qwen3", "Qwen3 0.6B 4-bit (MLX)",

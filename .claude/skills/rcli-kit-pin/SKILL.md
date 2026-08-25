@@ -66,6 +66,16 @@ Not part of the pin. Applied after extract:
 QHexRT is Windows ARM64 only. Public bottles must stay OSS — never bake overlay
 bytes into a Homebrew bottle or a public GitHub Release asset.
 
+Windows ARM64 **public** kit is commons-only (no llama.cpp). Overlay apply
+then rebuild product `rcli.exe`. `v0.20.28` ARM64 kits are missing
+`lib/libcurl.lib` (packager only globbed x64-windows-static) — copy from
+vcpkg `arm64-windows-static` until the next SDK kit train. RCLI
+`cmake/RunAnywhereSDK.cmake` links that import lib when present.
+
+NeuRT: public mac bottle has MLX, not NeuRT. Overlay tarball +
+`RCLI_APPLE_MLX_HOST=ON` rebuild. See **rcli-e2e** for QAIRT / SD15 / DSP
+gotchas; do not weaken public CI to require overlays.
+
 ## Verify
 
 ```bash
