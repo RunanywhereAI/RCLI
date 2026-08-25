@@ -142,27 +142,7 @@ elseif(UNIX)
         BUILD_RPATH "${RunAnywhere_THIRD_PARTY_DIR}"
         INSTALL_RPATH "\$ORIGIN/../lib")
 endif()
-if(WIN32 AND DEFINED RunAnywhere_THIRD_PARTY_DIR AND EXISTS "${RunAnywhere_THIRD_PARTY_DIR}")
-    file(GLOB _rcli_tp_dlls "${RunAnywhere_THIRD_PARTY_DIR}/*.dll")
-    foreach(_dll IN LISTS _rcli_tp_dlls)
-        get_filename_component(_dll_name "${_dll}" NAME)
-        add_custom_command(TARGET rcli POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_dll}"
-                "$<TARGET_FILE_DIR:rcli>/${_dll_name}"
-            COMMENT "Stage ${_dll_name} next to rcli.exe"
-            VERBATIM)
-    endforeach()
-endif()
-if(WIN32 AND DEFINED RunAnywhere_LIBRARY_DIR)
-    add_custom_command(TARGET rcli POST_BUILD
-        COMMAND ${CMAKE_COMMAND}
-            "-DSRC_DIR=${RunAnywhere_LIBRARY_DIR}/../bin"
-            "-DDST_DIR=$<TARGET_FILE_DIR:rcli>"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy-overlay-dlls.cmake"
-        COMMENT "Stage overlay DLLs next to rcli.exe"
-        VERBATIM)
-endif()
+rcli_stage_windows_runtime_dlls(rcli)
 
 install(TARGETS rcli RUNTIME DESTINATION bin)
 

@@ -144,3 +144,34 @@ function(rcli_define_engine_macros target)
         target_compile_definitions(${target} PRIVATE RCLI_HAS_SERVER=1)
     endif()
 endfunction()
+
+# Win32 LoadLibrary searches the exe directory then PATH. Kit third_party
+# (onnxruntime.dll, sherpa-onnx-c-api.dll, …) must sit next to every binary
+# that links rcli_core — rcli.exe and the unit-test exes. Linking the import
+# lib is not enough; 0xc0000135 is a missing DLL at process start.
+function(rcli_stage_windows_runtime_dlls target)
+    if(NOT WIN32)
+        return()
+    endif()
+    if(DEFINED RunAnywhere_THIRD_PARTY_DIR AND EXISTS "${RunAnywhere_THIRD_PARTY_DIR}")
+        file(GLOB _rcli_tp_dlls "${RunAnywhere_THIRD_PARTY_DIR}/*.dll")
+        foreach(_dll IN LISTS _rcli_tp_dlls)
+            get_filename_component(_dll_name "${_dll}" NAME)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_dll}"
+                    "$<TARGET_FILE_DIR:${target}>/${_dll_name}"
+                COMMENT "Stage ${_dll_name} next to $<TARGET_FILE_NAME:${target}>"
+                VERBATIM)
+        endforeach()
+    endif()
+    if(DEFINED RunAnywhere_LIBRARY_DIR)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                "-DSRC_DIR=${RunAnywhere_LIBRARY_DIR}/../bin"
+                "-DDST_DIR=$<TARGET_FILE_DIR:${target}>"
+                -P "${CMAKE_SOURCE_DIR}/cmake/copy-overlay-dlls.cmake"
+            COMMENT "Stage overlay DLLs next to $<TARGET_FILE_NAME:${target}>"
+            VERBATIM)
+    endif()
+endfunction()
