@@ -102,12 +102,17 @@ if [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 && "${base}" == "rcli" ]
 fi
 # Overlay archives flip HAS_NEURT/HAS_QHEXRT at find_package time, but the
 # packaged Config.cmake still says FALSE. Presence of the backend library is
-# the source of truth (same as RunAnywhereConfig.cmake). Public CI has neither.
-if [[ -n "${kit_root}" ]]; then
-    if [[ -f "${kit_root}/lib/librac_backend_neurt.a" || -f "${kit_root}/lib/rac_backend_neurt.lib" ]]; then
+# the source of truth. Only RCLI_SDK_KIT counts — ambient CMAKE_PREFIX_PATH
+# from an overlay rebuild must not fail a public-bottle e2e.
+overlay_root="${RCLI_SDK_KIT-}"
+if [[ -n "${overlay_root}" ]] && command -v cygpath >/dev/null 2>&1; then
+    overlay_root="$(cygpath -u "${overlay_root}")"
+fi
+if [[ -n "${overlay_root}" ]]; then
+    if [[ -f "${overlay_root}/lib/librac_backend_neurt.a" || -f "${overlay_root}/lib/rac_backend_neurt.lib" ]]; then
         expected_backends+=(neurt)
     fi
-    if [[ -f "${kit_root}/lib/librac_backend_qhexrt.a" || -f "${kit_root}/lib/rac_backend_qhexrt.lib" ]]; then
+    if [[ -f "${overlay_root}/lib/librac_backend_qhexrt.a" || -f "${overlay_root}/lib/rac_backend_qhexrt.lib" ]]; then
         expected_backends+=(qhexrt)
     fi
 fi

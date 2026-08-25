@@ -21,8 +21,10 @@ for registrar symbols (`raMLXRegisterRuntime`, `rac_plugin_entry_neurt`,
 `rac_plugin_entry_qhexrt`, …) so a backends() listing cannot pass without
 the engine actually being linked into the bottle.
 
-Pass `RCLI_SDK_KIT` (or `CMAKE_PREFIX_PATH`) so the script can read
-`RunAnywhereConfig.cmake` `HAS_*` flags and stage Windows DLLs.
+Pass `RCLI_SDK_KIT` so overlay backends (`neurt` / `qhexrt`) are required
+when those libs are in the kit. `CMAKE_PREFIX_PATH` is only used for
+`HAS_*` flags and Windows DLL staging — an ambient overlay prefix must
+not make a public OSS bottle fail for missing NeuRT.
 
 ## What "green" means
 
