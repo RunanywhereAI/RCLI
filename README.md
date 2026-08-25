@@ -52,20 +52,62 @@ rcli pull hf.co/Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf
 
 ## Backends
 
-One `rcli` binary. The kit picks the engine; you do not.
+One `rcli` binary. **Catalog models already name their engine** (GGUF → llama.cpp, `mlx-*` → MLX, Core ML → NeuRT, QNN-context → QHexRT). You normally do not pick one.
 
-| Backend | macOS (Apple Silicon) | Windows x64 | Windows ARM64 | Linux x64 |
+Override only when you mean it:
+
+```bash
+rcli llm generate --engine mlx -m mlx-qwen3 "Hello"
+rcli run --engine qhexrt /path/to/lfm2_5_230m_HNPU "Hello"
+rcli image generate --engine neurt --prompt "a red cube" --out out.png
+```
+
+`--engine` accepts `mlx`, `llamacpp`, `sherpa`, `onnx`, `neurt` / `coreml` / `ane`, and `qhexrt` / `qnn` / `npu` / `hexagon`. If you omit it, commons picks the highest-priority **registered** backend that implements that primitive:
+
+| Priority | Engine | Who wins unpinned work |
+|---|---|---|
+| 150 | QHexRT | Every primitive it implements, and only on a Windows ARM64 overlay binary (often the *only* engine in that binary) |
+| 110 | MLX | Apple GPU: LLM / VLM / TTS / STT / embeddings when an `mlx-*` model is not already pinned |
+| 100 | llama.cpp | GGUF LLM / VLM / embed / rerank |
+| 100 | NeuRT | Core ML only. Stays at 100 **on purpose** so it never steals GGUF/MLX traffic. A Core ML bundle reaches NeuRT by framework pin, not by winning priority |
+| 90 | Sherpa-ONNX | STT / TTS / VAD |
+| 50 | ONNX Runtime | embeddings / VAD / diarization / segmentation |
+
+`rcli backends` is the source of truth for **this** binary. Public bottles never list `neurt` or `qhexrt`. Those engines are private overlays, never Homebrew / GitHub Release assets.
+
+### Where each engine exists
+
+| Backend | macOS Apple Silicon | Windows x64 | Windows ARM64 | Linux x64 |
 |---|---|---|---|---|
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | yes | yes | — | yes |
-| [MLX](https://github.com/ml-explore/mlx) | yes | — | — | — |
-| [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | yes | yes | — | yes |
-| [ONNX Runtime](https://onnxruntime.ai) | yes | yes | — | yes |
-| NeuRT (Apple Neural Engine + Core ML) | overlay | — | — | — |
-| QHexRT (Qualcomm Hexagon NPU) | — | — | overlay | — |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | public bottle | public bottle | — | public bottle |
+| [MLX](https://github.com/ml-explore/mlx) (Apple GPU) | public bottle (product `rcli`, not `rcli-cxx`) | — | — | — |
+| [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | public bottle | public bottle | — | public bottle |
+| [ONNX Runtime](https://onnxruntime.ai) | public bottle | public bottle | — | public bottle |
+| NeuRT (Apple Neural Engine; Core ML is the format) | **overlay** rebuild | — | — | — |
+| QHexRT (Qualcomm Hexagon NPU) | — | — | **overlay** rebuild | — |
 
-`rcli backends` prints what this binary actually registered.
+Public Windows ARM64 kits are commons-only (no llama.cpp / ONNX / Sherpa on MSVC ARM64). Snapdragon NPU is overlay-only. x64 Windows has no Hexagon path.
 
-MLX is Apple GPU. NeuRT is Apple Neural Engine — Core ML is the stack NeuRT uses, not a separate backend. Image generation (`sd15`) runs on NeuRT. NeuRT and QHexRT are private overlays, not in the public bottle. QHexRT is Snapdragon NPU on Windows ARM64 only (x64 Windows has no Hexagon path). llama.cpp / Sherpa / ONNX do not configure on MSVC ARM64 today, so the public Windows ARM64 kit is commons + the desktop adapter.
+### Modalities × engines
+
+Yes = this engine implements the primitive. Try = a catalog id that `rcli pull` / a local path can run. Overlay engines still need the matching **on-disk bundle** (compiled `.mlmodelc` tree, or `*_HNPU` / `v81/` QNN-context dir) — a Hugging Face *repo page* is HTML, not a model.
+
+| Modality | Command | llama.cpp | MLX | Sherpa | ONNX | NeuRT | QHexRT |
+|---|---|---|---|---|---|---|---|
+| LLM | `rcli run` / `llm generate` | yes · `smollm2`, `qwen3` | yes · `mlx-qwen3` | — | — | yes · Core ML LLM bundle, **no rcli catalog id yet** | yes · `lfm2-230m-npu` local `*_HNPU` |
+| VLM | `rcli vlm generate --image` | yes · `smolvlm2` | yes · `mlx-qwen2-vl` | — | — | — | yes · HNPU VLM (e.g. `lfm2_5_vl_3b`), not in the public rcli catalog |
+| TTS | `rcli tts synthesize -o out.wav` | — | yes · `mlx-soprano-1.1-80m-5bit` | yes · `piper` | — | — | yes · HNPU TTS (`kitten_*`, `kokoro_en`, …), not in the public rcli catalog |
+| STT | `rcli stt transcribe audio.wav` | — | yes · `mlx-qwen3-asr` | yes · `whisper-tiny` | — | yes · Core ML ASR (Parakeet / Whisper / Moonshine), **no rcli catalog id yet** | yes · HNPU ASR (`whisper_base`, `parakeet_*`, …), not in the public rcli catalog |
+| VAD | `rcli vad detect audio.wav` | — | — | yes | yes · `silero` | — | — |
+| Embeddings | `rcli embed` | yes · `nemotron-3-embed` | yes · `mlx-qwen3-embed` | — | yes · `minilm` | — | yes · HNPU embed (`embeddinggemma_300m`, …) |
+| Rerank | `rcli rerank -d …` | yes · `bge-reranker` | — | — | — | — | yes · HNPU rerank (`nv_rerankqa_1b`) |
+| Segmentation | `rcli segment image.ppm` (binary P6 PPM) | — | — | — | yes · `segformer` | — | — |
+| Diarization | `rcli diarize audio.wav` | — | — | — | yes · `sortformer` | — | — |
+| Image gen | `rcli image generate --prompt … --out …` | — | — | — | — | yes · `sd15` (compiled Core ML zip, not the HF repo HTML) | yes · HNPU diffusion (`cosmos3_edge_diffusion`) |
+
+MLX registers with a one-line `-811` then Swift callbacks install it — that warning is expected. `image generate` is compiled only when NeuRT is linked; `--prompt` and `--out` are required (not a positional prompt). `--steps 4` is enough for a smoke PNG.
+
+QHexRT on device also needs QAIRT matching the Hexagon skel (`QNN_SDK_ROOT` + `ADSP_LIBRARY_PATH=…\lib\hexagon-v81\unsigned` on v81). Overlay 2.47 DLLs vs a 2.41/2.48 device skel will fail to instantiate graphs. Pass the `*_HNPU` directory, not a GGUF. GGUF files cannot run on the ARM64 overlay binary (no llama.cpp).
 
 ## Models
 
@@ -132,11 +174,11 @@ rcli stt transcribe hello.wav
 
 ## macOS vs Windows
 
-**macOS Apple Silicon** is the full product: llama.cpp + MLX + Sherpa + ONNX in one binary. Pull `qwen3` (CPU/Metal GGUF) or `mlx-qwen3` (Apple GPU). Image generation (`sd15`) is NeuRT (Apple Neural Engine / Core ML). NeuRT links when the private overlay is present.
+**macOS Apple Silicon** (public bottle): llama.cpp + MLX + Sherpa + ONNX. Pull `qwen3` (GGUF) or `mlx-qwen3` (GPU). Image generation is NeuRT (`sd15`) and only works after the private overlay is linked into product `rcli`.
 
-**Windows x64** runs the GGUF / ONNX / Sherpa catalog: Qwen, Llama, Gemma, Granite, Whisper, Piper, MiniLM, and the rest of the non-`mlx-*` rows. No MLX, no NeuRT, no QHexRT.
+**Windows x64** (public zip): GGUF / ONNX / Sherpa. No MLX, no NeuRT, no QHexRT.
 
-**Windows ARM64** (Snapdragon): public kit has no llama.cpp/ONNX/Sherpa yet. With the QHexRT overlay, Hexagon NPU models run on device. Do not expect `mlx-*` or `sd15` here.
+**Windows ARM64** (Snapdragon): public kit has no llama.cpp/ONNX/Sherpa. The QHexRT overlay runs Hexagon NPU models from a local `*_HNPU` tree. Do not expect `mlx-*`, GGUF, or `sd15` on that binary.
 
 `rcli serve` is macOS and Linux.
 
@@ -160,6 +202,7 @@ rcli stt transcribe hello.wav
 | `rcli serve` | OpenAI-compatible HTTP (macOS/Linux) |
 | `rcli backends` | registered engines |
 | `rcli info` | versions and paths |
+| `--engine` | force mlx / llamacpp / sherpa / onnx / neurt / qhexrt |
 
 `rcli --help` and `rcli <command> --help` cover the rest.
 
