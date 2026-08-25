@@ -6,7 +6,20 @@ description: Verify a built rcli binary against a pinned C++ desktop kit on macO
 # RCLI e2e
 
 Entry: `scripts/e2e.sh <path-to-rcli>`. Always runs `scripts/smoke.sh`. Set
-`RCLI_E2E_MODEL` for download + generate (needs network + disk).
+`RCLI_E2E_MODEL` for download + generate (needs network + disk). Overlay
+backends also have dedicated knobs that default to skip in public CI:
+
+| Env | When | Example |
+|---|---|---|
+| `RCLI_E2E_MODEL` | any LLM | `mlx-qwen3` |
+| `RCLI_E2E_MLX_MODEL` | product `rcli` on Darwin arm64 | `mlx-qwen3` |
+| `RCLI_E2E_NEURT_MODEL` | overlay kit with `librac_backend_neurt.a` | `sd15` |
+| `RCLI_E2E_QHEXRT_MODEL` | overlay kit with `rac_backend_qhexrt.lib` | local QNN-context path |
+
+`scripts/assert-binary-backends.sh` greps `nm`/`llvm-nm`/`dumpbin`/`strings`
+for registrar symbols (`raMLXRegisterRuntime`, `rac_plugin_entry_neurt`,
+`rac_plugin_entry_qhexrt`, …) so a backends() listing cannot pass without
+the engine actually being linked into the bottle.
 
 Pass `RCLI_SDK_KIT` (or `CMAKE_PREFIX_PATH`) so the script can read
 `RunAnywhereConfig.cmake` `HAS_*` flags and stage Windows DLLs.
@@ -17,10 +30,13 @@ Pass `RCLI_SDK_KIT` (or `CMAKE_PREFIX_PATH`) so the script can read
 
 | Condition | Required `rcli --json backends` name |
 |---|---|
-| always | `llamacpp` |
-| `RunAnywhere_HAS_ONNX` TRUE (or no kit cfg) | `onnx` |
-| `RunAnywhere_HAS_SHERPA` TRUE (or no kit cfg) | `sherpa` |
+| no kit Config (public OSS bottle) | `llamacpp` + `onnx` + `sherpa` |
+| kit `RunAnywhere_HAS_LLAMACPP` TRUE | `llamacpp` |
+| kit `RunAnywhere_HAS_ONNX` TRUE | `onnx` |
+| kit `RunAnywhere_HAS_SHERPA` TRUE | `sherpa` |
 | Darwin arm64 product binary `rcli` (not `rcli-cxx`) | `mlx` |
+| overlay `lib/librac_backend_neurt.a` / `rac_backend_neurt.lib` | `neurt` |
+| overlay `lib/librac_backend_qhexrt.a` / `rac_backend_qhexrt.lib` | `qhexrt` |
 
 Do **not** drop sherpa from the expected list to make 0.20.26 Windows green
 while `HAS_SHERPA` is TRUE. That kit compiled sherpa with speech ops off

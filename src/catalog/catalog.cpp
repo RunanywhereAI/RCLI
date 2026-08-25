@@ -1853,6 +1853,33 @@ constexpr CatalogEntry kCatalog[] = {
      v1::INFERENCE_FRAMEWORK_MLX, v1::MODEL_FORMAT_SAFETENSORS, nullptr,
      kMlxGranite4_1_30BFiles, 10, 18041976573LL, 4096, false},
 
+    // --- QHexRT (Snapdragon Hexagon NPU; Windows ARM64 overlay) ---
+    // Ids match engines/qhexrt/qhexrt_model_catalog.cpp so pull/lifecycle
+    // resolve the same native catalog the Android/Flutter apps use. Folder
+    // URLs are registered as ModelInfo (same path as CoreML diffusion) —
+    // the QNN context tree is fetched by the QHexRT bundle policy or passed
+    // as a local `*_HNPU` directory to `rcli run`.
+    {"lfm2_5_230m", "lfm2-230m-npu", "LFM2.5 230M (Hexagon NPU)",
+     v1::MODEL_CATEGORY_LANGUAGE, v1::INFERENCE_FRAMEWORK_QHEXRT,
+     v1::MODEL_FORMAT_QNN_CONTEXT,
+     "https://huggingface.co/runanywhere/lfm2_5_230m_HNPU", nullptr, 0, 0, 0,
+     false},
+    {"lfm2_5_350m", "lfm2-350m-npu", "LFM2.5 350M (Hexagon NPU)",
+     v1::MODEL_CATEGORY_LANGUAGE, v1::INFERENCE_FRAMEWORK_QHEXRT,
+     v1::MODEL_FORMAT_QNN_CONTEXT,
+     "https://huggingface.co/runanywhere/lfm2_5_350m_HNPU", nullptr, 0, 0, 0,
+     false},
+    {"lfm2_5_1_2b_thinking", "lfm2-1.2b-npu",
+     "LFM2.5 1.2B Thinking (Hexagon NPU)", v1::MODEL_CATEGORY_LANGUAGE,
+     v1::INFERENCE_FRAMEWORK_QHEXRT, v1::MODEL_FORMAT_QNN_CONTEXT,
+     "https://huggingface.co/runanywhere/lfm2_5_1_2b_thinking_HNPU", nullptr, 0,
+     0, 0, true},
+    {"qwen3_5_2b", "qwen3.5-2b-npu", "Qwen3.5 2B (Hexagon NPU)",
+     v1::MODEL_CATEGORY_LANGUAGE, v1::INFERENCE_FRAMEWORK_QHEXRT,
+     v1::MODEL_FORMAT_QNN_CONTEXT,
+     "https://huggingface.co/runanywhere/qwen3_5_2b_HNPU", nullptr, 0, 0, 0,
+     false},
+
     // Muse Glimmer 30B (MLX) and Nemotron-3-Nano-Omni-30B-A3B-Reasoning (MLX)
     // are deliberately NOT registered here. Their config.json model_types
     // ("muse_glimmer" and "NemotronH_Nano_Omni_Reasoning_V3" respectively) are
@@ -1872,7 +1899,11 @@ rac_result_t register_entry(const CatalogEntry &entry) {
   // Register the ModelInfo directly so the id resolves in the general registry
   // (and `rcli list` shows it); the bundle itself is fetched by the diffusion
   // pipeline or supplied to `rcli image --model <local path>`.
-  if (entry.framework == v1::INFERENCE_FRAMEWORK_COREML) {
+  if (entry.framework == v1::INFERENCE_FRAMEWORK_COREML ||
+      entry.framework == v1::INFERENCE_FRAMEWORK_QHEXRT) {
+    // CoreML bundles and QHexRT HNPU folders don't fit the single-file
+    // download-factory grammar. Register ModelInfo so `rcli list` / `rcli run`
+    // resolve the id; the tree is fetched by the engine or passed as a local path.
     v1::ModelInfo model;
     model.set_id(entry.id);
     model.set_name(entry.name);
