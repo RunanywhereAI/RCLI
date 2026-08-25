@@ -107,6 +107,9 @@ Linux bottles are not a v1 merge blocker. Windows x64 and macOS arm64 are.
 
 ## Private engines
 
-NeuRT / QHexRT only appear in `backends` when the overlay was applied
-(`RCLI_HAS_NEURT` / QHexRT). Public CI must pass without overlays. Image gen
+NeuRT / QHexRT only appear in `backends` when the overlay was applied.
+`scripts/e2e.sh` requires `neurt` / `qhexrt` when
+`lib/librac_backend_neurt.a` or `lib/rac_backend_qhexrt.lib` exists — not by
+grepping packaged `HAS_NEURT FALSE` (that stays false; find_package flips it
+when the archive is present). Public CI must pass without overlays. Image gen
 (`cmd_image.cpp`) is compiled out unless NeuRT is present.

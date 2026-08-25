@@ -3,9 +3,11 @@
 #
 #   scripts/fetch-private-pack.sh <macos-arm64|windows-arm64> <kit-prefix>
 #
-# Resolution order:
+# There is no remote fetch (this repo has no token that can see SDK private
+# workflow artifacts). Resolution order:
 #   1. RCLI_PRIVATE_OVERLAY  — local tarball
-#   2. GitHub Actions artifact download (same-repo CI)
+#   2. tarball next to the kit prefix named
+#      RunAnywhere-cpp-desktop-{macos-arm64-neurt,windows-arm64-qhexrt}-private-v*.tar.gz
 #   3. skip (OSS bottle) unless RCLI_REQUIRE_PRIVATE=1
 set -euo pipefail
 

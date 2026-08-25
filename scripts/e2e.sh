@@ -88,6 +88,17 @@ base="${base%.exe}"
 if [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 && "${base}" == "rcli" ]]; then
     expected_backends+=(mlx)
 fi
+# Overlay archives flip HAS_NEURT/HAS_QHEXRT at find_package time, but the
+# packaged Config.cmake still says FALSE. Presence of the backend library is
+# the source of truth (same as RunAnywhereConfig.cmake). Public CI has neither.
+if [[ -n "${kit_root}" ]]; then
+    if [[ -f "${kit_root}/lib/librac_backend_neurt.a" || -f "${kit_root}/lib/rac_backend_neurt.lib" ]]; then
+        expected_backends+=(neurt)
+    fi
+    if [[ -f "${kit_root}/lib/librac_backend_qhexrt.a" || -f "${kit_root}/lib/rac_backend_qhexrt.lib" ]]; then
+        expected_backends+=(qhexrt)
+    fi
+fi
 if bash "${ROOT}/scripts/assert-backends.sh" "${RCLI}" "${expected_backends[@]}"; then
     echo "  ok    backends ${expected_backends[*]}"
 else
