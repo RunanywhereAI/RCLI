@@ -55,6 +55,9 @@
 #include "rac/plugin/rac_plugin_entry.h"
 #include "rac/plugin/rac_plugin_entry_neurt.h"
 #endif
+#if defined(RCLI_HAS_QHEXRT)
+extern "C" rac_result_t rac_backend_qhexrt_register(void);
+#endif
 
 namespace rcli {
 
@@ -623,6 +626,11 @@ rac_result_t bootstrap(const GlobalOptions &options, Bootstrapped *out) {
 #if defined(RCLI_HAS_NEURT)
     if (rac_plugin_register(rac_plugin_entry_neurt()) != RAC_SUCCESS) {
       out::status_line("warning: neurt (Apple Neural Engine) backend failed to register");
+    }
+#endif
+#if defined(RCLI_HAS_QHEXRT)
+    if (rac_backend_qhexrt_register() != RAC_SUCCESS) {
+      out::status_line("warning: qhexrt (Qualcomm Hexagon NPU) backend failed to register");
     }
 #endif
 

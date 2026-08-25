@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(rcli VERSION 0.5.0 LANGUAGES C CXX)
+project(rcli VERSION 0.5.1 LANGUAGES C CXX)
 
 # Product version is independent of the SDK kit pin in cmake/sdk-pin.cmake.
 # scripts/package-rcli.sh and the release workflow stamp this into Formula/rcli.rb.
@@ -142,15 +142,28 @@ elseif(UNIX)
         BUILD_RPATH "${RunAnywhere_THIRD_PARTY_DIR}"
         INSTALL_RPATH "\$ORIGIN/../lib")
 endif()
-if(WIN32 AND EXISTS "${RunAnywhere_THIRD_PARTY_DIR}/onnxruntime.dll")
-    add_custom_command(TARGET rcli POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${RunAnywhere_THIRD_PARTY_DIR}/onnxruntime.dll"
-            "$<TARGET_FILE_DIR:rcli>/onnxruntime.dll"
-        COMMENT "Stage onnxruntime.dll next to rcli.exe")
-endif()
+rcli_stage_windows_runtime_dlls(rcli)
 
 install(TARGETS rcli RUNTIME DESTINATION bin)
+
+# Apple product binary is the Swift MLX host (`build/rcli`), not `rcli-cxx`.
+# Users still type `rcli`; llama.cpp / ONNX / Sherpa register from C++ bootstrap
+# and MLX from the Swift entry. Turn off only for a C++-only compile loop.
+option(RCLI_APPLE_MLX_HOST
+    "On Apple, link the Swift MLX host as build/rcli (the product CLI)" ON)
+if(APPLE AND RCLI_APPLE_MLX_HOST)
+    if(NOT RCLI_SDK_ROOT)
+        message(FATAL_ERROR "RCLI_SDK_ROOT is empty; cannot build the MLX host")
+    endif()
+    add_custom_target(rcli-mlx ALL
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "RCLI_SDK_KIT=${RCLI_SDK_ROOT}"
+            bash "${CMAKE_SOURCE_DIR}/scripts/build-mlx.sh" "${CMAKE_BINARY_DIR}"
+        DEPENDS rcli
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Swift MLX host → ${CMAKE_BINARY_DIR}/rcli"
+        VERBATIM)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)

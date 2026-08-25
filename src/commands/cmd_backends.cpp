@@ -20,11 +20,8 @@ namespace rcli::commands {
 
 namespace {
 
-constexpr rac_primitive_t kPrimitives[] = {
-    RAC_PRIMITIVE_GENERATE_TEXT, RAC_PRIMITIVE_TRANSCRIBE, RAC_PRIMITIVE_SYNTHESIZE,
-    RAC_PRIMITIVE_DETECT_VOICE,  RAC_PRIMITIVE_EMBED,      RAC_PRIMITIVE_VLM,
-    RAC_PRIMITIVE_DIFFUSION,
-};
+// Walk every live primitive. ONNX without RAG only advertises SEGMENT /
+// DIARIZE — omitting those made a registered onnx backend invisible.
 
 struct EngineRow {
     std::string display_name;
@@ -44,7 +41,11 @@ void register_backends(CLI::App& app, GlobalOptions& options) {
         }
 
         std::map<std::string, EngineRow> engines;
-        for (const rac_primitive_t primitive : kPrimitives) {
+        for (int raw = 1; raw < static_cast<int>(RAC_PRIMITIVE_COUNT); ++raw) {
+            if (raw == 6) {
+                continue; // retired RERANK wire value
+            }
+            const rac_primitive_t primitive = static_cast<rac_primitive_t>(raw);
             const rac_engine_vtable_t* plugins[16] = {};
             size_t count = 0;
             if (rac_plugin_list(primitive, plugins, 16, &count) != RAC_SUCCESS) {

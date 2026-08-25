@@ -2,10 +2,10 @@ class Rcli < Formula
   desc "Run language, speech and image models on your own machine"
   homepage "https://github.com/RunanywhereAI/RCLI"
   license "MIT"
-  version "0.5.0"
+  version "0.5.1"
 
-  # 0.5.0 is the kit-consumer CMake bottle (llama.cpp + ONNX). Linux is not
-  # in this cut; install from the GitHub Release zip when it exists.
+    # 0.5.1 is the kit-consumer CMake bottle. macOS arm64 ships the Swift MLX host
+  # (llama.cpp + ONNX + Sherpa + MLX). Linux is not in this cut.
   on_macos do
     on_arm do
       url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.5.0/rcli-0.5.0-macos-arm64.tar.gz"
@@ -15,6 +15,7 @@ class Rcli < Formula
 
   def install
     bin.install "bin/rcli"
+    bin.install Dir["bin/*.bundle"] if Dir["bin/*.bundle"].any?
     lib.install Dir["lib/*"] if Dir["lib/*"].any?
   end
 
@@ -40,5 +41,8 @@ class Rcli < Formula
     assert_match "rcli", shell_output("#{bin}/rcli version")
     backends = shell_output("#{bin}/rcli backends")
     assert_match(/llama/i, backends)
+    assert_match(/onnx/i, backends)
+    assert_match(/sherpa/i, backends)
+    assert_match(/mlx/i, backends) if OS.mac? && Hardware::CPU.arm?
   end
 end

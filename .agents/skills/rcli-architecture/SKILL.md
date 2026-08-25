@@ -1,40 +1,71 @@
 ---
 name: rcli-architecture
-description: RCLI layering and command-authoring rules. Use when adding or changing CLI commands, deciding where logic belongs, touching proto/ABI boundaries, or when the user mentions bootstrap, rac_*, thin commands, or kit vs CLI.
+description: Where RCLI logic belongs — command layering, proto as SOT, kit vs CLI ownership, Apple MLX host vs rcli-cxx. Use when adding a command, moving inference logic, or deciding whether a bug is SDK or CLI.
 ---
 
 # RCLI architecture
 
-Repo: `RunanywhereAI/RCLI`. Product CLI over a packaged C++ desktop kit.
+Repo: `RunanywhereAI/RCLI`. Product CLI named `rcli`. It consumes a **packaged
+C++ desktop kit** via `find_package(RunAnywhere)`. It does not
+`add_subdirectory` or FetchContent the SDK, and it does not compile llama.cpp /
+Sherpa / ONNX / MLX from source.
 
-## Where logic goes
+Product version (`project(rcli VERSION …)` in `CMakeLists.txt`) is independent
+of the SDK kit pin in `cmake/sdk-pin.cmake`.
 
-| Layer | Owns | Does not own |
-|---|---|---|
-| `src/commands/cmd_*.cpp` | argv, flags, one `rac_*`, render | catalog, download, generate, engine pick |
-| `src/bootstrap.*` | one-time SDK bring-up | per-command inference |
-| `src/io/proto.h` | `rac_proto_buffer_t` ↔ `runanywhere::v1::*` | a second proto compile |
-| C++ desktop kit | models, lifecycle, inference, serve | terminal UX |
+## Ownership
 
-If a command needs a sequence the public `rac_*` ABI does not offer, the fix
-belongs in the SDK, then a new kit — not a workaround here.
+```text
+argv / flags / env
+  -> src/commands/cmd_*.cpp     thin: parse → bootstrap() → one rac_* → render
+  -> C++ desktop kit            catalog, download, lifecycle, generate, serve
+  -> engines (in the kit)       llama.cpp, Sherpa, ONNX, MLX (Apple host)
+```
 
-## Adding a command
+The kit owns truth: models, backends, proto contracts, download, inference.
+The CLI renders and interacts. If a command is composing a multi-step bootstrap,
+hardcoding an engine name, or post-processing model output, that is a bug in the
+SDK — fix it there, then consume a new kit (**rcli-kit-pin**).
 
-1. Add `src/commands/cmd_<name>.cpp` and declare it in `src/commands/commands.h`.
-2. Register from `src/app.cpp`. Dual grammar: spec namespace + terminal alias
-   share one `configure_*`.
-3. Add the TU to `CMakeLists.txt`.
-4. Keep the TU thin: parse → `bootstrap()` → **one** `rac_*` → render.
-5. Use kit proto types. Parse with `src/io/proto.h`. Do not run `protoc`.
-6. Results on stdout; logs/progress on stderr. `--json` = one document.
-7. Hermetic unit coverage for parse/render helpers. No real keys in unit tests.
+## Layering rules
 
-## Anti-patterns
+- Command TUs stay thin. Business rules do not live in CLI11 callbacks, Swift,
+  or the REPL.
+- **Proto is the SOT.** Include kit `include/runanywhere/proto/*.pb.h` (same
+  protoc that built commons). Do not run `protoc` here. Do not compile `*.pb.cc`
+  (those objects are already inside `librac_commons.a`). Parse `rac_*` byte
+  buffers with `src/io/proto.h` into `runanywhere::v1::*`.
+- No parallel hand-written enums for values that exist in `idl/*.proto`.
+- Structured errors. Machine-readable codes from the ABI; human text on stderr.
+  Results on stdout. `--json` prints exactly one document on stdout.
+- Never log API keys, tokens, or Authorization headers.
 
-- `add_subdirectory` / FetchContent of the SDK, or `RCLI_SDK_DIR` at source.
-- Compiling `*.pb.cc` or `find_package(Protobuf)` (Homebrew).
-- Hardcoded engine names, path patterns, or a local model catalog.
-- Business rules in Swift (`swift/`) or the REPL.
-- Logging API keys / tokens.
-- Forcing MSVC `/MT` — the kit is `/MD`.
+`RunAnywhere::commons` applies `google=runanywhere_internal` when the kit was
+built with namespace isolation. Never `find_package(Protobuf)` against Homebrew.
+
+## Command surface
+
+Dual grammar: spec namespaces (`llm generate`, `models download`) plus terminal
+aliases (`run`, `pull`, `stt`). One `configure_*` wires both
+(`src/commands/commands.h`).
+
+Do not reintroduce FetchContent of the SDK, a second inference backend tree, or
+a retired MetalRT / hardcoded catalog.
+
+## Apple MLX host
+
+On Apple Silicon, `cmake --build` produces `build/rcli` (Swift host wrapping
+`rcli_run_main`). Users never run `rcli-cxx`; that name exists only so CMake
+cannot overwrite the product binary. Independent clones set `RCLI_SDK_SWIFT_PATH`
+to a runanywhere-sdks checkout (CI does this). Nested `EXTERNAL/RCLI` finds
+`../../Package.swift` automatically. Disable with `-DRCLI_APPLE_MLX_HOST=OFF`
+only for a C++-only compile loop.
+
+NeuRT image gen is `#if RCLI_HAS_NEURT` in `src/commands/cmd_image.cpp`, which
+is true only when the NeuRT overlay is applied. Public bottles stay OSS.
+
+## Skills trees
+
+Canonical: `.claude/skills/`. Mirror: `.agents/skills/`. Edit canonical, then
+`bash scripts/ci/check-agents-sync.sh --fix`. Never hand-edit the mirror.
+`CLAUDE.md` is a symlink to `AGENTS.md`.

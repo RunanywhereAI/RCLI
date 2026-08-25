@@ -14,35 +14,125 @@ LINK_TXT="${BUILD}/CMakeFiles/rcli.dir/link.txt"
 OUT_LIB="${BUILD}/librcli_bundle.a"
 OUT_FLAGS="${BUILD}/rcli-link-flags.txt"
 
-if [[ ! -f "${LINK_TXT}" ]]; then
-    echo "no ${LINK_TXT} — build the rcli target first" >&2
+# Ninja never writes CMakeFiles/<tgt>.dir/link.txt (Makefiles only). The last
+# command ninja runs for `rcli` is the link; compile lines also contain
+# `CMakeFiles/rcli.dir/` so grepping for "rcli" picks compiles.
+if [[ ! -s "${LINK_TXT}" && -f "${BUILD}/build.ninja" ]]; then
+    mkdir -p "${BUILD}/CMakeFiles/rcli.dir"
+    ninja_bin="$(command -v ninja || command -v ninja-build || true)"
+    if [[ -n "${ninja_bin}" ]]; then
+        "${ninja_bin}" -C "${BUILD}" -t commands rcli | tail -1 > "${LINK_TXT}" || true
+    fi
+fi
+
+if [[ ! -s "${LINK_TXT}" ]]; then
+    echo "no ${LINK_TXT} — build the rcli target first (Ninja or Makefiles)" >&2
     exit 1
 fi
 
 line="$(cat "${LINK_TXT}")"
 
-archives=()
-for token in ${line}; do
-    case "${token}" in
-        *.a)
-            # Paths in link.txt are relative to the build directory.
-            if [[ "${token}" = /* ]]; then
-                archives+=("${token}")
-            else
-                archives+=("${BUILD}/${token}")
-            fi
-            ;;
-    esac
-done
+# Expand CMake @response files so archives listed only there are visible.
+expand_link_tokens() {
+    local token rsp
+    for token in "$@"; do
+        case "${token}" in
+            @*)
+                rsp="${token#@}"
+                if [[ ! -f "${rsp}" && -f "${BUILD}/${rsp}" ]]; then
+                    rsp="${BUILD}/${rsp}"
+                fi
+                if [[ -f "${rsp}" ]]; then
+                    # shellcheck disable=SC2046
+                    expand_link_tokens $(cat "${rsp}")
+                fi
+                ;;
+            *)
+                printf '%s\n' "${token}"
+                ;;
+        esac
+    done
+}
 
-if [[ ${#archives[@]} -eq 0 ]]; then
+contains() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        [[ "${item}" == "${needle}" ]] && return 0
+    done
+    return 1
+}
+
+# Plugin backends are -force_load on rcli-cxx so their static registrars run.
+# llama-common is a regular archive: force-loading it pulls download.cpp.o,
+# which references cpp-httplib methods that the kit never emitted as objects
+# (rcli-cxx never pulled that TU). Split so Swift can force_load plugins
+# without dragging those undefineds in.
+plugins=()
+regular=()
+previous=""
+while IFS= read -r token; do
+    archive=""
+    kind="regular"
+    if [[ "${previous}" == "-force_load" ]]; then
+        archive="${token}"
+        kind="plugin"
+        previous=""
+    else
+        case "${token}" in
+            -Wl,-force_load,*)
+                archive="${token#-Wl,-force_load,}"
+                kind="plugin"
+                ;;
+            -Wl,--whole-archive|--whole-archive|-Wl,--no-whole-archive|--no-whole-archive)
+                continue
+                ;;
+            -force_load)
+                previous="-force_load"
+                continue
+                ;;
+            -*)
+                continue
+                ;;
+            *.a|*.o)
+                archive="${token}"
+                ;;
+        esac
+    fi
+    [[ -n "${archive}" ]] || continue
+    if [[ "${archive}" != /* ]]; then
+        archive="${BUILD}/${archive}"
+    fi
+    [[ -f "${archive}" ]] || continue
+    if [[ "${kind}" == "plugin" ]]; then
+        contains "${archive}" "${plugins[@]:-}" || plugins+=("${archive}")
+    else
+        contains "${archive}" "${regular[@]:-}" || regular+=("${archive}")
+    fi
+done < <(expand_link_tokens ${line})
+
+# A backend listed both ways (force_load + again as a plain .a) stays a plugin.
+regular_only=()
+for a in "${regular[@]:-}"; do
+    contains "${a}" "${plugins[@]:-}" && continue
+    regular_only+=("${a}")
+done
+regular=("${regular_only[@]:-}")
+
+if [[ ${#regular[@]} -eq 0 ]]; then
     echo "found no static archives in ${LINK_TXT}" >&2
+    echo "link line: ${line}" >&2
     exit 1
 fi
 
+OUT_PLUGINS="${BUILD}/librcli_plugins.a"
 # libtool rather than ar: it merges archives rather than nesting them, and it
 # is what ships with the toolchain that produced them.
-libtool -static -o "${OUT_LIB}" "${archives[@]}" 2>/dev/null
+libtool -static -o "${OUT_LIB}" "${regular[@]}"
+if [[ ${#plugins[@]} -gt 0 ]]; then
+    libtool -static -o "${OUT_PLUGINS}" "${plugins[@]}"
+fi
 
 # What is left is frameworks and system libraries, which the Swift link needs
 # verbatim. .tbd and .dylib entries matter as much as -l flags: zlib, bz2 and
@@ -55,15 +145,6 @@ libtool -static -o "${OUT_LIB}" "${archives[@]}" 2>/dev/null
 frameworks=()
 libraries=()
 previous=""
-contains() {
-    local needle="$1"
-    shift
-    local item
-    for item in "$@"; do
-        [[ "${item}" == "${needle}" ]] && return 0
-    done
-    return 1
-}
 
 for token in ${line}; do
     if [[ "${previous}" == "-framework" ]]; then
@@ -73,13 +154,18 @@ for token in ${line}; do
     fi
     case "${token}" in
         -framework) previous="-framework" ;;
+        -Wl,-rpath,*)
+            contains "${token}" "${libraries[@]:-}" || libraries+=("${token}")
+            ;;
         -l*)
             contains "${token}" "${libraries[@]:-}" || libraries+=("${token}")
             ;;
         *.tbd|*.dylib)
-            # As a bare path these are silently ignored by swiftc, which then
-            # fails on the symbols they would have provided. The -l spelling is
-            # what it understands, and the SDK resolves it to the same stub.
+            # xcodebuild/clang needs a -L or it fails with "library not found
+            # for -lonnxruntime". Bare paths are ignored by `swift build`.
+            dir="$(cd "$(dirname "${token}")" && pwd)"
+            lflag="-L${dir}"
+            contains "${lflag}" "${libraries[@]:-}" || libraries+=("${lflag}")
             name="$(basename "${token}")"
             name="${name%.tbd}"
             name="${name%.dylib}"
@@ -99,4 +185,4 @@ for name in "${libraries[@]:-}"; do
     printf -- '%s\n' "${name}" >> "${OUT_FLAGS}"
 done
 
-echo "merged ${#archives[@]} archives into ${OUT_LIB}"
+echo "merged ${#regular[@]} archives into ${OUT_LIB} (${#plugins[@]} plugins force-loaded separately)"

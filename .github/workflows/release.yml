@@ -19,10 +19,23 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-14
-    timeout-minutes: 60
+    # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is
+    # Xcode 16.4 / Swift 6.1; macos-14 is Xcode 15 / Swift 5.10.
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      RCLI_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout SDK Swift tree (MLX runtime)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          repository: RunanywhereAI/runanywhere-sdks
+          ref: v0.20.28
+          path: .deps/runanywhere-sdks
       - name: Install ninja
         run: brew install ninja
       - name: Download C++ desktop kit
@@ -35,8 +48,10 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
           cmake --build build -j "$(sysctl -n hw.logicalcpu)"
-      - name: Smoke
-        run: bash scripts/smoke.sh ./build/rcli-cxx
+      - name: Product e2e
+        env:
+          RCLI_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/rcli
       - name: Package
         run: |
           VERSION="${RCLI_VERSION#v}"
@@ -52,6 +67,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
       - name: Download C++ desktop kit
@@ -70,9 +87,11 @@ jobs:
           fi
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
           cmake --build build --config Release
-      - name: Smoke
+      - name: Product e2e
         shell: bash
-        run: bash scripts/smoke.sh ./build/rcli.exe
+        env:
+          RCLI_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/rcli.exe
       - name: Package
         shell: pwsh
         run: |
@@ -95,6 +114,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           path: artifacts

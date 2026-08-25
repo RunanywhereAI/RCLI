@@ -1,6 +1,6 @@
 /**
  * @file cmd_image.cpp
- * @brief `rcli image generate` — text-to-image via the CoreML diffusion engine.
+ * @brief `rcli image generate` — text-to-image via NeuRT (Core ML diffusion).
  *
  * Canonical SDK flow, all heavy lifting in commons (mirrors cmd_run/cmd_embed):
  *   rac_model_lifecycle_load_proto(category=IMAGE_GENERATION, validate=true)
@@ -9,8 +9,8 @@
  *     → resolves the lifecycle-loaded model internally and returns a
  *       DiffusionResult (raw RGBA image_data + width/height).
  * The command only translates argv ↔ proto bytes and writes the decoded image
- * to --out as PNG. Diffusion is Apple/CoreML-only; on other platforms the
- * command returns a clear error rather than crashing.
+ * to --out as PNG. Diffusion is NeuRT (Apple Neural Engine / Core ML); on other
+ * platforms the command returns a clear error rather than crashing.
  *
  * A `--model` that names an existing on-disk path is registered as a local
  * CoreML bundle (directory of compiled .mlmodelc sub-models) and loaded without
@@ -182,7 +182,7 @@ int run_image_generate(const GlobalOptions& options, const ImageParams& params) 
 
 #if !defined(RCLI_HAS_NEURT)
     (void)params;
-    out::error_line("image generation (diffusion) is only supported on Apple/CoreML platforms");
+    out::error_line("image generation (diffusion) requires NeuRT (Apple Neural Engine)");
     return 1;
 #else
     if (params.prompt.empty()) {

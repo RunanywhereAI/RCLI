@@ -4,6 +4,9 @@ build-*/
 cmake-build-*/
 dist/
 
+# Shallow SDK checkout used by CI to link the Swift MLX host.
+.deps/
+
 # SwiftPM and xcodebuild output for the Apple entry point. 7 GB of checkouts
 # and object files: worth naming explicitly, because `git add -A` in this repo
 # would otherwise try to commit all of it.
@@ -78,3 +81,6 @@ dist/
 .agents/*
 !.agents/skills/
 !.agents/skills/**
+
+# Local review notes — never part of the product repo.
+/comments/

@@ -1,37 +1,109 @@
 ---
 name: rcli-release
-description: Cut an RCLI product release independent of the SDK kit version. Downloads the pinned C++ desktop kit, builds bottles, signs, stamps Formula/rcli.rb, and publishes a GitHub Release. Use when tagging rcli, shipping bottles, or updating the Homebrew formula.
+description: Cut an RCLI product release (independent of SDK version) — version bump, release:patch label, merge, auto-tag, bottles. Use when shipping rcli after a published SDK kit, or when Homebrew / notarization / private overlays must not leak into public bottles.
 ---
 
 # RCLI release
 
-Repo: `RunanywhereAI/RCLI`. Product version is `CMakeLists.txt` /
-`project(rcli VERSION …)`. SDK kit pin is `cmake/sdk-pin.cmake`.
+Repo: `RunanywhereAI/RCLI`. Product version is `project(rcli VERSION x.y.z)` in
+`CMakeLists.txt` (also stamped into `Formula/rcli.rb`). Independent of the SDK
+kit pin.
 
-## Preconditions
+Do this **after** the SDK GitHub Release this pin targets is **published**
+(not draft). Companion: **rcli-kit-pin**, then this skill.
 
-1. `cmake/sdk-pin.cmake` lists `RCLI_PINNED_SDK_VERSION` and SHA-256 for each kit.
-2. That SDK tag exists on `RunanywhereAI/runanywhere-sdks` with:
-   - `RunAnywhere-cpp-desktop-macos-arm64-v<ver>.tar.gz`
-   - `RunAnywhere-cpp-desktop-windows-x64-v<ver>.tar.gz`
-3. `rcli --version` after link prints both versions and must not silently
-   disagree with `rac_get_version()`.
+## 0. Facts
 
-## Steps
+- Label form is `release:patch` / `release:minor` / `release:major` (**colon**).
+  `.github/workflows/auto-tag.yml` matches that spelling only.
+- Merge to `main` with that label → auto-tag pushes `v<CMakeLists VERSION>` and
+  dispatches `release.yml`. Tag pushes with `GITHUB_TOKEN` do **not** trigger
+  other workflows; the dispatch is required.
+- Checkout in auto-tag uses `persist-credentials: true` so the tag push works.
+- `release.yml` jobs: macos-arm64 bottle, windows-x64 zip, then GitHub Release.
+  **macos runner must be macos-26** (Xcode 26 / Swift 6.2). macos-15 is Swift
+  6.1 and cannot resolve the SDK package; macos-14 is Swift 5.10.
+- Public bottle / zip is OSS only. NeuRT / QHexRT overlays are workflow
+  artifacts or `RCLI_PRIVATE_OVERLAY`, never public release assets, never
+  Homebrew bottles.
+- Linux bottles are not a v1 merge blocker.
 
-1. Confirm pin: `grep RCLI_PINNED cmake/sdk-pin.cmake`
-2. Download kits (never clone the SDK): `bash scripts/fetch-kit.sh <platform> <dest>`
-3. macOS: configure + build against the kit. Shipping binary: `scripts/build-mlx.sh`.
-4. Windows x64: MSVC after `vcvarsall x64`, same kit, `/MD`. No QHexRT on x64.
-5. Sign: Developer ID + notary (macOS), Authenticode (Windows). Secrets live
-   in **this** repo (`docs/RELEASING.md`).
-6. Package (`scripts/package-rcli.sh` / `scripts/package-rcli-windows.ps1`).
-7. Stamp `Formula/rcli.rb` via `scripts/stamp-formula.py`. Commit the stamp —
-   the release job may stamp on the runner without pushing.
-8. Tag `v<product>` (not the SDK version). Publish the GitHub Release with bottles.
+## 1. Pin the SDK kit first
 
-NeuRT / QHexRT are optional packs. Public `brew install rcli` must not require
-`NEURUN_TOKEN`. Linux bottles are not a v1 blocker.
+If this train needs new engines (sherpa routable, windows-arm64 kit, NeuRT
+image gen): bump `cmake/sdk-pin.cmake` + CI `ref: v$SDK` in the **same PR**
+(**rcli-kit-pin**). CI must be green on that pin before you bump the product
+version.
 
-Do not attach `rcli-*` bottles to an SDK GitHub Release. Kits ship from
-`runanywhere-sdks`; bottles ship from here.
+## 2. Product version + label
+
+Next patch after `0.5.0` is `0.5.1`. Bump `CMakeLists.txt` `project(rcli
+VERSION …)` and any Formula version stamp in the same commit. Open/update the
+PR and apply **exactly one** `release:patch` (or minor/major).
+
+`gh pr create --label release:patch` is not atomic with the `opened` event —
+verify the label landed (`gh pr view --json labels`).
+
+## 3. CI bar before merge
+
+Required: macOS product e2e (`scripts/e2e.sh ./build/rcli`) and Windows e2e
+against the pinned kit. `agents-sync.yml` must pass
+(`scripts/ci/check-agents-sync.sh`).
+
+Re-check immediately before merge (a rollup of SUCCESS can hide checks that
+have not started):
+
+```bash
+gh pr checks <pr> --repo RunanywhereAI/RCLI --json name,state,bucket \
+  --jq '[.[] | select(.state == null or .state == "")] | length'   # must be 0
+```
+
+Do not merge on a partial matrix. Confirm bypass eligibility the same way as
+the SDK (`bypass_pull_request_allowances`) before `--admin`.
+
+## 4. Merge triggers the release
+
+```bash
+gh pr merge <pr> --repo RunanywhereAI/RCLI --squash --admin   # only if allow-listed
+```
+
+`auto-tag.yml` tags `v$PRODUCT` and dispatches `release.yml`. Unlike the SDK
+train, there is typically **no** pre-merge candidate to reuse — let this
+release.yml run. Watch it; do not cancel `macos` for being "slow" (MLX host
+link + e2e).
+
+## 5. Verify the GitHub Release
+
+```bash
+gh release view v$PRODUCT --repo RunanywhereAI/RCLI --json isDraft,assets \
+  --jq '{isDraft, names: [.assets[].name]}'
+```
+
+Expect `rcli-$PRODUCT-macos-arm64.tar.gz` (+ `.sha256`) and
+`rcli-$PRODUCT-windows-x64.zip` (+ `.sha256`). **Must be empty** for
+`*neurt*`, `*qhexrt*`, `*private*`.
+
+If `release.yml` still creates a non-draft release, that is the live product
+cut — confirm asset names before anyone bottles from it. Stamp Formula from
+the macOS sidecar (`scripts/stamp-formula.py`) when that path is wired.
+
+## 6. Overlays after the public cut
+
+Private packs stay off the public release. For a machine that should load
+NeuRT / QHexRT:
+
+```bash
+export RCLI_PRIVATE_OVERLAY=/path/to/RunAnywhere-cpp-desktop-macos-arm64-neurt-private-v$SDK.tar.gz
+# or windows-arm64-qhexrt
+```
+
+`RCLI_REQUIRE_PRIVATE=1` fails closed when the overlay is missing. Default CI
+must pass without it.
+
+## Do not
+
+- Attach `rcli-*` assets onto an SDK GitHub Release.
+- Pin `fetch-kit.sh` at a draft SDK tag.
+- Ship NeuRT / QHexRT inside the public bottle "just this once".
+- Use macos-14 or macos-15 for the Apple job (need macos-26 / Swift 6.2).
+- Weaken `assert-backends.sh` when `HAS_SHERPA`/`HAS_ONNX` is TRUE.
