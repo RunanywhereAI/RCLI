@@ -193,7 +193,7 @@ set_mod stt     "${RCLI_E2E_STT:-}"
 set_mod tts     "${RCLI_E2E_TTS:-}"
 set_mod vlm     "${RCLI_E2E_VLM:-}"
 set_mod embed   "${RCLI_E2E_EMBED:-}"
-set_mod image   "${RCLI_E2E_IMAGE:-${RCLI_E2E_NEURT_MODEL:-}}"
+set_mod image   "${RCLI_E2E_IMAGE:-}"
 set_mod vad     "${RCLI_E2E_VAD:-}"
 set_mod rerank  "${RCLI_E2E_RERANK:-}"
 set_mod segment "${RCLI_E2E_SEGMENT:-}"
@@ -202,6 +202,9 @@ set_mod diarize "${RCLI_E2E_DIARIZE:-}"
 # 2. legacy engine knobs (still accepted; tests stay modality-keyed)
 if [[ -n "${RCLI_E2E_MLX_MODEL:-}" ]]; then
   set_mod "$(guess_mod "${RCLI_E2E_MLX_MODEL}")" "${RCLI_E2E_MLX_MODEL}"
+fi
+if [[ -n "${RCLI_E2E_NEURT_MODEL:-}" ]]; then
+  set_mod "$(guess_mod "${RCLI_E2E_NEURT_MODEL}")" "${RCLI_E2E_NEURT_MODEL}"
 fi
 if [[ -n "${RCLI_E2E_QHEXRT_MODEL:-}" ]]; then
   set_mod "$(guess_mod "${RCLI_E2E_QHEXRT_MODEL}")" "${RCLI_E2E_QHEXRT_MODEL}"
@@ -246,16 +249,20 @@ esac
 
 scan_root() {
   local root="$1"
-  local dir
+  local dir parent
   while IFS= read -r dir; do
     [[ -n "${dir}" ]] || continue
     case "${dir}" in
-      *.mlmodelc|*/Unet.mlmodelc)
+      */Unet.mlmodelc)
         set_mod image "$(dirname "${dir}")"
         ;;
-      *_HNPU)
+      *.mlmodelc)
+        parent="$(dirname "${dir}")"
+        set_mod "$(guess_mod "${parent}")" "${parent}"
+        ;;
+      *_HNPU|*_ANE)
         # Incomplete HF snapshots (e.g. only host_weights/) are not runnable.
-        if [[ -z "$(find "${dir}" -maxdepth 3 \( -name '*.json' -o -name '*.bin' \) ! -path '*/host_weights/*' -print -quit 2>/dev/null)" ]]; then
+        if [[ -z "$(find "${dir}" -maxdepth 3 \( -name '*.json' -o -name '*.bin' -o -name '*.mlmodelc' \) ! -path '*/host_weights/*' -print -quit 2>/dev/null)" ]]; then
           continue
         fi
         set_mod "$(guess_mod "${dir}")" "${dir}"
@@ -264,7 +271,7 @@ scan_root() {
         set_mod "$(guess_mod "${dir}")" "${dir}"
         ;;
     esac
-  done < <(find "${root}" -maxdepth 4 \( -type d \( -name '*_HNPU' -o -name 'Unet.mlmodelc' \) \) -print 2>/dev/null)
+  done < <(find "${root}" -maxdepth 8 \( -type d \( -name '*_HNPU' -o -name '*_ANE' -o -name '*.mlmodelc' \) \) -print 2>/dev/null)
 }
 
 old_ifs="${IFS}"

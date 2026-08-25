@@ -18,14 +18,16 @@ modality knobs unset so every round-trip **skips**. Device runs set
 | `RCLI_E2E_TTS` | tts | `piper` or `kitten_micro_0_8_HNPU` |
 | `RCLI_E2E_VLM` | vlm | `smolvlm2` (SDK inserts the media marker) |
 | `RCLI_E2E_EMBED` | embed | `minilm` or `embeddinggemma_300m_HNPU` |
-| `RCLI_E2E_IMAGE` / `RCLI_E2E_NEURT_MODEL` | image | compiled SD1.5 tree / `sd15` |
+| `RCLI_E2E_IMAGE` | image | compiled SD1.5 tree / `sd15` |
+| `RCLI_E2E_NEURT_MODEL` | classified by path | `sd15`, a Parakeet ANE tree, or `lfm2-230m-ane` |
 | `RCLI_E2E_VAD` | vad | `silero` |
 | `RCLI_E2E_RERANK` | rerank | `bge-reranker` |
 | `RCLI_E2E_SEGMENT` | segment | `segformer` (P6 PPM) |
 | `RCLI_E2E_ENGINE` | override only | `qhexrt` / `neurt` / `mlx` |
 
-Legacy `RCLI_E2E_MLX_MODEL` / `RCLI_E2E_QHEXRT_MODEL` still work; they are
-classified by path/id into a primitive. Do not add new engine-named knobs.
+Legacy `RCLI_E2E_MLX_MODEL` / `RCLI_E2E_NEURT_MODEL` / `RCLI_E2E_QHEXRT_MODEL`
+are classified by path/id into a primitive (not always image). Do not add new
+engine-named knobs.
 
 `scripts/assert-binary-backends.sh` greps `nm`/`llvm-nm`/`dumpbin`/`strings`
 for registrar symbols (`raMLXRegisterRuntime`, `rac_plugin_entry_neurt`,

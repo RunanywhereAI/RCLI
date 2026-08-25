@@ -182,6 +182,20 @@ rcli stt transcribe hello.wav
 
 `rcli serve` is macOS and Linux.
 
+Device round-trips are **by modality**, not by engine. `scripts/e2e.sh` always
+runs `scripts/e2e-modalities.sh`; public CI leaves the knobs unset and skips.
+On a machine that already has models:
+
+```bash
+export RUNANYWHERE_HOME=/path/to/home          # already-pulled OSS models
+export RCLI_E2E_MODEL_ROOTS=/path/to/hnpu      # *_HNPU / *_ANE / *.mlmodelc trees
+bash scripts/e2e-modalities.sh /path/to/rcli   # no --engine required
+```
+
+`RCLI_E2E_LLM`, `RCLI_E2E_STT`, `RCLI_E2E_IMAGE`, … pin one primitive. Catalog
+ids (`mlx-qwen3`, `whisper-base-npu`) pin the framework; a Hugging Face repo
+page is HTML, not a bundle.
+
 ## Commands
 
 | | |
