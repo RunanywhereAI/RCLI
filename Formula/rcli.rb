@@ -2,9 +2,9 @@ class Rcli < Formula
   desc "Run language, speech and image models on your own machine"
   homepage "https://github.com/RunanywhereAI/RCLI"
   license "MIT"
-  version "0.5.0"
+  version "0.5.1"
 
-    # 0.5.0 is the kit-consumer CMake bottle. macOS arm64 ships the Swift MLX host
+    # 0.5.1 is the kit-consumer CMake bottle. macOS arm64 ships the Swift MLX host
   # (llama.cpp + ONNX + Sherpa + MLX). Linux is not in this cut.
   on_macos do
     on_arm do
