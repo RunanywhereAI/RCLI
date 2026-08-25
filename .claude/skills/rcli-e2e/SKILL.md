@@ -6,10 +6,25 @@ description: Verify a built rcli binary against a pinned C++ desktop kit on macO
 # RCLI e2e
 
 Entry: `scripts/e2e.sh <path-to-rcli>`. Always runs `scripts/smoke.sh`. Set
-`RCLI_E2E_MODEL` for download + generate (needs network + disk).
+`RCLI_E2E_MODEL` for download + generate (needs network + disk). Overlay
+backends also have dedicated knobs that default to skip in public CI:
 
-Pass `RCLI_SDK_KIT` (or `CMAKE_PREFIX_PATH`) so the script can read
-`RunAnywhereConfig.cmake` `HAS_*` flags and stage Windows DLLs.
+| Env | When | Example |
+|---|---|---|
+| `RCLI_E2E_MODEL` | any LLM | `mlx-qwen3` |
+| `RCLI_E2E_MLX_MODEL` | product `rcli` on Darwin arm64 | `mlx-qwen3` |
+| `RCLI_E2E_NEURT_MODEL` | overlay kit with `librac_backend_neurt.a` | `sd15` |
+| `RCLI_E2E_QHEXRT_MODEL` | overlay kit with `rac_backend_qhexrt.lib` | local QNN-context path |
+
+`scripts/assert-binary-backends.sh` greps `nm`/`llvm-nm`/`dumpbin`/`strings`
+for registrar symbols (`raMLXRegisterRuntime`, `rac_plugin_entry_neurt`,
+`rac_plugin_entry_qhexrt`, …) so a backends() listing cannot pass without
+the engine actually being linked into the bottle.
+
+Pass `RCLI_SDK_KIT` so overlay backends (`neurt` / `qhexrt`) are required
+when those libs are in the kit. `CMAKE_PREFIX_PATH` is only used for
+`HAS_*` flags and Windows DLL staging — an ambient overlay prefix must
+not make a public OSS bottle fail for missing NeuRT.
 
 ## What "green" means
 
@@ -17,10 +32,13 @@ Pass `RCLI_SDK_KIT` (or `CMAKE_PREFIX_PATH`) so the script can read
 
 | Condition | Required `rcli --json backends` name |
 |---|---|
-| always | `llamacpp` |
-| `RunAnywhere_HAS_ONNX` TRUE (or no kit cfg) | `onnx` |
-| `RunAnywhere_HAS_SHERPA` TRUE (or no kit cfg) | `sherpa` |
+| no kit Config (public OSS bottle) | `llamacpp` + `onnx` + `sherpa` |
+| kit `RunAnywhere_HAS_LLAMACPP` TRUE | `llamacpp` |
+| kit `RunAnywhere_HAS_ONNX` TRUE | `onnx` |
+| kit `RunAnywhere_HAS_SHERPA` TRUE | `sherpa` |
 | Darwin arm64 product binary `rcli` (not `rcli-cxx`) | `mlx` |
+| overlay `lib/librac_backend_neurt.a` / `rac_backend_neurt.lib` | `neurt` |
+| overlay `lib/librac_backend_qhexrt.a` / `rac_backend_qhexrt.lib` | `qhexrt` |
 
 Do **not** drop sherpa from the expected list to make 0.20.26 Windows green
 while `HAS_SHERPA` is TRUE. That kit compiled sherpa with speech ops off
@@ -113,3 +131,50 @@ NeuRT / QHexRT only appear in `backends` when the overlay was applied.
 grepping packaged `HAS_NEURT FALSE` (that stays false; find_package flips it
 when the archive is present). Public CI must pass without overlays. Image gen
 (`cmd_image.cpp`) is compiled out unless NeuRT is present.
+
+## Device / overlay gotchas (0.5.1 + kit 0.20.28)
+
+Public bottles never list `neurt` or `qhexrt`. That is the product, not a
+test gap. Overlay-rebuild the product binary (`RCLI_APPLE_MLX_HOST=ON` on
+Mac; ARM64 MSVC + QHexRT overlay on Snapdragon).
+
+- **`CMAKE_PREFIX_PATH` is not an overlay opt-in.** Only `RCLI_SDK_KIT`
+  makes e2e require `neurt`/`qhexrt`. An ambient overlay prefix from a
+  previous rebuild will otherwise fail a public-bottle run.
+- **Binary assert:** never `nm | grep -q` under `pipefail` (SIGPIPE → false
+  FAIL). Stream `strings -a` / `nm -a`. Darwin MLX proof is
+  `mlx-swift_Cmlx.bundle` next to product `rcli` (`nm -gU` misses Swift
+  host symbols). First C++ `rac_plugin_register(mlx)` logs `-811`; Swift
+  callbacks then register MLX — noisy, not a miss.
+- **Windows ARM64 public/overlay kits have `HAS_LLAMACPP FALSE`.** Do not
+  require `llamacpp` in e2e. Overlay `rcli.exe` listing **only** `qhexrt`
+  (priority 150) is correct. On-disk GGUF (`qwen3.5-2b`) cannot run there.
+- **QHexRT generate needs QAIRT matching the device skel, not the overlay
+  DLL set.** Snapdragon X2 Elite / Hexagon v81: `QNN_SDK_ROOT` +
+  `ADSP_LIBRARY_PATH=%QNN_SDK_ROOT%\lib\hexagon-v81\unsigned`, copy
+  `aarch64-windows-msvc` `QnnHtp.dll` / `QnnHtpPrepare.dll` /
+  `QnnHtpV81Stub.dll` / `QnnHtpV81CalculatorStub.dll` / `QnnSystem.dll`
+  next to `rcli.exe`. Overlay 2.47 DLLs vs device 2.41 skels fail; QAIRT
+  **2.48** worked. Pass the `*_HNPU` directory (`--engine qhexrt`), not a
+  GGUF. FastRPC `openSession` timeouts (~90s) then user-driver fallback
+  are normal; a second generate while DSP is wedged fails with
+  `Skel failed to process context binary` / `0x3ea` — `taskkill rcli.exe`
+  and use a `.bat` with **fully expanded** `ADSP_LIBRARY_PATH` (nested
+  `%QNN_SDK_ROOT%` in `cmd /c "set A=…&& set B=%A%\…"` does not expand).
+- **VS on the ARM64 box may be 2026 / 18 Community**, not 2022:
+  `C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsarm64.bat`.
+  CMake/Ninja live under VS CMake extensions; they are not on default PATH.
+- **v0.20.28 Windows ARM64 public kit omits `libcurl.lib`.** Copy from
+  `arm64-windows-static` into the kit `lib/` before linking (fixed in the
+  SDK packager for the *next* kit; do not retag 0.20.28). RCLI already
+  links kit `libcurl.lib` when present.
+- **`rcli image generate` needs `--prompt` and `--out`**, not a positional
+  prompt. `--steps 4` is enough for a smoke PNG. Help exists on the public
+  bottle; real generate is compiled only with `RCLI_HAS_NEURT`.
+- **`sd15` catalog URL must be the compiled zip**, not the HF repo page
+  (HTML ~160 KB). Unzip to a tree with `TextEncoder.mlmodelc` /
+  `Unet.mlmodelc` / `VAEDecoder.mlmodelc` and pass that directory. COREML
+  / QHEXRT catalog rows register `ModelInfo` (folder), not the single-file
+  download factory — `rcli pull sd15` is not a substitute for the zip.
+- Published product bottles: macOS `rcli-$V-macos-arm64.tar.gz`, Windows
+  **x64** zip. There is no public Windows ARM64 bottle; NPU is overlay-only.

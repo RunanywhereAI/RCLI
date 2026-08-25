@@ -45,6 +45,11 @@ bool parse_engine_hint(const std::string& engine,
         *out_framework = runanywhere::v1::INFERENCE_FRAMEWORK_SHERPA;
         return true;
     }
+    if (normalized == "qhexrt" || normalized == "qnn" || normalized == "npu" ||
+        normalized == "hexagon" || normalized == "hexagon-npu") {
+        *out_framework = runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT;
+        return true;
+    }
     if (error) {
         *error = "unsupported engine '" + engine + "'";
     }

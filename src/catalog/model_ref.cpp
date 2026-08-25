@@ -159,8 +159,41 @@ void infer_local_kind(const std::string &path,
     if (name.ends_with(".mlpackage") || name.ends_with(".mlmodelc")) {
       *framework = runanywhere::v1::INFERENCE_FRAMEWORK_COREML;
       *format = runanywhere::v1::MODEL_FORMAT_MLPACKAGE;
-      break;
+      return;
     }
+  }
+  // QHexRT HNPU bundles: Hexagon arch folder (v75/v79/v81), a context.bin, or
+  // a top-level non-aux .json next to QNN binaries. `_HNPU` is the published
+  // repo suffix; honor it so `rcli run --engine qhexrt <dir>` is not required.
+  const std::string leaf = p.filename().string();
+  auto looks_qnn = [&]() -> bool {
+    if (leaf.find("_HNPU") != std::string::npos || leaf.find("-npu") != std::string::npos) {
+      return true;
+    }
+    std::error_code inner_ec;
+    bool saw_json = false;
+    bool saw_bin = false;
+    for (const auto &entry : std::filesystem::directory_iterator(p, inner_ec)) {
+      if (inner_ec) {
+        break;
+      }
+      const std::string name = entry.path().filename().string();
+      if (name == "v75" || name == "v79" || name == "v81" || name == "context.bin") {
+        return true;
+      }
+      if (name.ends_with(".json") && name != "tokenizer.json" && name != "config.json" &&
+          name != "tokenizer_config.json" && name != "generation_config.json") {
+        saw_json = true;
+      }
+      if (name.ends_with(".bin") || name.ends_with(".raw")) {
+        saw_bin = true;
+      }
+    }
+    return saw_json && saw_bin;
+  };
+  if (looks_qnn()) {
+    *framework = runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT;
+    *format = runanywhere::v1::MODEL_FORMAT_QNN_CONTEXT;
   }
 }
 

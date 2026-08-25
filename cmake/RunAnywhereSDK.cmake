@@ -96,6 +96,14 @@ if(WIN32)
                 INTERFACE_LINK_LIBRARIES "${RunAnywhere_LIBRARY_DIR}/onnxruntime.lib")
         endif()
     endif()
+    if(DEFINED RunAnywhere_LIBRARY_DIR AND EXISTS "${RunAnywhere_LIBRARY_DIR}/libcurl.lib")
+        get_target_property(_rcli_ra_ifaces RunAnywhere::commons INTERFACE_LINK_LIBRARIES)
+        set(_rcli_ra_ifaces "${_rcli_ra_ifaces}")
+        if(NOT _rcli_ra_ifaces MATCHES "libcurl\\.lib")
+            set_property(TARGET RunAnywhere::commons APPEND PROPERTY
+                INTERFACE_LINK_LIBRARIES "${RunAnywhere_LIBRARY_DIR}/libcurl.lib")
+        endif()
+    endif()
     # Static libcurl/libarchive in 0.20.26 kits omit these Windows imports.
     # Keep them here until a later kit bakes them into SYSTEM_LIBS.
     foreach(_sys IN ITEMS iphlpapi xmllite ole32)

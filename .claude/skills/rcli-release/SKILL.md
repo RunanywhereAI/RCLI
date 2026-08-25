@@ -100,6 +100,11 @@ export RCLI_PRIVATE_OVERLAY=/path/to/RunAnywhere-cpp-desktop-macos-arm64-neurt-p
 `RCLI_REQUIRE_PRIVATE=1` fails closed when the overlay is missing. Default CI
 must pass without it.
 
+Device proof is not CI: rebuild overlay `rcli` on a Mac (NeuRT image gen) and
+on Snapdragon ARM64 Windows (QHexRT). Match QAIRT to the device Hexagon skel
+(`ADSP_LIBRARY_PATH`); see **rcli-e2e**. Public `v0.5.1` bottles are OSS —
+NeuRT/QHexRT will never appear in `rcli backends` on those artifacts.
+
 ## Do not
 
 - Attach `rcli-*` assets onto an SDK GitHub Release.
