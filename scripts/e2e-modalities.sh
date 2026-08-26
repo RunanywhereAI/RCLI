@@ -253,12 +253,15 @@ scan_root() {
   while IFS= read -r dir; do
     [[ -n "${dir}" ]] || continue
     case "${dir}" in
-      */Unet.mlmodelc)
-        set_mod image "$(dirname "${dir}")"
-        ;;
       *.mlmodelc)
         parent="$(dirname "${dir}")"
-        set_mod "$(guess_mod "${parent}")" "${parent}"
+        # TextEncoder/VAEDecoder can sort before Unet; first-hit-wins would
+        # otherwise store a diffusion tree as llm.
+        if [[ -d "${parent}/Unet.mlmodelc" ]]; then
+          set_mod image "${parent}"
+        else
+          set_mod "$(guess_mod "${parent}")" "${parent}"
+        fi
         ;;
       *_HNPU|*_ANE)
         # Incomplete HF snapshots (e.g. only host_weights/) are not runnable.
