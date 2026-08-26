@@ -47,6 +47,8 @@ at a source tree is a configure error. C++-only: `-DRCLI_APPLE_MLX_HOST=OFF`.
 cmake --build build --target test_rcli_unit
 ctest --test-dir build -R rcli --output-on-failure
 bash scripts/e2e.sh ./build/rcli
+# Device / overlay: primitives, not engines
+# bash scripts/e2e-modalities.sh ./build/rcli
 ```
 
 ## Layout

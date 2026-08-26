@@ -5,16 +5,29 @@ description: Verify a built rcli binary against a pinned C++ desktop kit on macO
 
 # RCLI e2e
 
-Entry: `scripts/e2e.sh <path-to-rcli>`. Always runs `scripts/smoke.sh`. Set
-`RCLI_E2E_MODEL` for download + generate (needs network + disk). Overlay
-backends also have dedicated knobs that default to skip in public CI:
+Entry: `scripts/e2e.sh <path-to-rcli>`. Always runs `scripts/smoke.sh`, then
+`scripts/e2e-modalities.sh` (engine-agnostic primitives). Public CI leaves
+modality knobs unset so every round-trip **skips**. Device runs set
+`RCLI_E2E_<MOD>` / `RCLI_E2E_MODEL_ROOTS` / `RCLI_E2E_AUTO=1`. See
+`rcli-device-e2e` for ANE/NPU.
 
-| Env | When | Example |
+| Env | Primitive | Example |
 |---|---|---|
-| `RCLI_E2E_MODEL` | any LLM | `mlx-qwen3` |
-| `RCLI_E2E_MLX_MODEL` | product `rcli` on Darwin arm64 | `mlx-qwen3` |
-| `RCLI_E2E_NEURT_MODEL` | overlay kit with `librac_backend_neurt.a` | `sd15` |
-| `RCLI_E2E_QHEXRT_MODEL` | overlay kit with `rac_backend_qhexrt.lib` | local QNN-context path |
+| `RCLI_E2E_LLM` / `RCLI_E2E_MODEL` | llm | `mlx-qwen3` or a `*_HNPU` dir |
+| `RCLI_E2E_STT` | stt | `whisper-tiny` or `whisper_base_HNPU` |
+| `RCLI_E2E_TTS` | tts | `piper` or `kitten_micro_0_8_HNPU` |
+| `RCLI_E2E_VLM` | vlm | `smolvlm2` (SDK inserts the media marker) |
+| `RCLI_E2E_EMBED` | embed | `minilm` or `embeddinggemma_300m_HNPU` |
+| `RCLI_E2E_IMAGE` | image | compiled SD1.5 tree / `sd15` |
+| `RCLI_E2E_NEURT_MODEL` | classified by path | `sd15`, a Parakeet ANE tree, or `lfm2-230m-ane` |
+| `RCLI_E2E_VAD` | vad | `silero` |
+| `RCLI_E2E_RERANK` | rerank | `bge-reranker` |
+| `RCLI_E2E_SEGMENT` | segment | `segformer` (P6 PPM) |
+| `RCLI_E2E_ENGINE` | override only | `qhexrt` / `neurt` / `mlx` |
+
+Legacy `RCLI_E2E_MLX_MODEL` / `RCLI_E2E_NEURT_MODEL` / `RCLI_E2E_QHEXRT_MODEL`
+are classified by path/id into a primitive (not always image). Do not add new
+engine-named knobs.
 
 `scripts/assert-binary-backends.sh` greps `nm`/`llvm-nm`/`dumpbin`/`strings`
 for registrar symbols (`raMLXRegisterRuntime`, `rac_plugin_entry_neurt`,

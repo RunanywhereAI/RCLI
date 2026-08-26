@@ -94,16 +94,16 @@ Yes = this engine implements the primitive. Try = a catalog id that `rcli pull` 
 
 | Modality | Command | llama.cpp | MLX | Sherpa | ONNX | NeuRT | QHexRT |
 |---|---|---|---|---|---|---|---|
-| LLM | `rcli run` / `llm generate` | yes · `smollm2`, `qwen3` | yes · `mlx-qwen3` | — | — | yes · Core ML LLM bundle, **no rcli catalog id yet** | yes · `lfm2-230m-npu` local `*_HNPU` |
-| VLM | `rcli vlm generate --image` | yes · `smolvlm2` | yes · `mlx-qwen2-vl` | — | — | — | yes · HNPU VLM (e.g. `lfm2_5_vl_3b`), not in the public rcli catalog |
-| TTS | `rcli tts synthesize -o out.wav` | — | yes · `mlx-soprano-1.1-80m-5bit` | yes · `piper` | — | — | yes · HNPU TTS (`kitten_*`, `kokoro_en`, …), not in the public rcli catalog |
-| STT | `rcli stt transcribe audio.wav` | — | yes · `mlx-qwen3-asr` | yes · `whisper-tiny` | — | yes · Core ML ASR (Parakeet / Whisper / Moonshine), **no rcli catalog id yet** | yes · HNPU ASR (`whisper_base`, `parakeet_*`, …), not in the public rcli catalog |
+| LLM | `rcli run` / `llm generate` | yes · `smollm2`, `qwen3` | yes · `mlx-qwen3` | — | — | yes · `lfm2-230m-ane` local Core ML tree | yes · `lfm2-230m-npu` local `*_HNPU` |
+| VLM | `rcli vlm generate --image` | yes · `smolvlm2` | yes · `mlx-qwen2-vl` | — | — | — | yes · `internvl-1b-npu` local HNPU |
+| TTS | `rcli tts synthesize -o out.wav` | — | yes · `mlx-soprano` | yes · `piper` | — | — | yes · `kitten-micro-npu` local HNPU |
+| STT | `rcli stt transcribe audio.wav` | — | yes · `mlx-qwen3-asr` | yes · `whisper-tiny` | — | yes · `parakeet-tdt-v2-ane` local Core ML | yes · `whisper-base-npu` local HNPU |
 | VAD | `rcli vad detect audio.wav` | — | — | yes | yes · `silero` | — | — |
-| Embeddings | `rcli embed` | yes · `nemotron-3-embed` | yes · `mlx-qwen3-embed` | — | yes · `minilm` | — | yes · HNPU embed (`embeddinggemma_300m`, …) |
-| Rerank | `rcli rerank -d …` | yes · `bge-reranker` | — | — | — | — | yes · HNPU rerank (`nv_rerankqa_1b`) |
+| Embeddings | `rcli embed` | yes · `nemotron-3-embed` | yes · `mlx-qwen3-embed` | — | yes · `minilm` | — | yes · `embeddinggemma-npu` local HNPU |
+| Rerank | `rcli rerank -d …` | yes · `bge-reranker` | — | — | — | — | yes · `nv-rerank-npu` local HNPU |
 | Segmentation | `rcli segment image.ppm` (binary P6 PPM) | — | — | — | yes · `segformer` | — | — |
 | Diarization | `rcli diarize audio.wav` | — | — | — | yes · `sortformer` | — | — |
-| Image gen | `rcli image generate --prompt … --out …` | — | — | — | — | yes · `sd15` (compiled Core ML zip, not the HF repo HTML) | yes · HNPU diffusion (`cosmos3_edge_diffusion`) |
+| Image gen | `rcli image generate --prompt … --out …` | — | — | — | — | yes · `sd15` (compiled Core ML zip, not the HF repo HTML) | yes · `cosmos3-diffusion-npu` local HNPU |
 
 MLX registers with a one-line `-811` then Swift callbacks install it — that warning is expected. `image generate` is compiled only when NeuRT is linked; `--prompt` and `--out` are required (not a positional prompt). `--steps 4` is enough for a smoke PNG.
 
@@ -181,6 +181,20 @@ rcli stt transcribe hello.wav
 **Windows ARM64** (Snapdragon): public kit has no llama.cpp/ONNX/Sherpa. The QHexRT overlay runs Hexagon NPU models from a local `*_HNPU` tree. Do not expect `mlx-*`, GGUF, or `sd15` on that binary.
 
 `rcli serve` is macOS and Linux.
+
+Device round-trips are **by modality**, not by engine. `scripts/e2e.sh` always
+runs `scripts/e2e-modalities.sh`; public CI leaves the knobs unset and skips.
+On a machine that already has models:
+
+```bash
+export RUNANYWHERE_HOME=/path/to/home          # already-pulled OSS models
+export RCLI_E2E_MODEL_ROOTS=/path/to/hnpu      # *_HNPU / *_ANE / *.mlmodelc trees
+bash scripts/e2e-modalities.sh /path/to/rcli   # no --engine required
+```
+
+`RCLI_E2E_LLM`, `RCLI_E2E_STT`, `RCLI_E2E_IMAGE`, … pin one primitive. Catalog
+ids (`mlx-qwen3`, `whisper-base-npu`) pin the framework; a Hugging Face repo
+page is HTML, not a bundle.
 
 ## Commands
 

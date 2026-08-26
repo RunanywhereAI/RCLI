@@ -471,6 +471,59 @@ TestResult test_catalog_lookup() {
   return result;
 }
 
+TestResult test_overlay_catalog() {
+  TestResult result;
+  result.test_name = "overlay_catalog";
+
+  struct Row {
+    const char *id;
+    const char *alias;
+    runanywhere::v1::ModelCategory category;
+    runanywhere::v1::InferenceFramework framework;
+  };
+  const Row rows[] = {
+      {"sd15", "stable-diffusion-v1-5-coreml",
+       runanywhere::v1::MODEL_CATEGORY_IMAGE_GENERATION,
+       runanywhere::v1::INFERENCE_FRAMEWORK_COREML},
+      {"lfm2-230m-ane", "lfm2_5_230m_ane",
+       runanywhere::v1::MODEL_CATEGORY_LANGUAGE,
+       runanywhere::v1::INFERENCE_FRAMEWORK_COREML},
+      {"parakeet-tdt-v2-ane", "parakeet_tdt_0_6b_v2_ane",
+       runanywhere::v1::MODEL_CATEGORY_SPEECH_RECOGNITION,
+       runanywhere::v1::INFERENCE_FRAMEWORK_COREML},
+      {"lfm2-230m-npu", "lfm2_5_230m",
+       runanywhere::v1::MODEL_CATEGORY_LANGUAGE,
+       runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
+      {"whisper-base-npu", "whisper_base",
+       runanywhere::v1::MODEL_CATEGORY_SPEECH_RECOGNITION,
+       runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
+      {"kitten-micro-npu", "kitten_micro_0_8",
+       runanywhere::v1::MODEL_CATEGORY_SPEECH_SYNTHESIS,
+       runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
+      {"embeddinggemma-npu", "embeddinggemma_300m",
+       runanywhere::v1::MODEL_CATEGORY_EMBEDDING,
+       runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
+      {"internvl-1b-npu", "internvl3_5_1b",
+       runanywhere::v1::MODEL_CATEGORY_MULTIMODAL,
+       runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
+      {"cosmos3-diffusion-npu", "cosmos3_edge_diffusion",
+       runanywhere::v1::MODEL_CATEGORY_IMAGE_GENERATION,
+       runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
+  };
+  for (const Row &row : rows) {
+    const rcli::catalog::CatalogEntry *by_alias = rcli::catalog::find(row.id);
+    const rcli::catalog::CatalogEntry *by_id = rcli::catalog::find(row.alias);
+    if (!by_alias || by_alias != by_id || by_alias->category != row.category ||
+        by_alias->framework != row.framework || by_alias->url == nullptr) {
+      result.details = std::string(row.id) +
+                       " should be a folder-URL overlay catalog row";
+      return result;
+    }
+  }
+  result.passed = true;
+  return result;
+}
+
 TestResult test_nvidia_sherpa_catalog() {
   TestResult result;
   result.test_name = "nvidia_sherpa_catalog";
@@ -623,6 +676,10 @@ TestResult test_engine_hint_parsing() {
       {"llama-cpp", runanywhere::v1::INFERENCE_FRAMEWORK_LLAMA_CPP},
       {"onnx", runanywhere::v1::INFERENCE_FRAMEWORK_ONNX},
       {"sherpa", runanywhere::v1::INFERENCE_FRAMEWORK_SHERPA},
+      {"neurt", runanywhere::v1::INFERENCE_FRAMEWORK_COREML},
+      {"ane", runanywhere::v1::INFERENCE_FRAMEWORK_COREML},
+      {"qhexrt", runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
+      {"npu", runanywhere::v1::INFERENCE_FRAMEWORK_QHEXRT},
   };
   for (const Case &c : cases) {
     runanywhere::v1::InferenceFramework actual =
@@ -2125,6 +2182,7 @@ int main(int argc, char **argv) {
   suite.add("resolve_home_precedence", test_resolve_home_precedence);
   suite.add("state_dir", test_state_dir);
   suite.add("catalog_lookup", test_catalog_lookup);
+  suite.add("overlay_catalog", test_overlay_catalog);
   suite.add("nvidia_sherpa_catalog", test_nvidia_sherpa_catalog);
   suite.add("engine_hint_parsing", test_engine_hint_parsing);
   suite.add("mlx_catalog_registration", test_mlx_catalog_registration);
