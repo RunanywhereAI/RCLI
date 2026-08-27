@@ -207,3 +207,39 @@ Mac; ARM64 MSVC + QHexRT overlay on Snapdragon).
   script and run the ternary model against it after any SDK kit-pin bump**
   that touches QHexRT — do not assume last time's manually-patched overlay
   is still representative of what a real user's overlay build produces.
+- **The private overlay tarball must be EXTRACTED ON TOP OF `kit/`, merging
+  into the same directory tree (`overlay/bin/*` → `kit/bin/`, `overlay/lib/*`
+  → `kit/lib/`, `overlay/include/*` → `kit/include/`, `overlay/share/...` →
+  `kit/share/...`) — never kept as a separate sibling `overlay/` directory
+  fed to CMake via a second `CMAKE_PREFIX_PATH` entry.** `rcli_stage_windows_runtime_dlls()`
+  (`cmake/RunAnywhereSDK.cmake`) only ever copies from
+  `${RunAnywhere_LIBRARY_DIR}/../bin` — i.e. `kit/bin` — so a same-named
+  `overlay/bin` sitting next to `kit/` is silently never consulted. Worse,
+  this fails **completely silently**: the build succeeds, `rcli.exe` links,
+  and `rcli backends --json` returns `{"backends":[]}` with no error naming
+  QHexRT at all (`find_library`-style detection in `RunAnywhereSDK.cmake`
+  just doesn't find `kit/lib/rac_backend_qhexrt.lib` because it was never
+  copied there). If a fresh overlay build reports zero backends, check this
+  BEFORE suspecting the overlay tarball's contents.
+- **`qwen3.8-27b-1bit-npu`'s `HostOpFailed` had a SECOND, unrelated cause
+  beyond the overlay-skel-files bug above, present through v0.20.30 and
+  fixed in v0.20.31.** `qhexrt::qnn::Backend::profile()` — called (via the
+  same `engines/qhexrt/qhexrt_session.cpp` this repo statically links, same
+  as the Electron binding) to pick the `v75`/`v79`/`v81` manifest directory
+  before the manifest is even parsed — shared its device query with the
+  code path that opens a real QNN HTP device. Since RCLI has no
+  `ADSP_LIBRARY_PATH` bug to mask it, this is the ONE thing an otherwise
+  perfectly-staged fresh overlay can still fail on: the ternary decoder's
+  `host_only` manifest paid for a live QNN device it never needed, which
+  then contended with its own direct FastRPC session for the same Hexagon
+  cDSP (`fastrpc_win.cpp`'s `SET_PATH`/`GET_PATH` both return a non-zero rc,
+  `remote_handle64_open` for the skel fails `0x80000406`). Two red herrings
+  ruled out with live device tracing before finding this: neither
+  `ADSP_LIBRARY_PATH` (irrelevant here) nor a QAIRT-version mismatch between
+  the overlay's host DLLs and the device's on-device skel (confirmed
+  present, but fixing it alone did not fix the failure) was the cause.
+  Fixed in `neurun` v0.20.31 (`Backend::profile()` no longer shares
+  `ensure_device()` with `device()`) — see that repo's
+  `qhexrt-profile-must-not-create-live-device` KB finding for the full
+  trace. A kit-pin bump to v0.20.31+ should show this resolved; if
+  `HostOpFailed` reappears after that, it is a THIRD cause, not this one.
