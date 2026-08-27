@@ -26,6 +26,8 @@ include(RunAnywhereSDK)
 add_library(rcli_core STATIC
     src/account/console.cpp
     src/account/credentials.cpp
+    src/anthropic/messages.cpp
+    src/anthropic/translate.cpp
     src/audio/audio.cpp
     src/catalog/catalog.cpp
     src/chat/complete.cpp
@@ -33,6 +35,7 @@ add_library(rcli_core STATIC
     src/cli/cmd_account.cpp
     src/cli/cmd_bench.cpp
     src/cli/cmd_chat.cpp
+    src/cli/cmd_editors.cpp
     src/cli/cmd_engines.cpp
     src/cli/cmd_harness.cpp
     src/cli/cmd_image.cpp
@@ -40,6 +43,9 @@ add_library(rcli_core STATIC
     src/cli/cmd_speech.cpp
     src/cli/output.cpp
     src/cli/preview.cpp
+    src/desktop/claude_profile.cpp
+    src/ide/jetbrains_profile.cpp
+    src/ide/openai_proxy.cpp
     src/harness/harness.cpp
     src/media/png.cpp
     src/repl/repl.cpp
@@ -73,6 +79,9 @@ find_package(ZLIB REQUIRED)
 target_link_libraries(rcli_core PRIVATE rac_commons ZLIB::ZLIB)
 # The OpenAI-compatible server `rcli opencode` starts for a local model.
 target_link_libraries(rcli_core PRIVATE rac_server)
+# Both are already fetched for the SDK's own server; naming them here is what
+# lets the Anthropic translator include them rather than vendoring a copy.
+target_link_libraries(rcli_core PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
 target_compile_definitions(rcli_core PRIVATE RCLI_VERSION="${PROJECT_VERSION}")
 foreach(_backend llamacpp onnx sherpa mlx neurt cloud)
     if(TARGET rac_backend_${_backend})
@@ -120,6 +129,8 @@ endif()
 if(APPLE)
     # AudioQueue, for microphone capture and playback.
     target_link_libraries(rcli_core PRIVATE "-framework AudioToolbox")
+    # SecItem, for the credential a JetBrains IDE reads its provider key from.
+    target_link_libraries(rcli_core PRIVATE "-framework Security" "-framework CoreFoundation")
 endif()
 
 if(WIN32)

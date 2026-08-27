@@ -83,6 +83,7 @@ extern "C" int rcli_run(int argc, char** argv) {
     cli::RegisterEngines(app, options);
     cli::RegisterHarness(app, options);
     cli::RegisterAccount(app, options);
+    cli::RegisterEditors(app, options);
 
     // Only --color is left to decide here; logging was settled in rcli_begin,
     // which had to run before the engines got a chance to write anything.
