@@ -14,6 +14,33 @@
 /// a harness needs no plugin to work with us.
 namespace rcli::harness {
 
+/// Where a model can be reached over HTTP, and whether we are serving it.
+struct Endpoint {
+    /// An OpenAI-compatible root, ending in `/v1`.
+    std::string base_url;
+    /// Empty for a local server, which ignores what is in the header.
+    std::string api_key;
+    /// True when `Resolve` started a server that `Release` has to stop.
+    bool serving = false;
+};
+
+/// Points `endpoint` at `model`, starting a local server when the model is on
+/// this machine and using the signed-in console when it is not.
+///
+/// `preferred_port` asks the local server for one particular port, and is
+/// ignored when something else already holds it or the model is upstream.
+/// An integration that writes the port into a file the tool reads at startup
+/// wants this: the same port every run is what keeps that file true.
+///
+/// Returns false having already explained why not: an unknown model, a
+/// framework the local server cannot load, or an upstream model with nobody
+/// signed in. Every integration needs this same answer, so it is separate from
+/// launching anything.
+bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port = 0);
+
+/// Stops whatever `Resolve` started. Safe on an endpoint it did not serve.
+void Release(const Endpoint& endpoint);
+
 /// Runs `tool` against `model`, forwarding `args` to it, and returns the tool's
 /// exit code. Blocks until the tool exits, then stops anything it started.
 ///

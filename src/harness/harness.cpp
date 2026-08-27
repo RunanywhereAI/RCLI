@@ -39,7 +39,11 @@ using out::Ink;
 /// A port nothing is listening on, found by letting the OS pick one and giving
 /// it straight back. There is a race between closing and the server binding,
 /// but the alternative is a fixed port that collides with a second rcli.
-int FreePort() {
+///
+/// `preferred` asks for one particular port and settles for any free one when
+/// it is taken. An integration that writes the port into a config file wants
+/// that: the file keeps working between runs instead of naming a dead port.
+int FreePort(int preferred) {
 #if defined(_WIN32)
     // Winsock has to be initialised before any socket call, and the server that
     // would otherwise do it has not started yet. The count is per-process and
@@ -66,7 +70,7 @@ int FreePort() {
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    address.sin_port = 0;
+    address.sin_port = htons(static_cast<uint16_t>(preferred));
     int port = 0;
     if (bind(sock, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
         rcli_socklen_t length = static_cast<rcli_socklen_t>(sizeof(address));
@@ -79,6 +83,9 @@ int FreePort() {
 #else
     close(sock);
 #endif
+    if (port == 0 && preferred != 0) {
+        return FreePort(0);
+    }
     return port;
 }
 
@@ -186,15 +193,12 @@ int Spawn(const std::string& tool, const std::vector<std::string>& args) {
 
 }  // namespace
 
-int Launch(const std::string& tool, const std::string& model,
-           const std::vector<std::string>& args) {
-    if (model.empty()) {
-        // Nothing to wire, so do not pretend to: run the tool as the user has
-        // it configured.
-        return Spawn(tool, args);
+bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
+    if (endpoint == nullptr || model.empty()) {
+        return false;
     }
     if (!rcli::cli::Start()) {
-        return 1;
+        return false;
     }
 
     std::string base_url;
@@ -220,12 +224,12 @@ int Launch(const std::string& tool, const std::string& model,
             out::Error(model + " runs on " + local->framework +
                        ", and the local server can only serve LlamaCpp models today");
             out::Status("use a GGUF model here, or point at an upstream one");
-            return 1;
+            return false;
         }
-        const int port = FreePort();
+        const int port = FreePort(preferred_port);
         if (port == 0) {
             out::Error("could not find a free port for the local server");
-            return 1;
+            return false;
         }
         rac_server_config_t config = RAC_SERVER_CONFIG_DEFAULT;
         config.host = "127.0.0.1";
@@ -237,7 +241,7 @@ int Launch(const std::string& tool, const std::string& model,
         out::Status("serving " + model + " on 127.0.0.1:" + std::to_string(port));
         if (rac_server_start(&config) != RAC_SUCCESS) {
             out::Error("the local server would not start for " + model);
-            return 1;
+            return false;
         }
         serving = true;
         base_url = "http://127.0.0.1:" + std::to_string(port) + "/v1";
@@ -246,14 +250,39 @@ int Launch(const std::string& tool, const std::string& model,
         if (!credentials.signed_in()) {
             out::Error(model + " is not on this machine, and you are not signed in");
             out::Status("run `rcli login`, or `rcli pull " + model + "` to run it here");
-            return 1;
+            return false;
         }
         base_url = credentials.console_url + "/v1";
         api_key = credentials.access_token;
         out::Status("using " + model + " as " + credentials.email);
     }
 
-    const std::string config = OpencodeConfig(model, base_url, api_key);
+    endpoint->base_url = base_url;
+    endpoint->api_key = api_key;
+    endpoint->serving = serving;
+    return true;
+}
+
+void Release(const Endpoint& endpoint) {
+    if (endpoint.serving) {
+        rac_server_stop();
+    }
+}
+
+int Launch(const std::string& tool, const std::string& model,
+           const std::vector<std::string>& args) {
+    if (model.empty()) {
+        // Nothing to wire, so do not pretend to: run the tool as the user has
+        // it configured.
+        return Spawn(tool, args);
+    }
+
+    Endpoint endpoint;
+    if (!Resolve(model, &endpoint)) {
+        return 1;
+    }
+
+    const std::string config = OpencodeConfig(model, endpoint.base_url, endpoint.api_key);
     const char* previous = std::getenv(kConfigVariable);
     const std::string restored = previous != nullptr ? previous : std::string();
     const bool had_previous = previous != nullptr;
@@ -269,9 +298,7 @@ int Launch(const std::string& tool, const std::string& model,
     } else {
         UnsetConfigVariable();
     }
-    if (serving) {
-        rac_server_stop();
-    }
+    Release(endpoint);
     return status;
 }
 
