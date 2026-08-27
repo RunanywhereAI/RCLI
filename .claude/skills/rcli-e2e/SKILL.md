@@ -191,3 +191,19 @@ Mac; ARM64 MSVC + QHexRT overlay on Snapdragon).
   download factory — `rcli pull sd15` is not a substitute for the zip.
 - Published product bottles: macOS `rcli-$V-macos-arm64.tar.gz`, Windows
   **x64** zip. There is no public Windows ARM64 bottle; NPU is overlay-only.
+- **The private QHexRT overlay tarball used to ship zero skel files** (only
+  `.dll`/`.lib`, no `.so`/`.cat`) — `rac-cli`'s own overlay build could not
+  run `qwen3.8-27b-1bit-npu` (the Bonsai/Maple ternary decoder) out of the
+  box; validating it required hand-copying `librun_main_on_hexagon_skel.so`
+  + `.cat` in from the `electron-qhexrt` npm package as a workaround. Fixed
+  in `runanywhere-sdks`' `scripts/build/package-private-engine-overlay.sh`
+  (widened the copy filter and added a pass for `dsp/win-arm64/`). **RCLI
+  itself never had the `ADSP_LIBRARY_PATH` bug the Electron binding had** —
+  `fastrpc_win.cpp`'s `exe_dir()` fallback naturally resolves for `rcli.exe`
+  because dependent DLLs/skels are staged flat beside the executable by this
+  repo's own packaging convention — but that protection is a property of the
+  *packaging layout*, not of RCLI's code, so it is not something to assume
+  going forward. **Always build a fresh overlay from the actual release
+  script and run the ternary model against it after any SDK kit-pin bump**
+  that touches QHexRT — do not assume last time's manually-patched overlay
+  is still representative of what a real user's overlay build produces.
