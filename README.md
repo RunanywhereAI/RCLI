@@ -2,7 +2,8 @@
 
 `rcli` runs AI models on your own machine: text generation, speech to text, text to speech, and
 image generation, all through the
-[RunAnywhere SDK](https://github.com/RunanywhereAI/runanywhere-sdks).
+[RunAnywhere SDK](https://github.com/RunanywhereAI/runanywhere-sdks). Sign in and it will also run
+the models the RunAnywhere console serves, and point a coding agent or an IDE at either kind.
 
 It is a plain command-line tool with no full-screen interface. Results go to stdout, progress and
 errors go to stderr, so a redirect keeps the answer and leaves the progress bar on your terminal:
@@ -77,6 +78,14 @@ have not downloaded pulls it first.
 | `rcli engines` | Which engines came up and which primitives each one serves. Engines that were compiled in but did not start are listed with the reason. |
 | `rcli config [setting] [value]` | List settings, read one, or change one. |
 | `rcli where` | The directory models and generated images live in. |
+| `rcli login` | Sign in through the RunAnywhere console. `--no-browser` prints the URL instead of opening it. |
+| `rcli logout` | Forget the credentials on this machine. |
+| `rcli whoami` | Who is signed in, against which console, and how much they have used. |
+| `rcli claude-code [-m model]` | Open Claude Code against a model. |
+| `rcli claude-desktop [-m model]` | Point Claude Desktop at a model and launch it. |
+| `rcli clion [-m model]` | Point CLion's AI Assistant at a model and launch it. |
+| `rcli rustrover [-m model]` | The same for RustRover. |
+| `rcli opencode [-m model]` | Open a coding session in opencode against a model. |
 
 Global flags: `--version`, `-v` / `--verbose` to let the engines log to stderr, and
 `--color auto|always|never`.
@@ -111,6 +120,59 @@ that does not start with `/` goes to the model.
 Reasoning tokens go to stderr and the answer goes to stdout, which is why redirecting a one-shot
 `run` captures the answer and nothing else.
 
+## Signing in
+
+A model you have not downloaded can still answer, if the console serves it:
+
+```bash
+rcli login
+rcli whoami
+rcli run models/gemma-4-31b-it "why is the sky blue"
+```
+
+`rcli login` opens the console in a browser and waits for you to approve the machine. Credentials
+land in `~/.config/rcli/credentials.json` and are refreshed when they expire, so signing in once is
+usually the last you think about it. `rcli logout` deletes them.
+
+Upstream models are named by the id the console lists, which does not look like a catalog id. `rcli
+whoami` prints the console it is talking to along with the tokens used so far.
+
+## Editors and coding agents
+
+One command points a tool at a model and starts it. There is nothing to configure by hand:
+
+```bash
+rcli claude-code -m qwen3-0.6b
+rcli clion -m models/gemma-4-31b-it
+rcli claude-desktop -m models/gemma-4-31b-it
+```
+
+The model can be one on this machine or one the console serves. Without `-m` the tool starts the
+way you already have it configured, and rcli wires nothing.
+
+| Tool | How it is wired |
+| --- | --- |
+| `claude-code`, `opencode` | `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in the process |
+| `claude-desktop` | a gateway profile in Claude Desktop's third party mode, which covers both the chat and Cowork tabs |
+| `clion`, `rustrover` | AI Assistant's OpenAI-compatible provider, which works without a JetBrains AI subscription |
+
+Two flags go with `-m`. `--serve` holds the endpoint open and prints it instead of launching
+anything, which is how a tool nobody has taught rcli about gets wired up. `--restore` puts Claude
+Desktop or a JetBrains IDE back the way it was and starts nothing; a normal run already undoes its
+own configuration when the app quits, so this is for the run that was interrupted before it could.
+
+The first `rcli clion` on a machine takes a while, because it installs the AI Assistant plugin
+headlessly before starting the IDE. Later runs are quick: the settings stay written, and nothing in
+them changes between runs. That endpoint sits on a fixed port rather than whatever happened to be
+free, because the IDE reads the address once at startup out of a file rcli writes beforehand, and a
+port that moved would leave that file naming something dead.
+
+Claude Code and Claude Desktop speak Anthropic's Messages API, while the models rcli serves speak
+OpenAI's, so a translator sits between them. It carries tool definitions out, tool calls back, and
+the results of those calls out again, which is what lets an agent on the far side actually run the
+tools it was given rather than describe them. The JetBrains IDEs need no translator, because AI
+Assistant speaks OpenAI already.
+
 ## Settings
 
 `rcli config` with no arguments lists the settings and their current values:
@@ -128,8 +190,10 @@ Settings live for one process. `rcli config temperature 0.2` changes it for that
 nothing else, so to use a setting you either set it in the interactive prompt with `/set` or accept
 the default. There is no config file.
 
-Two environment variables: `RUNANYWHERE_HOME` moves the storage directory, and `RCLI_LOG` names a
-file for the engine logs that `--verbose` would otherwise put on stderr.
+Four environment variables. `RUNANYWHERE_HOME` moves the storage directory and `RCLI_LOG` names a
+file for the engine logs that `--verbose` would otherwise put on stderr. `RCLI_CONSOLE_URL` points
+at a console other than the default `http://localhost:8080`, and `RCLI_PROFILE_DIR` moves the
+directory the credentials are kept in.
 
 ## Engines
 
