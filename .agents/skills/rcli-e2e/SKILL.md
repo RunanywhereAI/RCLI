@@ -221,25 +221,38 @@ Mac; ARM64 MSVC + QHexRT overlay on Snapdragon).
   just doesn't find `kit/lib/rac_backend_qhexrt.lib` because it was never
   copied there). If a fresh overlay build reports zero backends, check this
   BEFORE suspecting the overlay tarball's contents.
-- **`qwen3.8-27b-1bit-npu`'s `HostOpFailed` had a SECOND, unrelated cause
-  beyond the overlay-skel-files bug above, present through v0.20.30 and
-  fixed in v0.20.31.** `qhexrt::qnn::Backend::profile()` — called (via the
-  same `engines/qhexrt/qhexrt_session.cpp` this repo statically links, same
-  as the Electron binding) to pick the `v75`/`v79`/`v81` manifest directory
-  before the manifest is even parsed — shared its device query with the
-  code path that opens a real QNN HTP device. Since RCLI has no
-  `ADSP_LIBRARY_PATH` bug to mask it, this is the ONE thing an otherwise
-  perfectly-staged fresh overlay can still fail on: the ternary decoder's
-  `host_only` manifest paid for a live QNN device it never needed, which
-  then contended with its own direct FastRPC session for the same Hexagon
-  cDSP (`fastrpc_win.cpp`'s `SET_PATH`/`GET_PATH` both return a non-zero rc,
-  `remote_handle64_open` for the skel fails `0x80000406`). Two red herrings
-  ruled out with live device tracing before finding this: neither
-  `ADSP_LIBRARY_PATH` (irrelevant here) nor a QAIRT-version mismatch between
-  the overlay's host DLLs and the device's on-device skel (confirmed
-  present, but fixing it alone did not fix the failure) was the cause.
-  Fixed in `neurun` v0.20.31 (`Backend::profile()` no longer shares
-  `ensure_device()` with `device()`) — see that repo's
-  `qhexrt-profile-must-not-create-live-device` KB finding for the full
-  trace. A kit-pin bump to v0.20.31+ should show this resolved; if
-  `HostOpFailed` reappears after that, it is a THIRD cause, not this one.
+- **`qwen3.8-27b-1bit-npu`'s `HostOpFailed` had THREE compounding causes,
+  found and fixed one at a time — a kit-pin bump to v0.20.31 alone was NOT
+  enough; RCLI needed its own additional fix (below) even with a perfectly
+  merged overlay.**
+  1. The overlay-skel-files-never-shipped bug (above), fixed upstream in
+     `runanywhere-sdks`' overlay packaging script.
+  2. `qhexrt::qnn::Backend::profile()` — called (via the same
+     `engines/qhexrt/qhexrt_session.cpp` this repo statically links, same as
+     the Electron binding) to pick the `v75`/`v79`/`v81` manifest directory
+     before the manifest is even parsed — shared its device query with the
+     code path that opens a real QNN HTP device, so the ternary decoder's
+     `host_only` manifest paid for a live QNN device it never needed. Fixed
+     in `neurun` v0.20.31 (`Backend::profile()` no longer shares
+     `ensure_device()` with `device()`) — see that repo's
+     `qhexrt-profile-must-not-create-live-device` KB finding.
+  3. **RCLI-specific, and NOT fixed by the kit-pin bump alone**:
+     `copy-overlay-dlls.cmake` globbed `*.dll` only, so even a correctly
+     merged overlay (per the bullet above) left the Bonsai skel's `.so`/
+     `.cat` sitting in `kit/bin/` and NEVER staged next to `rcli.exe` — the
+     one place `fastrpc_win.cpp`'s `ADSP_LIBRARY_PATH ∪ exe_dir()` search
+     actually looks. Fixed by widening the glob to `*.dll *.so *.cat`.
+  **`fastrpc_win.cpp`'s `SET_PATH`/`GET_PATH` both returning a non-zero rc
+  (`0x14`/`AEE_EUNSUPPORTED`) is EXPECTED and HARMLESS on this driver
+  (`libcdsprpc` 11.1.4 simply doesn't implement that control call — see that
+  file's own header comment) — do not treat it as a symptom of anything.**
+  This was chased as a diagnostic signal once and wasted real device time;
+  the only signal that matters is whether `remote_handle64_open` for the
+  skel itself returns non-zero (`0x80000406` = `AEE_EUNABLETOLOAD`, which
+  that same file's header comment exhaustively catalogs the causes of —
+  missing skel, missing/wrong/stale `.cat`, or — as this entry adds — the
+  pair never being in the searched directory at all).
+  Confirmed fixed end to end on a Snapdragon X2 Elite with all three fixes
+  in place: `rcli run --engine qhexrt` against `qwen3.8-27b-1bit-npu` opens
+  the cDSP session and generates correctly ("The capital of France is
+  **Paris**.", 0.105 tok/s, 12425 DSP linears).
