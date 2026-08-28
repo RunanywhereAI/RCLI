@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(rcli VERSION 0.5.1 LANGUAGES C CXX)
+project(rcli VERSION 0.5.2 LANGUAGES C CXX)
 
 # Product version is independent of the SDK kit pin in cmake/sdk-pin.cmake.
 # scripts/package-rcli.sh and the release workflow stamp this into Formula/rcli.rb.
