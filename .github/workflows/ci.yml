@@ -33,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
           repository: RunanywhereAI/runanywhere-sdks
-          ref: v0.20.30
+          ref: v0.20.31
           path: .deps/runanywhere-sdks
       - name: Install ninja
         run: brew install ninja
