@@ -78,6 +78,13 @@ void HandleNonStreaming(Runtime& runtime, const Json& request, httplib::Response
         response.set_content(translate::ErrorBody("api_error", error.what()), "application/json");
         return;
     }
+    std::string failure_type;
+    std::string failure;
+    if (translate::PayloadError(parsed, &failure_type, &failure)) {
+        response.status = failure_type == "rate_limit_error" ? 429 : 502;
+        response.set_content(translate::ErrorBody(failure_type, failure), "application/json");
+        return;
+    }
     response.set_content(translate::ResponseToAnthropic(parsed, runtime.model).dump(),
                          "application/json");
 }
@@ -212,6 +219,9 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
         } catch (const std::exception& error) {
             // httplib does not catch, and an exception leaving here reaches
             // std::terminate: the editor's model call would abort rcli.
+            if (raw->verbose) {
+                out::Status(std::string("anthropic: request failed: ") + error.what());
+            }
             response.status = 500;
             response.set_content(translate::ErrorBody("api_error", error.what()),
                                  "application/json");

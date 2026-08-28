@@ -1,6 +1,7 @@
 #ifndef RCLI_ANTHROPIC_TRANSLATE_H
 #define RCLI_ANTHROPIC_TRANSLATE_H
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -32,13 +33,38 @@ Json ResponseToAnthropic(const Json& openai, const std::string& model);
 /// a flat run of deltas. `state` carries what has already been emitted so the
 /// opening events fire exactly once.
 struct StreamState {
+    /// A call being assembled from the stream. OpenAI spreads one across as
+    /// many chunks as it likes, naming it once and then sending its arguments
+    /// a few characters at a time.
+    struct ToolCall {
+        std::string id;
+        std::string name;
+        std::string arguments;
+    };
+
     bool opened = false;
     bool block_open = false;
+    /// Set once the endpoint has reported a failure, after which the closing
+    /// events would be describing a turn that never happened.
+    bool failed = false;
     std::string message_id;
     std::string model;
     std::string stop_reason;
     int input_tokens = 0;
     int output_tokens = 0;
+
+    /// The calls so far, in the order they were first seen, which is the order
+    /// they are written out in.
+    ///
+    /// Endpoints identify a call in two different ways and the slot is what
+    /// reconciles them: OpenAI numbers its calls and dribbles the arguments of
+    /// each across chunks, while others send a call whole and number nothing,
+    /// leaning on the id instead. Keying on either alone merges calls that are
+    /// separate or splits one that is not.
+    std::map<int, ToolCall> tool_calls;
+    std::map<int, int> tool_slot_by_index;
+    std::map<std::string, int> tool_slot_by_id;
+    int next_tool_slot = 0;
 };
 
 /// Returns the SSE text to write for `chunk`, or empty when it implies nothing.
@@ -50,6 +76,11 @@ std::string StreamCloseToAnthropic(StreamState* state);
 /// An Anthropic-shaped error body, so a failure reads as one to the client
 /// rather than as a malformed message.
 std::string ErrorBody(const std::string& type, const std::string& message);
+
+/// Reads the failure out of a body the endpoint sent with a success status.
+///
+/// Returns false when `payload` carries no error, which is the ordinary case.
+bool PayloadError(const Json& payload, std::string* type, std::string* message);
 
 }  // namespace rcli::anthropic::translate
 
