@@ -9,7 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "anthropic/translate.h"
-#include "cli/output.h"
+#include "io/output.h"
 
 namespace rcli::anthropic {
 namespace {
@@ -186,7 +186,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
 
     auto runtime = std::make_unique<Runtime>();
     if (!SplitBaseUrl(upstream.base_url, &runtime->origin, &runtime->prefix)) {
-        out::Error("could not read the model endpoint: " + upstream.base_url);
+        out::error_line("could not read the model endpoint: " + upstream.base_url);
         return false;
     }
     runtime->api_key = upstream.api_key;
@@ -198,7 +198,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
     raw->server.Post("/v1/messages", [raw](const httplib::Request& request,
                                            httplib::Response& response) {
         if (raw->verbose) {
-            out::Status("anthropic: POST /v1/messages, " +
+            out::status_line("anthropic: POST /v1/messages, " +
                         std::to_string(request.body.size()) + " bytes");
         }
         Json parsed;
@@ -220,7 +220,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
             // httplib does not catch, and an exception leaving here reaches
             // std::terminate: the editor's model call would abort rcli.
             if (raw->verbose) {
-                out::Status(std::string("anthropic: request failed: ") + error.what());
+                out::status_line(std::string("anthropic: request failed: ") + error.what());
             }
             response.status = 500;
             response.set_content(translate::ErrorBody("api_error", error.what()),
@@ -236,7 +236,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
     // the paging fields, or nothing in the list counts as usable.
     raw->server.Get("/v1/models", [raw](const httplib::Request&, httplib::Response& response) {
         if (raw->verbose) {
-            out::Status("anthropic: GET /v1/models -> " + raw->advertised + " (serving " +
+            out::status_line("anthropic: GET /v1/models -> " + raw->advertised + " (serving " +
                         raw->model + ")");
         }
         // The shape claude.com/docs/third-party/claude-desktop documents for a
@@ -271,7 +271,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
     raw->server.set_error_handler([raw](const httplib::Request& request,
                                         httplib::Response& response) {
         if (raw->verbose) {
-            out::Status("anthropic: " + request.method + " " + request.path + " -> " +
+            out::status_line("anthropic: " + request.method + " " + request.path + " -> " +
                         std::to_string(response.status));
         }
         if (response.body.empty()) {
@@ -285,7 +285,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
 
     const int port = raw->server.bind_to_any_port("127.0.0.1");
     if (port <= 0) {
-        out::Error("could not open a port for the Anthropic translator");
+        out::error_line("could not open a port for the Anthropic translator");
         return false;
     }
 

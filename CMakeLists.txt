@@ -1,10 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
-project(rcli VERSION 0.4.1 LANGUAGES C CXX)
+project(rcli VERSION 0.5.2 LANGUAGES C CXX)
 
-# 0.3.7 was the last MetalRT release and its tag already carries that tarball,
-# so the rework starts at 0.4.0 rather than reusing it. scripts/package.sh reads
-# this to name the tarball, and the release workflow stamps the same number into
-# Formula/rcli.rb.
+# Product version is independent of the SDK kit pin in cmake/sdk-pin.cmake.
+# scripts/package-rcli.sh and the release workflow stamp this into Formula/rcli.rb.
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,186 +15,180 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(RunAnywhereSDK)
 
-# CLI11 and linenoise are vendored rather than fetched: they are the same two
-# the SDK's own rcli vendors, both are a single translation unit, and a release
-# build should not depend on the network reaching two more repositories.
-# Everything except the entry point, so there can be more than one entry point.
-# The Apple build adds a Swift one that registers the MLX callbacks first; both
-# call rcli_run(), so the app itself exists once.
-add_library(rcli_core STATIC
+# In-tree rcli sources (copied from runanywhere-sdks/rcli). Command files are
+# thin: parse → bootstrap() → one rac_* call → render.
+set(RCLI_SOURCES
+    src/app.cpp
+    src/bootstrap.cpp
+    src/catalog/catalog.cpp
+    src/catalog/model_ref.cpp
+    src/commands/cmd_version.cpp
+    src/commands/cmd_info.cpp
+    src/commands/cmd_auth.cpp
+    src/commands/cmd_backends.cpp
+    src/commands/cmd_list.cpp
+    src/commands/cmd_lora.cpp
+    src/commands/cmd_models.cpp
+    src/commands/cmd_pull.cpp
+    src/commands/cmd_rerank.cpp
+    src/commands/cmd_rm.cpp
+    src/commands/cmd_run.cpp
+    src/commands/cmd_tool.cpp
+    src/commands/cmd_image.cpp
+    src/commands/cmd_segment.cpp
+    src/commands/cmd_serve.cpp
+    src/commands/cmd_show.cpp
+    src/commands/cmd_stt.cpp
+    src/commands/cmd_diarize.cpp
+    src/commands/cmd_embed.cpp
+    src/commands/cmd_telemetry.cpp
+    src/commands/cmd_tts.cpp
+    src/commands/cmd_vad.cpp
+    src/commands/cmd_voice.cpp
+    src/commands/cmd_rag.cpp
+    src/commands/cmd_bench.cpp
+    src/commands/cmd_editors.cpp
+    src/commands/cmd_harness.cpp
+    src/commands/cmd_account.cpp
     src/account/console.cpp
     src/account/credentials.cpp
     src/anthropic/messages.cpp
     src/anthropic/translate.cpp
-    src/audio/audio.cpp
-    src/catalog/catalog.cpp
-    src/chat/complete.cpp
-    src/cli/app.cpp
-    src/cli/cmd_account.cpp
-    src/cli/cmd_bench.cpp
-    src/cli/cmd_chat.cpp
-    src/cli/cmd_editors.cpp
-    src/cli/cmd_engines.cpp
-    src/cli/cmd_harness.cpp
-    src/cli/cmd_image.cpp
-    src/cli/cmd_models.cpp
-    src/cli/cmd_speech.cpp
-    src/cli/output.cpp
-    src/cli/preview.cpp
     src/desktop/claude_profile.cpp
+    src/harness/harness.cpp
+    src/harness/local_models.cpp
+    # cpp-httplib 0.46 is a split build, so the vendored header needs its
+    # translation unit compiled in rather than being header-only.
+    third_party/httplib/httplib.cpp
     src/ide/jetbrains_profile.cpp
     src/ide/openai_proxy.cpp
-    src/harness/harness.cpp
-    src/media/png.cpp
+    src/commands/engine_options.cpp
+    src/commands/model_setup.cpp
+    src/config/cli_paths.cpp
+    src/device_info.cpp
+    src/net/control_plane.cpp
+    src/io/wav_io.cpp
+    src/io/image_io.cpp
+    src/io/output.cpp
+    src/progress/progress_bar.cpp
     src/repl/repl.cpp
-    src/repl/session.cpp
-    src/sdk/download.cpp
-    src/sdk/imagine.cpp
-    src/sdk/install.cpp
-    src/sdk/llm.cpp
-    src/sdk/session.cpp
-    src/sdk/speech.cpp
-    src/settings/settings.cpp
-    src/tools/shell.cpp
+    src/util/term.cpp
 )
 
-# linenoise drives the terminal through termios, which Windows does not have.
-# The console does its own line editing there, and repl.cpp falls back to
-# getline, so the commands are the same and only completion is lost.
+add_library(rcli_core STATIC ${RCLI_SOURCES})
+
 if(WIN32)
     target_compile_definitions(rcli_core PUBLIC RCLI_NO_LINENOISE=1)
+    if(MSVC)
+        target_compile_options(rcli_core PUBLIC
+            "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/windows_proto_compat.h")
+    else()
+        target_compile_options(rcli_core PUBLIC
+            -include "${CMAKE_CURRENT_SOURCE_DIR}/src/windows_proto_compat.h")
+    endif()
 else()
     target_sources(rcli_core PRIVATE third_party/linenoise/linenoise.c)
+    set_source_files_properties(third_party/linenoise/linenoise.c PROPERTIES COMPILE_OPTIONS "-w")
 endif()
+
 target_include_directories(rcli_core PUBLIC
-    src
-    third_party/CLI11
-    third_party/linenoise
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CLI11"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/linenoise"
+    # Single-header, vendored rather than fetched. Both used to arrive from the
+    # SDK's own source build; a kit consumer never configures that build, so
+    # naming them here is what keeps the Anthropic translator and the JetBrains
+    # proxy compiling with no network step in CI.
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann"
 )
-# zlib for PNG encode and decode; it is already a transitive dependency of the
-# SDK, naming it here is what makes that explicit rather than accidental.
-find_package(ZLIB REQUIRED)
-target_link_libraries(rcli_core PRIVATE rac_commons ZLIB::ZLIB)
-# The OpenAI-compatible server `rcli opencode` starts for a local model.
-target_link_libraries(rcli_core PRIVATE rac_server)
-# Both are already fetched for the SDK's own server; naming them here is what
-# lets the Anthropic translator include them rather than vendoring a copy.
-target_link_libraries(rcli_core PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
-target_compile_definitions(rcli_core PRIVATE RCLI_VERSION="${PROJECT_VERSION}")
-foreach(_backend llamacpp onnx sherpa mlx neurt cloud)
-    if(TARGET rac_backend_${_backend})
-        string(TOUPPER ${_backend} _upper)
-        target_compile_definitions(rcli_core PRIVATE RCLI_HAS_${_upper}=1)
-        target_link_libraries(rcli_core PRIVATE rac_backend_${_backend})
-    endif()
-endforeach()
 
+find_package(Threads REQUIRED)
+target_link_libraries(rcli_core PUBLIC rac_commons Threads::Threads)
+target_compile_definitions(rcli_core PUBLIC
+    RCLI_VERSION="${PROJECT_VERSION}"
+    RCLI_PINNED_SDK_VERSION="${RCLI_PINNED_SDK_VERSION}"
+    RAC_HAVE_PROTOBUF=1
+    CLI11_HAS_CODECVT=0)
+rcli_define_engine_macros(rcli_core)
+if(RunAnywhere_HAS_RAG)
+    target_compile_definitions(rcli_core PUBLIC RAC_HAVE_RAG=1)
+endif()
+if(RunAnywhere_HAS_SERVER)
+    target_compile_definitions(rcli_core PUBLIC RCLI_HAS_SERVER=1)
+endif()
 
-# Proto-byte ABI access. Downloads, the model registry and the lifecycle are
-# protobuf-only in commons — there is no plain-C equivalent — so a consumer that
-# wants them has to re-attach what rac_commons keeps PRIVATE. This mirrors the
-# SDK's own rcli target; the difference is RCLI_SDK_ROOT, because the SDK is not
-# the top-level project here.
-set(_RAC_CORE "${RCLI_SDK_ROOT}/core")
-if(NOT EXISTS "${_RAC_CORE}/src/generated/proto/model_types.pb.cc")
+# Proto types are the SOT. The kit ships the *.pb.h that commons was compiled
+# with (same protoc, same isolated runtime). RCLI never runs protoc and never
+# compiles *.pb.cc — those objects already live in librac_commons.a.
+if(NOT RunAnywhere_PROTO_INCLUDE_DIR
+   OR NOT EXISTS "${RunAnywhere_PROTO_INCLUDE_DIR}/model_types.pb.h"
+   OR NOT EXISTS "${RunAnywhere_PROTO_INCLUDE_DIR}/schema_lock.h")
     message(FATAL_ERROR
-        "the SDK's generated protos are missing — configure the SDK once so it "
-        "generates them, or check RCLI_SDK_DIR")
+        "RunAnywhere kit is missing generated proto headers "
+        "(RunAnywhere_PROTO_INCLUDE_DIR=${RunAnywhere_PROTO_INCLUDE_DIR}). "
+        "Rebuild the kit with package-cpp-desktop.")
 endif()
-target_compile_definitions(rcli_core PRIVATE RAC_HAVE_PROTOBUF=1)
-if(RAC_PROTOBUF_NAMESPACE_ISOLATED)
-    # The bundled runtime rewrites the google namespace; generated messages
-    # compiled here must agree or the two see different types.
-    target_compile_definitions(rcli_core PRIVATE google=runanywhere_internal)
-endif()
-target_include_directories(rcli_core PRIVATE
-    "${_RAC_CORE}/src/generated/proto"
-    "${_RAC_CORE}/src/generated"
-    ${Protobuf_INCLUDE_DIRS}
-)
-if(TARGET protobuf::libprotobuf)
-    target_link_libraries(rcli_core PRIVATE protobuf::libprotobuf)
-elseif(Protobuf_LIBRARIES)
-    target_link_libraries(rcli_core PRIVATE ${Protobuf_LIBRARIES})
-endif()
-if(RAC_ABSL_LIBS)
-    target_link_libraries(rcli_core PRIVATE ${RAC_ABSL_LIBS})
-endif()
-if(RAC_PROTOBUF_COMPILE_OPTIONS)
-    target_compile_options(rcli_core PRIVATE ${RAC_PROTOBUF_COMPILE_OPTIONS})
-endif()
+# Include path + google=runanywhere_internal come from RunAnywhere::commons.
 
 if(APPLE)
-    # AudioQueue, for microphone capture and playback.
-    target_link_libraries(rcli_core PRIVATE "-framework AudioToolbox")
     # SecItem, for the credential a JetBrains IDE reads its provider key from.
     target_link_libraries(rcli_core PRIVATE "-framework Security" "-framework CoreFoundation")
+    target_link_libraries(rcli_core PUBLIC "-framework IOKit" "-framework CoreFoundation")
 endif()
 
-if(WIN32)
-    # Winsock, for the free-port probe in src/harness. Named here rather than
-    # left to httplib: that code calls socket() before the server starts, so it
-    # cannot rely on something else having pulled the library in.
-    target_link_libraries(rcli_core PRIVATE ws2_32)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(rcli_core PRIVATE -Wall -Wextra)
 endif()
-
-target_compile_options(rcli_core PRIVATE -Wall -Wextra)
 
 add_executable(rcli src/main.cpp)
 target_link_libraries(rcli PRIVATE rcli_core)
 
 if(MINGW)
-    # MinGW links its own runtime dynamically by default, so the binary imports
-    # libstdc++-6, libgcc_s_seh-1 and libwinpthread-1 from wherever the compiler
-    # lives. That directory is on PATH on the machine that built it and nowhere
-    # else, which makes the failure invisible in CI and total for a user: the
-    # image will not load and Windows reports it as though the program were
-    # missing. Linking them in costs about a megabyte and removes the class.
     target_link_options(rcli PRIVATE -static-libgcc -static-libstdc++ -static)
 endif()
 
 if(APPLE)
-    # On Apple the shipped `rcli` is the one scripts/build-mlx.sh produces: MLX
-    # inference is Swift, so the binary that can use every engine has to be
-    # linked by xcodebuild. This one is an intermediate — it exists so CMake
-    # writes the link line that build-mlx.sh harvests, and so there is a way to
-    # build without Xcode. Naming it apart is what stops a later
-    # `cmake --build` from quietly replacing the full binary with this one.
+    # Shipped `rcli` is scripts/build-mlx.sh + Swift MLX host. This binary is
+    # rcli-cxx so cmake --build cannot clobber the fat Apple binary.
     set_target_properties(rcli PROPERTIES OUTPUT_NAME "rcli-cxx")
 endif()
 
-# scripts/package.sh copies build/rcli into the tarball's libexec/, which is
-# what Formula/rcli.rb installs before symlinking bin/rcli at it. Emitting the
-# binary anywhere else silently breaks the release without breaking the build.
 set_target_properties(rcli PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-
-# Isolation probe, not shipped: reproduces an SDK call path with no UI so a
-# crash can be attributed to the SDK or to the app.
-add_executable(probe tools/probe.cpp src/audio/audio.cpp src/catalog/catalog.cpp
-    src/sdk/download.cpp src/sdk/install.cpp src/sdk/llm.cpp src/sdk/session.cpp
-    src/sdk/speech.cpp src/settings/settings.cpp)
-target_include_directories(probe PRIVATE src "${_RAC_CORE}/src/generated/proto" "${_RAC_CORE}/src/generated" ${Protobuf_INCLUDE_DIRS})
-target_compile_definitions(probe PRIVATE RAC_HAVE_PROTOBUF=1)
-if(RAC_PROTOBUF_NAMESPACE_ISOLATED)
-    target_compile_definitions(probe PRIVATE google=runanywhere_internal)
-endif()
-# ftxui::screen only: the settings registry carries the theme setting, whose
-# value type is an ftxui colour mode.
-target_link_libraries(probe PRIVATE rac_commons)
-if(TARGET protobuf::libprotobuf)
-    target_link_libraries(probe PRIVATE protobuf::libprotobuf)
-endif()
-if(RAC_ABSL_LIBS)
-    target_link_libraries(probe PRIVATE ${RAC_ABSL_LIBS})
-endif()
-foreach(_b llamacpp onnx sherpa mlx neurt cloud)
-    if(TARGET rac_backend_${_b})
-        string(TOUPPER ${_b} _u)
-        target_compile_definitions(probe PRIVATE RCLI_HAS_${_u}=1)
-        target_link_libraries(probe PRIVATE rac_backend_${_b})
-    endif()
-endforeach()
 if(APPLE)
-    target_link_libraries(probe PRIVATE "-framework AudioToolbox")
+    set_target_properties(rcli PROPERTIES
+        BUILD_RPATH "${RunAnywhere_THIRD_PARTY_DIR}"
+        INSTALL_RPATH "@loader_path/../lib")
+elseif(UNIX)
+    set_target_properties(rcli PROPERTIES
+        BUILD_RPATH "${RunAnywhere_THIRD_PARTY_DIR}"
+        INSTALL_RPATH "\$ORIGIN/../lib")
 endif()
-set_target_properties(probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+rcli_stage_windows_runtime_dlls(rcli)
+
+install(TARGETS rcli RUNTIME DESTINATION bin)
+
+# Apple product binary is the Swift MLX host (`build/rcli`), not `rcli-cxx`.
+# Users still type `rcli`; llama.cpp / ONNX / Sherpa register from C++ bootstrap
+# and MLX from the Swift entry. Turn off only for a C++-only compile loop.
+option(RCLI_APPLE_MLX_HOST
+    "On Apple, link the Swift MLX host as build/rcli (the product CLI)" ON)
+if(APPLE AND RCLI_APPLE_MLX_HOST)
+    if(NOT RCLI_SDK_ROOT)
+        message(FATAL_ERROR "RCLI_SDK_ROOT is empty; cannot build the MLX host")
+    endif()
+    add_custom_target(rcli-mlx ALL
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "RCLI_SDK_KIT=${RCLI_SDK_ROOT}"
+            bash "${CMAKE_SOURCE_DIR}/scripts/build-mlx.sh" "${CMAKE_BINARY_DIR}"
+        DEPENDS rcli
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Swift MLX host → ${CMAKE_BINARY_DIR}/rcli"
+        VERBATIM)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

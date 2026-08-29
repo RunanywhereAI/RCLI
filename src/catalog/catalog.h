@@ -1,88 +1,70 @@
+/**
+ * @file catalog.h
+ * @brief Built-in model catalog — the CLI's curated equivalent of the example
+ *        apps' ModelCatalog (iOS ModelCatalogBootstrap.swift is the canonical
+ *        reference; ids/URLs are copied verbatim from the app catalogs and the
+ *        commons test tooling).
+ *
+ * Entries use the proto-generated enums (structured-types rule) and register
+ * through the same single-call commons entry points the SDKs use:
+ * rac_register_model_from_url_proto / rac_register_multi_file_model_proto.
+ * Registration is idempotent per process (the registry is in-memory; apps
+ * re-register their catalogs on every launch the same way).
+ */
+
 #ifndef RCLI_CATALOG_CATALOG_H
 #define RCLI_CATALOG_CATALOG_H
 
+#include <cstddef>
 #include <cstdint>
-#include <span>
 #include <string>
-#include <string_view>
 #include <vector>
+
+#include "model_types.pb.h"
+#include "rac/core/rac_types.h"
 
 namespace rcli::catalog {
 
-/// The engine that runs the model, which is what decides whether it can run on
-/// this machine at all — MLX and NeuRT are Apple Silicon only.
-enum class Backend { LlamaCpp, Mlx, NeuRT, Onnx, Sherpa };
-
-/// The SDK's own model category, one to one.
-///
-/// An earlier version of this collapsed these into a coarser set for display
-/// and then used that set to fill ModelInfo.category. VAD and TTS both became
-/// "voice", so installing silero-vad asked the lifecycle to load a VAD graph as
-/// a TTS voice and it failed. Display grouping and routing are different jobs;
-/// this enum does routing, and Label() does the display.
-enum class Category {
-    Language,
-    Multimodal,
-    SpeechRecognition,
-    SpeechSynthesis,
-    VoiceActivityDetection,
-    SpeakerDiarization,
-    SemanticSegmentation,
-    Embedding,
-    ImageGeneration,
+struct CatalogFile {
+  const char *url;
+  const char *filename;
+  bool required;
+  int64_t size_bytes = 0;
+  const char *checksum_sha256 = nullptr;
 };
 
-/// The on-disk shape, which decides how a model is fetched.
-enum class Format { Gguf, Onnx, Safetensors, Mlpackage, Unspecified };
-
-/// One artifact of a multi-file model: an MLX weight directory, a Sherpa
-/// bundle, a GGUF paired with its mmproj.
-struct File {
-    std::string_view url;
-    std::string_view filename;
-    bool required;
-    /// 0 when the catalog does not state one.
-    std::int64_t bytes;
+struct CatalogEntry {
+  const char *id;
+  const char *alias; // short name accepted by `pull/run/...` (nullptr = none)
+  const char *name;
+  runanywhere::v1::ModelCategory category;
+  runanywhere::v1::InferenceFramework framework;
+  runanywhere::v1::ModelFormat format;
+  const char *url; // single-file / archive primary (nullptr → multi-file)
+  const CatalogFile *files; // multi-file artifacts (VLM pairs, embeddings)
+  size_t file_count;
+  int64_t download_size_bytes; // approximate, for display/planning
+  int32_t context_length;      // 0 = unknown/not applicable
+  bool supports_thinking;
+  int64_t memory_required_bytes = 0; // 0 = unknown/not applicable
+  const char *cua_profile = ""; // Computer-Use-Agent profile id ("" = none)
 };
 
-struct Model {
-    std::string_view id;
-    /// Short name accepted anywhere the id is. Empty when there isn't one.
-    std::string_view alias;
-    std::string_view name;
-    Backend backend;
-    Category category;
-    std::int64_t bytes;
-    /// Empty for a multi-file model; `files` carries the manifest instead.
-    std::string_view url;
-    Format format;
-    /// 0 when the catalog does not state one.
-    int context_length;
-    /// The model wraps reasoning in think tags. Commons needs this on the
-    /// registry entry to route the reasoning channel instead of guessing, and
-    /// guessing is what leaks a bare `</think>` into the answer.
-    bool thinks;
-    /// Empty for a single-file model, which uses `url`.
-    std::span<const File> files;
-};
+/** All built-in entries. */
+const CatalogEntry *all(size_t *count);
 
-/// True when this entry can be downloaded with what the snapshot knows.
-bool Installable(const Model& model);
+/** Exact id or alias lookup (nullptr when unknown). */
+const CatalogEntry *find(const std::string &id_or_alias);
 
-std::span<const Model> All();
+/** Closest-match candidates for error messages (substring match, ≤ max). */
+std::vector<std::string> suggestions(const std::string &input, size_t max);
 
-std::string_view Label(Backend backend);
-std::string_view Label(Category category);
-std::string_view Label(Format format);
+/**
+ * Register every entry with the global model registry. Logs (does not fail
+ * on) individual rejections so one bad entry can't take the CLI down.
+ */
+rac_result_t register_all();
 
-/// "639 MB", "2.5 GB". Sizes come from the catalog and are exact artifact byte
-/// counts, so the rounding here is the only approximation.
-std::string HumanSize(std::int64_t bytes);
+} // namespace rcli::catalog
 
-/// Case-insensitive substring match over id, alias and name. An empty query
-/// matches everything, which is what an empty search box should do.
-std::vector<const Model*> Search(std::string_view query);
-
-}  // namespace rcli::catalog
-
-#endif  // RCLI_CATALOG_CATALOG_H
+#endif // RCLI_CATALOG_CATALOG_H

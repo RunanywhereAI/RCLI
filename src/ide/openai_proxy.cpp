@@ -12,7 +12,7 @@
 
 #include "account/console.h"
 #include "account/credentials.h"
-#include "cli/output.h"
+#include "io/output.h"
 
 namespace rcli::ide {
 namespace {
@@ -368,7 +368,7 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
 
     auto runtime = std::make_unique<Runtime>();
     if (!SplitBaseURL(endpoint.base_url, &runtime->origin, &runtime->prefix)) {
-        out::Error("cannot make sense of the endpoint " + endpoint.base_url);
+        out::error_line("cannot make sense of the endpoint " + endpoint.base_url);
         return false;
     }
     runtime->api_key = endpoint.api_key;
@@ -427,7 +427,7 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
     if (!raw->server.bind_to_port("127.0.0.1", port)) {
         bound = raw->server.bind_to_any_port("127.0.0.1");
         if (bound <= 0) {
-            out::Error("could not find a port to serve " + model + " on");
+            out::error_line("could not find a port to serve " + model + " on");
             return false;
         }
     }

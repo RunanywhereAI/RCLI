@@ -22,19 +22,19 @@ using rcli_socklen_t = int;
 using rcli_socklen_t = socklen_t;
 #endif
 
+#if defined(RCLI_HAS_SERVER)
 #include "rac/server/rac_server.h"
+#endif
 
 #include "account/credentials.h"
-#include "cli/commands.h"
-#include "cli/output.h"
-#include "sdk/llm.h"
-#include "sdk/session.h"
-#include "settings/settings.h"
+#include "commands/commands.h"
+#include "io/output.h"
+#include "bootstrap.h"
+#include "harness/local_models.h"
 
 namespace rcli::harness {
 namespace {
 
-using out::Ink;
 
 /// A port nothing is listening on, found by letting the OS pick one and giving
 /// it straight back. There is a race between closing and the server binding,
@@ -156,7 +156,7 @@ int Spawn(const std::string& tool, const std::vector<std::string>& args) {
 #if defined(_WIN32)
     const intptr_t rc = _spawnvp(_P_WAIT, tool.c_str(), argv.data());
     if (rc < 0) {
-        out::Error(tool + " is not on PATH");
+        out::error_line(tool + " is not on PATH");
         return 127;
     }
     return static_cast<int>(rc);
@@ -165,7 +165,7 @@ int Spawn(const std::string& tool, const std::vector<std::string>& args) {
     // replacing the image would take it down with us before the tool ran.
     const pid_t child = fork();
     if (child < 0) {
-        out::Error("could not start " + tool);
+        out::error_line("could not start " + tool);
         return 1;
     }
     if (child == 0) {
@@ -181,7 +181,7 @@ int Spawn(const std::string& tool, const std::vector<std::string>& args) {
         if (errno == EINTR) {
             continue;
         }
-        out::Error("lost track of " + tool);
+        out::error_line("lost track of " + tool);
         return 1;
     }
     if (WIFEXITED(status)) {
@@ -197,7 +197,11 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
     if (endpoint == nullptr || model.empty()) {
         return false;
     }
-    if (!rcli::cli::Start()) {
+    // The kit consumer brings the SDK up through bootstrap rather than the
+    // CLI's own lazy Start(), and bootstrap is also what resolves the storage
+    // home the model walk below needs.
+    Bootstrapped env;
+    if (bootstrap(GlobalOptions{}, &env) != RAC_SUCCESS) {
         return false;
     }
 
@@ -205,10 +209,14 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
     std::string api_key;
     bool serving = false;
 
-    const sdk::LocalModel* local = nullptr;
-    const std::vector<sdk::LocalModel> installed = sdk::LocalModels();
-    for (const sdk::LocalModel& candidate : installed) {
-        if (candidate.id == model && candidate.complete) {
+    const LocalModel* local = nullptr;
+    const std::vector<LocalModel> installed = LocalModels(env.home);
+    for (const LocalModel& candidate : installed) {
+        // Completeness used to be checked against the catalog's file list.
+        // The walk cannot do that, and does not need to: it only yields a
+        // directory that already holds weights or a download manifest, and the
+        // load below is what actually decides whether the model opens.
+        if (candidate.id == model) {
             local = &candidate;
             break;
         }
@@ -221,40 +229,53 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
         // recognises, so it lands on llama.cpp and fails to load. Saying so
         // beats starting a server that answers every request with an error.
         if (local->framework != "LlamaCpp") {
-            out::Error(model + " runs on " + local->framework +
+            out::error_line(model + " runs on " + local->framework +
                        ", and the local server can only serve LlamaCpp models today");
-            out::Status("use a GGUF model here, or point at an upstream one");
+            out::status_line("use a GGUF model here, or point at an upstream one");
             return false;
         }
         const int port = FreePort(preferred_port);
         if (port == 0) {
-            out::Error("could not find a free port for the local server");
+            out::error_line("could not find a free port for the local server");
             return false;
         }
+#if !defined(RCLI_HAS_SERVER)
+        // This kit was built without the OpenAI-compatible server, so there is
+        // nothing here that can serve a file on disk. An upstream model still
+        // works, and saying which is the case beats starting nothing and
+        // reporting success.
+        out::error_line(model +
+                        " is on this machine, but this build has no local server to serve it");
+        out::status_line("point at an upstream model instead, or use a build with the server");
+        return false;
+#else
         rac_server_config_t config = RAC_SERVER_CONFIG_DEFAULT;
         config.host = "127.0.0.1";
         config.port = static_cast<uint16_t>(port);
         const std::string path = local->path.empty() ? local->dir : local->path;
         config.model_path = path.c_str();
         config.model_id = model.c_str();
-        config.context_size = settings::ContextLength() > 0 ? settings::ContextLength() : 8192;
-        out::Status("serving " + model + " on 127.0.0.1:" + std::to_string(port));
+        // The per-run context setting went with the old CLI; the server default
+        // it fell back to is what every run used in practice anyway.
+        config.context_size = 8192;
+        out::status_line("serving " + model + " on 127.0.0.1:" + std::to_string(port));
         if (rac_server_start(&config) != RAC_SUCCESS) {
-            out::Error("the local server would not start for " + model);
+            out::error_line("the local server would not start for " + model);
             return false;
         }
         serving = true;
         base_url = "http://127.0.0.1:" + std::to_string(port) + "/v1";
+#endif  // RCLI_HAS_SERVER
     } else {
         const account::Credentials credentials = account::Load();
         if (!credentials.signed_in()) {
-            out::Error(model + " is not on this machine, and you are not signed in");
-            out::Status("run `rcli login`, or `rcli pull " + model + "` to run it here");
+            out::error_line(model + " is not on this machine, and you are not signed in");
+            out::status_line("run `rcli login`, or `rcli pull " + model + "` to run it here");
             return false;
         }
         base_url = credentials.console_url + "/v1";
         api_key = credentials.access_token;
-        out::Status("using " + model + " as " + credentials.email);
+        out::status_line("using " + model + " as " + credentials.email);
     }
 
     endpoint->base_url = base_url;
@@ -265,7 +286,9 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
 
 void Release(const Endpoint& endpoint) {
     if (endpoint.serving) {
+#if defined(RCLI_HAS_SERVER)
         rac_server_stop();
+#endif
     }
 }
 

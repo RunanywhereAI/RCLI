@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "cli/output.h"
+#include "io/output.h"
 #include "harness/harness.h"
 
 #include <nlohmann/json.hpp>
@@ -265,7 +265,7 @@ void DropSecret() {}
 /// configuration directory on the way, which a never-launched IDE has not.
 bool InstallPlugin(const Product& product, const std::string& bundle, std::string* error) {
     const std::string launcher = bundle + "/Contents/MacOS/" + product.launcher;
-    out::Status("installing JetBrains AI Assistant; this happens once and takes a minute");
+    out::status_line("installing JetBrains AI Assistant; this happens once and takes a minute");
     if (harness::Launch(launcher, {}, {"installPlugins", kPluginID}) != 0) {
         *error = "could not install AI Assistant into " + std::string(product.id);
         return false;

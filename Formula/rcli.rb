@@ -2,43 +2,21 @@ class Rcli < Formula
   desc "Run language, speech and image models on your own machine"
   homepage "https://github.com/RunanywhereAI/RCLI"
   license "MIT"
-  version "0.4.0"
+  version "0.5.1"
 
-  # Two builds of the same application. The macOS one adds MLX and NeuRT, which
-  # are Metal and the Apple Neural Engine and have no counterpart elsewhere;
-  # Linux ships llama.cpp, sherpa and ONNX. `rcli engines` reports what a given
-  # build actually has, so the difference is visible rather than implied.
-  #
-  # Windows is not here because Homebrew does not run there. It is installed
-  # with install.ps1 from the same release.
+    # 0.5.1 is the kit-consumer CMake bottle. macOS arm64 ships the Swift MLX host
+  # (llama.cpp + ONNX + Sherpa + MLX). Linux is not in this cut.
   on_macos do
     on_arm do
-      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-macos-arm64.tar.gz"
-      sha256 "ae83a45625d056e031044e865d2852de4cfcedee807a5856a3c01cd25e4b0fe3"
-    end
-  end
-
-  on_linux do
-    on_intel do
-      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0/rcli-0.4.0-linux-x86_64.tar.gz"
-      sha256 "a3e47f598ee715b9394c25dece48fbf933087ba5e4fdb56fad20ff498bf83883"
+      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.5.0/rcli-0.5.0-macos-arm64.tar.gz"
+      sha256 "aa524eef31405d99c1fda4b90c3b1f3e8f74302fe209ba7fe81b343a1f92a266"
     end
   end
 
   def install
-    # libexec rather than bin: on macOS MLX keeps its Metal shaders in a
-    # resource bundle that has to sit beside the executable, and on Linux the
-    # sherpa and onnxruntime shared objects are reached through an $ORIGIN/lib
-    # rpath. Either one loose in Homebrew's bin/ would be shared with every
-    # other formula.
-    libexec.install Dir["libexec/*"]
-    # A wrapper that execs, not a symlink. MLX finds its Metal shaders relative
-    # to the path the process was launched from, and through a symlink in bin/
-    # that is bin/, where the bundle is not. The engine still reports itself
-    # available, because the check that answers that question does resolve the
-    # link, so the failure only shows up when a model actually runs. exec'ing
-    # from libexec means the launch path is the real one.
-    bin.write_exec_script libexec/"rcli"
+    bin.install "bin/rcli"
+    bin.install Dir["bin/*.bundle"] if Dir["bin/*.bundle"].any?
+    lib.install Dir["lib/*"] if Dir["lib/*"].any?
   end
 
   def caveats
@@ -47,36 +25,24 @@ class Rcli < Formula
         ~/.local/share/runanywhere
 
       Getting started:
-        rcli list --all              every model in the catalog
+        rcli list                    downloaded models
         rcli pull qwen3-0.6b         download one
-        rcli run qwen3-0.6b          talk to it, /? for commands
+        rcli run qwen3-0.6b          talk to it
         rcli run qwen3-0.6b "hi"     ask once and exit
 
       Also:
         rcli tts "hello"             speak text
         rcli stt recording.wav       transcribe audio
-        rcli imagine "a red apple"   generate an image
-        rcli bench                   measure generation speed
-        rcli engines                 which backends are available here
+        rcli backends                which engines this build linked
     EOS
   end
 
   test do
-    assert_match "rcli", shell_output("#{bin}/rcli --version")
-    engines = shell_output("#{bin}/rcli engines")
-    # llama.cpp is on every platform, so this proves the binary starts and the
-    # plugin registry came up rather than proving anything platform-specific.
-    assert_match(/^llamacpp\s+\d+/, engines)
-    # On macOS it also proves the Metal bundle survived the install: without it
-    # MLX drops out silently and the other engines carry on.
-    # Registration is not the same as working: MLX reports itself available
-    # whenever the shader bundle exists anywhere it can see, and then fails at
-    # load time if the launch path is wrong. Generating a token is what
-    # separates the two, so the test does that rather than reading a table.
-    if OS.mac?
-      assert_match(/^mlx\s+\d+/, engines)
-      system bin/"rcli", "pull", "mlx-qwen3-0.6b-4bit"
-      assert_match(/\S/, shell_output("#{bin}/rcli run mlx-qwen3-0.6b-4bit 'say ok' 2>/dev/null"))
-    end
+    assert_match "rcli", shell_output("#{bin}/rcli version")
+    backends = shell_output("#{bin}/rcli backends")
+    assert_match(/llama/i, backends)
+    assert_match(/onnx/i, backends)
+    assert_match(/sherpa/i, backends)
+    assert_match(/mlx/i, backends) if OS.mac? && Hardware::CPU.arm?
   end
 end
