@@ -57,9 +57,6 @@ set(RCLI_SOURCES
     src/desktop/claude_profile.cpp
     src/harness/harness.cpp
     src/harness/local_models.cpp
-    # cpp-httplib 0.46 is a split build, so the vendored header needs its
-    # translation unit compiled in rather than being header-only.
-    third_party/httplib/httplib.cpp
     src/ide/jetbrains_profile.cpp
     src/ide/openai_proxy.cpp
     src/commands/engine_options.cpp
@@ -96,16 +93,32 @@ target_include_directories(rcli_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CLI11"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/linenoise"
-    # Single-header, vendored rather than fetched. Both used to arrive from the
-    # SDK's own source build; a kit consumer never configures that build, so
-    # naming them here is what keeps the Anthropic translator and the JetBrains
-    # proxy compiling with no network step in CI.
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann"
 )
+
+# The Anthropic translator and the JetBrains proxy need an HTTP client and a
+# JSON reader. Both used to arrive from the SDK's own source build; a kit
+# consumer never configures that build, so they are fetched here.
+#
+# Fetched rather than vendored on purpose. Checking cpp-httplib in would drop
+# thirty thousand lines of somebody else's code into this repo, where the
+# security scanner reads it as ours and flags the http:// URLs an HTTP client
+# is obliged to construct.
+include(FetchContent)
+set(HTTPLIB_REQUIRE_OPENSSL OFF CACHE BOOL "" FORCE)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(cpp_httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.46.1
+    GIT_SHALLOW TRUE)
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(cpp_httplib nlohmann_json)
 
 find_package(Threads REQUIRED)
 target_link_libraries(rcli_core PUBLIC rac_commons Threads::Threads)
+target_link_libraries(rcli_core PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
 target_compile_definitions(rcli_core PUBLIC
     RCLI_VERSION="${PROJECT_VERSION}"
     RCLI_PINNED_SDK_VERSION="${RCLI_PINNED_SDK_VERSION}"
