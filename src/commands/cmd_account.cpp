@@ -235,8 +235,16 @@ int WhoAmI(const GlobalOptions& options) {
     out::result_line(line);
     std::snprintf(line, sizeof(line), "%-14s %s", "plan", identity.plan.c_str());
     out::result_line(line);
-    std::snprintf(line, sizeof(line), "%-14s %ld of %ld", "tokens", identity.tokens_this_month,
-                  identity.monthly_token_limit);
+    // A limit of zero means there is no token cap — during the beta, spend is
+    // bounded by credit rather than by a token count. Printing "419 of 0" reads
+    // as an account that is already over its allowance.
+    if (identity.monthly_token_limit > 0) {
+        std::snprintf(line, sizeof(line), "%-14s %ld of %ld", "tokens",
+                      identity.tokens_this_month, identity.monthly_token_limit);
+    } else {
+        std::snprintf(line, sizeof(line), "%-14s %ld this month", "tokens",
+                      identity.tokens_this_month);
+    }
     out::result_line(line);
     std::snprintf(line, sizeof(line), "%-14s %s", "console", credentials.console_url.c_str());
     out::result_line(line);
