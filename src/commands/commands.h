@@ -60,6 +60,8 @@ void register_bench(CLI::App& app, GlobalOptions& options);
 void register_auth(CLI::App& app, GlobalOptions& options);
 // Browser-approved cloud session. Separate from SDK/device `auth` credentials.
 void register_account(CLI::App& app, GlobalOptions& options);
+// Explicit hosted coding session. Does not bootstrap the local SDK or write tool config.
+void register_opencode(CLI::App& app, GlobalOptions& options);
 void register_telemetry(CLI::App& app, GlobalOptions& options);
 
 /**

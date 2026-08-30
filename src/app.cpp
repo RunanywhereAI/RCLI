@@ -71,6 +71,7 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     commands::register_version(app, options);
     commands::register_auth(app, options);
     commands::register_account(app, options);
+    commands::register_opencode(app, options);
     commands::register_telemetry(app, options);
 }
 

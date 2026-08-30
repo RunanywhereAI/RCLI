@@ -26,6 +26,19 @@ console can be selected explicitly with
 `RCLI_CONSOLE_URL=http://localhost:<port>` or `--console-url`; non-loopback HTTP
 origins are rejected.
 
+With OpenCode installed, start an explicitly hosted coding session with a
+console model id:
+
+```bash
+rcli opencode --cloud --model <console-model-id>
+```
+
+Pass OpenCode's own arguments after `--`, for example
+`rcli opencode --cloud --model <console-model-id> -- run`. RCLI supplies an
+OpenAI-compatible `<console-origin>/v1` provider through
+`OPENCODE_CONFIG_CONTENT` only while OpenCode runs. It never edits project or
+user tool configuration and restores an existing environment value afterward.
+
 The cloud session is separate from `rcli auth`, which configures the on-device
 SDK/control-plane connection. Cloud login does not require
 `RUNANYWHERE_API_KEY`. On macOS and Linux the session file is stored under a

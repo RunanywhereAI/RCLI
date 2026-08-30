@@ -26,6 +26,7 @@ set(RCLI_SOURCES
     src/commands/cmd_info.cpp
     src/commands/cmd_auth.cpp
     src/commands/cmd_account.cpp
+    src/commands/cmd_opencode.cpp
     src/commands/cmd_backends.cpp
     src/commands/cmd_list.cpp
     src/commands/cmd_lora.cpp
@@ -50,6 +51,7 @@ set(RCLI_SOURCES
     src/commands/cmd_bench.cpp
     src/account/console.cpp
     src/account/credentials.cpp
+    src/harness/opencode.cpp
     src/commands/engine_options.cpp
     src/commands/model_setup.cpp
     src/config/cli_paths.cpp
