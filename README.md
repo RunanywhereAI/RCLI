@@ -37,6 +37,16 @@ Then hand a hosted model to a coding session:
 rcli opencode -m gemma-4
 ```
 
+For the Open Frontier hosted path, make the choice explicit and pass any
+OpenCode arguments after `--`:
+
+```bash
+rcli opencode --cloud --model <console-model-id> -- --agent build
+```
+
+`--cloud` never falls back to a local model. The existing `rcli opencode -m`
+form remains available for the parent PR's local-or-upstream harness flow.
+
 If the model is on this machine, rcli serves it locally. If it is not, the
 request goes to the console you are signed in to, is checked against your
 balance before it runs, and is metered.
