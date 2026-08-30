@@ -9,6 +9,38 @@ rcli run qwen3
 
 Chat, vision, speech, and embeddings — all local. Nothing leaves the device.
 
+## Signing in
+
+Models you have pulled run on this machine and need no account. To use a hosted
+model instead, sign in to a RunAnywhere console:
+
+```bash
+rcli login          # opens a browser; approve it there
+rcli whoami         # who you are, and what you have used this month
+rcli logout
+```
+
+The terminal never asks for a password. It shows a code, you approve it in the
+browser, and it collects an API key with your credit behind it. That key appears
+on the console's Cloud keys page and can be revoked there at any time.
+
+Against a console running on your own machine:
+
+```bash
+export RCLI_CONSOLE_URL=http://localhost:8002
+rcli login
+```
+
+Then hand a hosted model to a coding session:
+
+```bash
+rcli opencode -m gemma-4
+```
+
+If the model is on this machine, rcli serves it locally. If it is not, the
+request goes to the console you are signed in to, is checked against your
+balance before it runs, and is metered.
+
 ## Install
 
 ### macOS (Apple Silicon)
@@ -22,6 +54,31 @@ or
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | sh
 ```
+
+### From source
+
+Needs a built SDK kit, not SDK source:
+
+```bash
+cmake -B build -DRCLI_SDK_KIT=<sdks>/dist/cpp-desktop-macos-arm64
+export RCLI_SDK_SWIFT_PATH=<sdks>          # for the MLX backend on Apple
+cmake --build build -j8
+```
+
+`build/rcli` is the full binary. `build/rcli-cxx` is the same CLI without MLX,
+and is what you get if `RCLI_SDK_SWIFT_PATH` is unset.
+
+MLX loads its Metal shaders from `mlx-swift_Cmlx.bundle` next to the executable,
+so install the pair together:
+
+```bash
+mkdir -p ~/.local/lib/rcli
+cp -R build/mlx-swift_Cmlx.bundle build/rcli ~/.local/lib/rcli/
+printf '#!/bin/sh\nexec "$HOME/.local/lib/rcli/rcli" "$@"\n' > ~/.local/bin/rcli
+chmod +x ~/.local/bin/rcli
+```
+
+Copy the binary on its own and MLX will not register.
 
 ### Windows (x64)
 
