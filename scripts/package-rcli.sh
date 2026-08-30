@@ -5,6 +5,8 @@
 #
 #   platform-tag: macos-arm64 | linux-x86_64
 #   version:      $RCLI_VERSION, else project(rcli VERSION …)
+#   macOS signing: $RCLI_CODESIGN_IDENTITY, optional $RCLI_CODESIGN_KEYCHAIN
+#                  Set $RCLI_REQUIRE_DEVELOPER_ID=1 to reject ad-hoc signing.
 #
 # Layout:
 #   rcli-<platform>/bin/rcli
@@ -95,7 +97,26 @@ case "${PLATFORM}" in
         install_name_tool -id "@rpath/$(basename "${lib}")" "${lib}" 2>/dev/null || true
       done
     fi
-    codesign --force -s - "${STAGE}/bin/rcli" 2>/dev/null || true
+    sign_identity="${RCLI_CODESIGN_IDENTITY:--}"
+    if [[ "${RCLI_REQUIRE_DEVELOPER_ID:-0}" == 1 && "${sign_identity}" == - ]]; then
+      echo "error: production packaging requires RCLI_CODESIGN_IDENTITY" >&2
+      exit 1
+    fi
+    sign_args=(--force --sign "${sign_identity}")
+    if [[ "${sign_identity}" != - ]]; then
+      sign_args+=(--options runtime --timestamp)
+    fi
+    if [[ -n "${RCLI_CODESIGN_KEYCHAIN:-}" ]]; then
+      sign_args+=(--keychain "${RCLI_CODESIGN_KEYCHAIN}")
+    fi
+    shopt -s nullglob
+    for lib in "${STAGE}/lib/"*.dylib; do
+      codesign "${sign_args[@]}" "${lib}"
+      codesign --verify --strict "${lib}"
+    done
+    shopt -u nullglob
+    codesign "${sign_args[@]}" "${STAGE}/bin/rcli"
+    codesign --verify --strict "${STAGE}/bin/rcli"
     ;;
   linux-*)
     if command -v patchelf >/dev/null; then
@@ -108,7 +129,9 @@ esac
 
 mkdir -p "${DIST}"
 rm -f "${TARBALL}" "${TARBALL}.sha256"
-tar -czf "${TARBALL}" -C "${STAGE_ROOT}" "rcli-${PLATFORM}"
+# macOS tar otherwise serializes Finder metadata as `._*` AppleDouble roots,
+# breaking the single-root archive contract and surprising non-macOS clients.
+COPYFILE_DISABLE=1 tar -czf "${TARBALL}" -C "${STAGE_ROOT}" "rcli-${PLATFORM}"
 (cd "${DIST}" && shasum -a 256 "$(basename "${TARBALL}")" > "$(basename "${TARBALL}").sha256")
 echo "Packaged ${TARBALL}"
 tar -tzf "${TARBALL}" | head -20

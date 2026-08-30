@@ -17,6 +17,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  distribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate distribution tooling
+        run: |
+          set -euo pipefail
+          python3 tests/test_release_assets.py
+          python3 -m py_compile scripts/verify-release-assets.py scripts/stamp-formula.py
+          bash -n install.sh scripts/package-rcli.sh scripts/update-tap.sh
+          ruby -c Formula/rcli.rb
+
   macos:
     # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is
     # Xcode 16.4 / Swift 6.1; macos-14 is Xcode 15 / Swift 5.10.
