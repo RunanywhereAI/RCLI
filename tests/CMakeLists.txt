@@ -7,6 +7,19 @@ target_link_libraries(test_rcli_unit PRIVATE rcli_core)
 rcli_stage_windows_runtime_dlls(test_rcli_unit)
 add_test(NAME rcli_unit_tests COMMAND test_rcli_unit --run-all)
 
+add_executable(test_rcli_account test_rcli_account.cpp)
+target_include_directories(test_rcli_account PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(test_rcli_account PRIVATE rcli_core)
+rcli_stage_windows_runtime_dlls(test_rcli_account)
+add_test(NAME rcli_account_tests COMMAND test_rcli_account --run-all)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(
+    NAME rcli_account_cli_e2e
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_account_cli.py"
+            "$<TARGET_FILE:rcli>")
+set_tests_properties(rcli_account_cli_e2e PROPERTIES TIMEOUT 20)
+
 add_executable(test_rcli_segment test_rcli_segment.cpp)
 target_include_directories(test_rcli_segment PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(test_rcli_segment PRIVATE rcli_core)

@@ -58,6 +58,8 @@ void register_backends(CLI::App& app, GlobalOptions& options);
 void register_serve(CLI::App& app, GlobalOptions& options);
 void register_bench(CLI::App& app, GlobalOptions& options);
 void register_auth(CLI::App& app, GlobalOptions& options);
+// Browser-approved cloud session. Separate from SDK/device `auth` credentials.
+void register_account(CLI::App& app, GlobalOptions& options);
 void register_telemetry(CLI::App& app, GlobalOptions& options);
 
 /**

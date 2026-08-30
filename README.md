@@ -9,6 +9,30 @@ rcli run qwen3
 
 Chat, vision, speech, and embeddings — all local. Nothing leaves the device.
 
+## Cloud sign-in
+
+Local models need no account. To use RunAnywhere Cloud, approve the CLI in your
+browser; the terminal never asks for a password or an API key:
+
+```bash
+rcli login
+rcli whoami
+rcli logout
+```
+
+`rcli login` opens `https://console.runanywhere.ai`, prints the request code and
+waits for approval. `--no-browser` prints the URL without opening it. A local
+console can be selected explicitly with
+`RCLI_CONSOLE_URL=http://localhost:<port>` or `--console-url`; non-loopback HTTP
+origins are rejected.
+
+The cloud session is separate from `rcli auth`, which configures the on-device
+SDK/control-plane connection. Cloud login does not require
+`RUNANYWHERE_API_KEY`. On macOS and Linux the session file is stored under a
+mode-0700 configuration directory with mode 0600; on Windows it is encrypted
+with DPAPI. `rcli logout` asks the console to revoke the session before removing
+the local copy.
+
 ## Install
 
 ### macOS (Apple Silicon)

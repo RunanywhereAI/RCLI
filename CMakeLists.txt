@@ -25,6 +25,7 @@ set(RCLI_SOURCES
     src/commands/cmd_version.cpp
     src/commands/cmd_info.cpp
     src/commands/cmd_auth.cpp
+    src/commands/cmd_account.cpp
     src/commands/cmd_backends.cpp
     src/commands/cmd_list.cpp
     src/commands/cmd_lora.cpp
@@ -47,6 +48,8 @@ set(RCLI_SOURCES
     src/commands/cmd_voice.cpp
     src/commands/cmd_rag.cpp
     src/commands/cmd_bench.cpp
+    src/account/console.cpp
+    src/account/credentials.cpp
     src/commands/engine_options.cpp
     src/commands/model_setup.cpp
     src/config/cli_paths.cpp
@@ -79,12 +82,20 @@ endif()
 target_include_directories(rcli_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CLI11"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/linenoise"
 )
 
 find_package(Threads REQUIRED)
 target_link_libraries(rcli_core PUBLIC rac_commons Threads::Threads)
+# Cloud account JSON uses vendored nlohmann/json v3.11.3 (MIT) so a staged kit
+# remains sufficient for a reproducible, offline RCLI build.
+target_link_libraries(rcli_core PRIVATE CURL::libcurl)
+if(WIN32)
+    # DPAPI protects the cloud session; Winsock supplies the device hostname.
+    target_link_libraries(rcli_core PRIVATE crypt32 ws2_32)
+endif()
 target_compile_definitions(rcli_core PUBLIC
     RCLI_VERSION="${PROJECT_VERSION}"
     RCLI_PINNED_SDK_VERSION="${RCLI_PINNED_SDK_VERSION}"
