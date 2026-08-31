@@ -297,8 +297,13 @@ bool ReadDocument(const std::string& path, std::string* document, bool* exists,
         return false;
     }
     *exists = true;
-    const std::vector<unsigned char> protected_bytes(std::istreambuf_iterator<char>(file),
-                                                     std::istreambuf_iterator<char>());
+    // Named iterators on purpose: passing the two temporaries directly is a most
+    // vexing parse, which MSVC resolves as a function declaration and then fails
+    // to convert at the call below. Clang and GCC accept the same line, so this
+    // only ever broke on Windows.
+    std::istreambuf_iterator<char> first(file);
+    const std::istreambuf_iterator<char> last;
+    const std::vector<unsigned char> protected_bytes(first, last);
     return Unprotect(protected_bytes, document, error);
 }
 
