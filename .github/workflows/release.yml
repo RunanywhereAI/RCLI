@@ -65,6 +65,59 @@ jobs:
           name: rcli-macos-arm64
           path: dist/rcli-*-macos-arm64.tar.gz*
 
+  windows-arm64:
+    # install.ps1 already prefers rcli-<ver>-windows-arm64.zip and warns when it
+    # is absent; until this job existed the preferred path could never be taken
+    # and every Windows-on-ARM user silently got the emulated x64 build.
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - uses: seanmiddleditch/gha-setup-ninja@master
+      - name: Download C++ desktop kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/fetch-kit.sh windows-arm64 "${GITHUB_WORKSPACE}/kit"
+      - name: Configure + build
+        shell: bash
+        run: |
+          prefix="${GITHUB_WORKSPACE}/kit"
+          if command -v cygpath >/dev/null 2>&1; then
+            prefix="$(cygpath -m "$prefix")"
+          fi
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build --config Release
+      - name: Product e2e
+        shell: bash
+        env:
+          RCLI_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/rcli.exe
+      - name: Package
+        shell: pwsh
+        run: |
+          $ver = $env:RCLI_VERSION.TrimStart('v')
+          $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
+          $env:RCLI_SDK_KIT = $kit
+          & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit -Platform windows-arm64
+          python scripts/verify-release-assets.py `
+            "dist/rcli-$ver-windows-arm64.zip" `
+            "dist/rcli-$ver-windows-arm64.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rcli-windows-arm64
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+
   windows:
     runs-on: windows-2022
     timeout-minutes: 60
@@ -116,7 +169,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [macos, windows]
+    needs: [macos, windows, windows-arm64]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -136,6 +189,9 @@ jobs:
           python3 scripts/verify-release-assets.py \
             "artifacts/rcli-${VERSION}-windows-x86_64.zip" \
             "artifacts/rcli-${VERSION}-windows-x86_64.zip.sha256"
+          python3 scripts/verify-release-assets.py \
+            "artifacts/rcli-${VERSION}-windows-arm64.zip" \
+            "artifacts/rcli-${VERSION}-windows-arm64.zip.sha256"
       - name: Generate Homebrew formula update
         run: |
           set -euo pipefail

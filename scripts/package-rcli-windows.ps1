@@ -6,7 +6,14 @@ param(
     [string]$Version = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$KitDir = ""
+    [string]$KitDir = "",
+
+    # Names the archive. install.ps1 asks for rcli-<ver>-windows-arm64.zip on an
+    # ARM64 host and falls back to x86_64, so the arm64 build must use exactly
+    # that spelling or the native archive is never found.
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("windows-x86_64", "windows-arm64")]
+    [string]$Platform = "windows-x86_64"
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,7 +50,6 @@ if ([string]::IsNullOrWhiteSpace($KitDir)) {
     $KitDir = $env:CMAKE_PREFIX_PATH
 }
 
-$Platform = "windows-x86_64"
 $DistDir = Join-Path $CliRoot "dist"
 $StageRoot = Join-Path $DistDir "stage"
 $Stage = Join-Path $StageRoot "rcli-$Platform"
