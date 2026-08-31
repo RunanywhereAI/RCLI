@@ -21,6 +21,7 @@ void fail(int status) {
 }  // namespace
 
 void register_harness(CLI::App& app, GlobalOptions& options) {
+    static_cast<void>(options);
     // `rcli opencode <model>` rather than a flag on `run`: it hands the terminal
     // to another program, which is a different thing to do than talk to a model.
     auto model = std::make_shared<std::string>();
@@ -36,10 +37,11 @@ void register_harness(CLI::App& app, GlobalOptions& options) {
                        "use the signed-in hosted endpoint (never routes local models)");
     opencode->add_option("args", *rest, "passed through to opencode")->allow_extra_args();
     opencode->prefix_command();
-    opencode->callback([&options, model, rest, cloud] {
+    opencode->callback([model, rest, cloud] {
         if (*cloud) {
             if (model->empty()) {
-                throw CLI::RuntimeError("--cloud requires --model <console-model-id>");
+                out::error_line("--cloud requires --model <console-model-id>");
+                fail(2);
             }
             fail(harness::LaunchOpenCodeCloud(*model, *rest));
             return;

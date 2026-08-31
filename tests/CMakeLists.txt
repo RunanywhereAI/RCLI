@@ -9,13 +9,13 @@ add_test(NAME rcli_unit_tests COMMAND test_rcli_unit --run-all)
 
 add_executable(test_rcli_account test_rcli_account.cpp)
 target_include_directories(test_rcli_account PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(test_rcli_account PRIVATE rcli_core)
+target_link_libraries(test_rcli_account PRIVATE rcli_core nlohmann_json::nlohmann_json)
 rcli_stage_windows_runtime_dlls(test_rcli_account)
 add_test(NAME rcli_account_tests COMMAND test_rcli_account --run-all)
 
 add_executable(test_rcli_opencode test_rcli_opencode.cpp)
 target_include_directories(test_rcli_opencode PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(test_rcli_opencode PRIVATE rcli_core)
+target_link_libraries(test_rcli_opencode PRIVATE rcli_core nlohmann_json::nlohmann_json)
 rcli_stage_windows_runtime_dlls(test_rcli_opencode)
 add_test(NAME rcli_opencode_tests COMMAND test_rcli_opencode --run-all)
 
