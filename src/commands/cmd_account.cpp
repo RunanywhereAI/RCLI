@@ -1,36 +1,38 @@
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
+#include <memory>
 #include <string>
 #include <thread>
 
 #if defined(_WIN32)
-// gethostname is Winsock on Windows, not unistd, and Winsock needs starting
-// before it answers. src/harness does the same for its port probe.
 #include <process.h>
 #include <winsock2.h>
 #else
-#include <cerrno>
 #include <fcntl.h>
-#include <sys/wait.h>
 #include <unistd.h>
+
+#include <cerrno>
+#include <sys/wait.h>
 #endif
 
 #include "account/console.h"
 #include "account/credentials.h"
-#include "bootstrap.h"
 #include "commands/commands.h"
 #include "io/output.h"
 
 namespace rcli::commands {
 namespace {
 
-/// CLI11 callbacks return void, so a non-zero status leaves as the runtime
-/// error the app turns back into an exit code.
 void fail(int status) {
     if (status != 0) {
         throw CLI::RuntimeError(status);
     }
+}
+
+long long EpochSeconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
 }
 
 std::string Hostname() {
@@ -42,30 +44,15 @@ std::string Hostname() {
     }
 #endif
     char name[256] = {};
-    if (gethostname(name, sizeof(name) - 1) == 0 && name[0] != '\0') {
-        return name;
-    }
-    return "unknown";
-}
-
-/// The URL arrives in a console response and the console itself is whatever
-/// RCLI_CONSOLE_URL names, so it is untrusted input. It never reaches a shell:
-/// the opener is executed with an argument vector, and only after the scheme
-/// has been checked.
-bool OpensSafely(const std::string& url) {
-    return url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
+    return gethostname(name, sizeof(name) - 1) == 0 && name[0] != '\0' ? name : "unknown";
 }
 
 void OpenBrowser(const std::string& url) {
-    if (!OpensSafely(url)) {
-        out::status_line("refusing to open a URL that is not http or https");
-        return;
-    }
 #if defined(_WIN32)
     const intptr_t rc = _spawnlp(_P_NOWAIT, "rundll32", "rundll32", "url.dll,FileProtocolHandler",
                                  url.c_str(), nullptr);
     if (rc < 0) {
-        out::status_line("could not open a browser for you");
+        out::status_line("could not open a browser; use the URL printed above");
     }
 #else
 #if defined(__APPLE__)
@@ -75,7 +62,7 @@ void OpenBrowser(const std::string& url) {
 #endif
     const pid_t child = fork();
     if (child < 0) {
-        out::status_line("could not open a browser for you");
+        out::status_line("could not open a browser; use the URL printed above");
         return;
     }
     if (child == 0) {
@@ -91,61 +78,82 @@ void OpenBrowser(const std::string& url) {
         _exit(127);
     }
     int status = 0;
-    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
-    }
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
 #endif
 }
 
-/// Brings the SDK up so the console can be reached.
-///
-/// The CLI used to carry its own lazy Start(); the kit consumer brings the SDK
-/// up through bootstrap, which also resolves the control-plane connection, so
-/// the options have to reach here rather than being read from a global.
-bool Ready(const GlobalOptions& options) {
-    Bootstrapped env;
-    if (bootstrap(options, &env) == RAC_SUCCESS) {
-        return true;
+bool LoadCredentials(account::Credentials* credentials) {
+    std::string failure;
+    if (!account::Load(credentials, &failure)) {
+        out::error_line(failure);
+        return false;
     }
-    out::error_line("the SDK would not start, so the console cannot be reached");
-    return false;
+    return true;
 }
 
-int Login(const GlobalOptions& options, bool open_browser) {
-    if (!Ready(options)) {
-        return 1;
+void ApplyGrant(const account::Grant& grant, account::Credentials* credentials) {
+    credentials->access_token = grant.access_token;
+    if (!grant.refresh_token.empty()) {
+        credentials->refresh_token = grant.refresh_token;
     }
-    account::Credentials credentials = account::Load();
-    if (!account::ConsoleUrlIsSafe(credentials.console_url)) {
-        out::error_line("refusing to send credentials to " + credentials.console_url);
-        out::status_line("the console must be https, or http on loopback");
-        return 1;
+    if (!grant.email.empty()) {
+        credentials->email = grant.email;
     }
+    credentials->expires_at = EpochSeconds() + (grant.expires_in > 0 ? grant.expires_in : 3600);
+}
 
-    account::Authorization authorization;
+bool RefreshSession(const account::ConsoleClient& client, account::Credentials* credentials,
+                    std::string* error) {
+    if (credentials->refresh_token.empty()) {
+        if (error != nullptr) {
+            *error = "the cloud session cannot be refreshed; run `rcli login`";
+        }
+        return false;
+    }
+    account::Grant grant;
+    if (!client.Refresh(credentials->console_url, credentials->refresh_token, &grant, error)) {
+        return false;
+    }
+    ApplyGrant(grant, credentials);
+    return account::Save(*credentials, error);
+}
+
+int Login(const std::string& requested_console, bool open_browser) {
+    std::string console_url;
     std::string failure;
-    if (!account::BeginAuthorization(credentials.console_url, Hostname(), &authorization,
-                                     &failure)) {
+    const std::string configured =
+        requested_console.empty() ? account::DefaultConsoleUrl() : requested_console;
+    if (!account::NormalizeConsoleUrl(configured, &console_url, &failure)) {
         out::error_line(failure);
         return 1;
     }
 
-    out::status_line("approve this sign-in in your browser:");
-    out::result_line(authorization.verification_url);
+    account::ConsoleClient client;
+    account::Authorization authorization;
+    if (!client.BeginAuthorization(console_url, Hostname(), &authorization, &failure)) {
+        out::error_line(failure);
+        return 1;
+    }
+    if (!account::BrowserUrlMatchesConsole(authorization.verification_url, console_url)) {
+        out::error_line("console returned an approval URL outside its origin");
+        return 1;
+    }
+
+    out::status_line("approve this sign-in in your browser");
+    out::result_line("code  " + authorization.request_code);
+    out::result_line("url   " + authorization.verification_url);
     if (open_browser) {
         OpenBrowser(authorization.verification_url);
     }
     out::status_line("waiting for approval");
 
-    // A console that omits expires_in would otherwise put the deadline in the
-    // past, so the loop never runs and the user is told it timed out before a
-    // single poll was sent.
-    const int window = authorization.expires_in > 0 ? authorization.expires_in : 600;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(window);
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(authorization.expires_in);
     account::Grant grant;
     while (std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::seconds(authorization.interval));
-        switch (account::Poll(credentials.console_url, authorization, &grant, &failure)) {
+        switch (client.Poll(console_url, authorization, &grant, &failure)) {
             case account::PollResult::Pending:
+                std::this_thread::sleep_for(std::chrono::seconds(authorization.interval));
                 continue;
             case account::PollResult::Denied:
                 out::error_line("the request was denied in the browser");
@@ -156,99 +164,94 @@ int Login(const GlobalOptions& options, bool open_browser) {
             case account::PollResult::Failed:
                 out::error_line(failure);
                 return 1;
-            case account::PollResult::Approved:
-                credentials.email = grant.email;
-                credentials.plan = grant.plan;
-                credentials.access_token = grant.access_token;
-                credentials.refresh_token = grant.refresh_token;
+            case account::PollResult::Approved: {
+                account::Credentials credentials;
+                credentials.console_url = console_url;
+                ApplyGrant(grant, &credentials);
                 if (!account::Save(credentials, &failure)) {
                     out::error_line(failure);
                     return 1;
                 }
-                out::status_line("signed in as " + grant.email + " on the " + grant.plan + " plan");
-                out::status_line("credentials in " + account::ProfileDirectory());
+                const std::string identity =
+                    credentials.email.empty() ? "your account" : credentials.email;
+                out::status_line("signed in as " + identity);
+                out::status_line("cloud session stored in " + account::ProfileDirectory());
                 return 0;
+            }
         }
     }
     out::error_line("timed out waiting for approval");
     return 1;
 }
 
-int Logout(const GlobalOptions& options) {
-    const account::Credentials credentials = account::Load();
-    if (!credentials.signed_in()) {
+int Logout() {
+    account::Credentials credentials;
+    if (!LoadCredentials(&credentials)) {
+        return 1;
+    }
+    if (!credentials.signed_in() && credentials.refresh_token.empty()) {
         out::status_line("not signed in");
         return 0;
     }
-    std::string failure;
-    if (!account::Clear(&failure)) {
-        out::error_line(failure);
+
+    account::ConsoleClient client;
+    std::string revoke_failure;
+    const bool revoked = client.Revoke(credentials.console_url, credentials.access_token,
+                                       credentials.refresh_token, &revoke_failure);
+    std::string clear_failure;
+    if (!account::Clear(&clear_failure)) {
+        out::error_line(clear_failure);
         return 1;
     }
-    out::status_line("signed out " + credentials.email);
-    out::status_line("revoke the token in the console to end it everywhere");
+    out::status_line("signed out on this machine");
+    if (!revoked) {
+        out::error_line(revoke_failure + "; the local session was removed");
+        return 1;
+    }
+    out::status_line("cloud session revoked");
     return 0;
 }
 
-int WhoAmI(const GlobalOptions& options) {
-    if (!Ready(options)) {
+int WhoAmI() {
+    account::Credentials credentials;
+    if (!LoadCredentials(&credentials)) {
         return 1;
     }
-    account::Credentials credentials = account::Load();
     if (!credentials.signed_in()) {
         out::error_line("not signed in — run `rcli login`");
         return 1;
     }
 
-    account::Identity identity;
+    account::ConsoleClient client;
     std::string failure;
-    if (!account::WhoAmI(credentials.console_url, credentials.access_token, &identity, &failure)) {
-        // An access token lives eight hours, so a working install meets this
-        // routinely. Trading the refresh token for a new one is the normal path,
-        // not an error worth showing.
-        account::Grant grant;
-        if (credentials.refresh_token.empty() ||
-            !account::Refresh(credentials.console_url, credentials.refresh_token, &grant,
-                              &failure)) {
-            out::error_line(failure.empty() ? "the session has expired — run `rcli login`" : failure);
-            return 1;
-        }
-        credentials.access_token = grant.access_token;
-        credentials.refresh_token = grant.refresh_token;
-        credentials.email = grant.email;
-        credentials.plan = grant.plan;
-        // The console has already rotated the refresh token, so losing this
-        // write costs the session. Say so rather than failing silently on the
-        // next command.
-        if (!account::Save(credentials, &failure)) {
-            out::status_line("could not store the refreshed session: " + failure);
-        }
-        if (!account::WhoAmI(credentials.console_url, credentials.access_token, &identity,
-                             &failure)) {
+    if (credentials.access_token_expired(EpochSeconds()) &&
+        !RefreshSession(client, &credentials, &failure)) {
+        out::error_line(failure);
+        return 1;
+    }
+
+    account::Identity identity;
+    account::IdentityResult result =
+        client.WhoAmI(credentials.console_url, credentials.access_token, &identity, &failure);
+    if (result == account::IdentityResult::Unauthorized) {
+        if (!RefreshSession(client, &credentials, &failure)) {
             out::error_line(failure);
             return 1;
         }
+        result =
+            client.WhoAmI(credentials.console_url, credentials.access_token, &identity, &failure);
+    }
+    if (result != account::IdentityResult::Ok) {
+        out::error_line(failure);
+        return 1;
     }
 
     char line[220];
     std::snprintf(line, sizeof(line), "%-14s %s", "email", identity.email.c_str());
     out::result_line(line);
-    std::snprintf(line, sizeof(line), "%-14s %s", "plan", identity.plan.c_str());
-    out::result_line(line);
-    // A limit of zero means there is no token cap — during the beta, spend is
-    // bounded by credit rather than by a token count. Printing "419 of 0" reads
-    // as an account that is already over its allowance.
-    if (identity.monthly_token_limit > 0) {
-        std::snprintf(line, sizeof(line), "%-14s %ld of %ld", "tokens",
-                      identity.tokens_this_month, identity.monthly_token_limit);
-    } else {
-        std::snprintf(line, sizeof(line), "%-14s %ld this month", "tokens",
-                      identity.tokens_this_month);
-    }
+    std::snprintf(line, sizeof(line), "%-14s %s", "session", "active");
     out::result_line(line);
     std::snprintf(line, sizeof(line), "%-14s %s", "console", credentials.console_url.c_str());
-    out::result_line(line);
-    std::snprintf(line, sizeof(line), "%-14s %s", "profile", account::ProfileDirectory().c_str());
     out::result_line(line);
     return 0;
 }
@@ -256,16 +259,22 @@ int WhoAmI(const GlobalOptions& options) {
 }  // namespace
 
 void register_account(CLI::App& app, GlobalOptions& options) {
+    static_cast<void>(options);
     auto no_browser = std::make_shared<bool>(false);
+    auto console_url = std::make_shared<std::string>();
     auto* login = app.add_subcommand("login", "sign in through the RunAnywhere console");
     login->add_flag("--no-browser", *no_browser, "print the URL instead of opening it");
-    login->callback([&options, no_browser] { fail(Login(options, !*no_browser)); });
+    login
+        ->add_option("--console-url", *console_url,
+                     "console origin (default: https://console.runanywhere.ai)")
+        ->envname("RCLI_CONSOLE_URL");
+    login->callback([no_browser, console_url] { fail(Login(*console_url, !*no_browser)); });
 
-    auto* logout = app.add_subcommand("logout", "forget the credentials on this machine");
-    logout->callback([&options] { fail(Logout(options)); });
+    auto* logout = app.add_subcommand("logout", "revoke and remove the cloud session");
+    logout->callback([] { fail(Logout()); });
 
-    auto* whoami = app.add_subcommand("whoami", "who is signed in, and how much they have used");
-    whoami->callback([&options] { fail(WhoAmI(options)); });
+    auto* whoami = app.add_subcommand("whoami", "show the signed-in cloud account");
+    whoami->callback([] { fail(WhoAmI()); });
 }
 
 }  // namespace rcli::commands

@@ -56,6 +56,7 @@ set(RCLI_SOURCES
     src/anthropic/translate.cpp
     src/desktop/claude_profile.cpp
     src/harness/harness.cpp
+    src/harness/opencode.cpp
     src/harness/local_models.cpp
     src/ide/jetbrains_profile.cpp
     src/ide/openai_proxy.cpp
@@ -91,6 +92,7 @@ endif()
 target_include_directories(rcli_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CLI11"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/linenoise"
 )
@@ -117,8 +119,9 @@ FetchContent_Declare(nlohmann_json
 FetchContent_MakeAvailable(cpp_httplib nlohmann_json)
 
 find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
 target_link_libraries(rcli_core PUBLIC rac_commons Threads::Threads)
-target_link_libraries(rcli_core PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+target_link_libraries(rcli_core PRIVATE CURL::libcurl httplib::httplib nlohmann_json::nlohmann_json)
 target_compile_definitions(rcli_core PUBLIC
     RCLI_VERSION="${PROJECT_VERSION}"
     RCLI_PINNED_SDK_VERSION="${RCLI_PINNED_SDK_VERSION}"
