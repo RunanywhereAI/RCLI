@@ -224,11 +224,29 @@ TestResult test_state_dir() {
   TestResult result;
   result.test_name = "state_dir";
 
-  EnvVar xdg("XDG_STATE_HOME", "/xdg-state");
-  if (rcli::paths::state_dir() != "/xdg-state/runanywhere") {
-    result.details = "XDG_STATE_HOME not honored";
-    return result;
+  {
+    EnvVar xdg("XDG_STATE_HOME", "/xdg-state");
+    if (rcli::paths::state_dir() != "/xdg-state/runanywhere") {
+      result.details = "XDG_STATE_HOME not honored";
+      return result;
+    }
   }
+#if defined(_WIN32)
+  {
+    // A real LOCALAPPDATA is backslash-separated while the suffix appended to
+    // it is not, so the join must not leave mixed separators behind. Note the
+    // backslashes here: the resolve_home case above passes a '/'-style value,
+    // which is why this never surfaced.
+    EnvVar xdg("XDG_STATE_HOME", nullptr);
+    EnvVar home("HOME", nullptr);
+    EnvVar local("LOCALAPPDATA", "C:\\rcli-local");
+    const std::string state = rcli::paths::state_dir();
+    if (state != "C:/rcli-local/RunAnywhere/state") {
+      result.details = "expected C:/rcli-local/RunAnywhere/state, got " + state;
+      return result;
+    }
+  }
+#endif
   result.passed = true;
   return result;
 }
