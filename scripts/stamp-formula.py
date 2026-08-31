@@ -6,9 +6,9 @@
     stamp-formula.py 0.4.0 macos-arm64=abc... linux-x86_64=def...
 
 Homebrew reads a tap's formula from the default branch rather than from the tag,
-so the formula on main has to name the archives a release just published. This
-was a manual step and the sha256 went stale as a matter of course; the release
-workflow calls this instead.
+so a release alone cannot update what users install. The release workflow calls
+this to produce a reviewed formula artifact; applying that artifact to the
+canonical tap remains an explicit post-release step.
 
 The formula carries one url/sha256 pair per platform inside on_macos/on_linux
 blocks. Each pair is found by the platform slug in its url, and the sha256

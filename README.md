@@ -98,9 +98,9 @@ irm https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.ps1 | iex
 
 ### Linux (x86_64)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | sh
-```
+No Linux release asset is currently published. Use the source build below;
+`install.sh` intentionally fails instead of claiming that an unavailable bottle
+was installed.
 
 ## Get started
 
@@ -146,10 +146,10 @@ rcli image generate --engine neurt --prompt "a red cube" --out out.png
 
 | Backend | macOS Apple Silicon | Windows x64 | Windows ARM64 | Linux x64 |
 |---|---|---|---|---|
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | public bottle | public bottle | — | public bottle |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | public bottle | public bottle | — | source build only |
 | [MLX](https://github.com/ml-explore/mlx) (Apple GPU) | public bottle (product `rcli`, not `rcli-cxx`) | — | — | — |
-| [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | public bottle | public bottle | — | public bottle |
-| [ONNX Runtime](https://onnxruntime.ai) | public bottle | public bottle | — | public bottle |
+| [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | public bottle | public bottle | — | source build only |
+| [ONNX Runtime](https://onnxruntime.ai) | public bottle | public bottle | — | source build only |
 | NeuRT (Apple Neural Engine; Core ML is the format) | **overlay** rebuild | — | — | — |
 | QHexRT (Qualcomm Hexagon NPU) | — | — | **overlay** rebuild | — |
 
