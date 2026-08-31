@@ -49,8 +49,8 @@ enum class IdentityResult { Ok, Unauthorized, Failed };
 
 /// Console client independent of SDK/bootstrap state.
 ///
-/// The default transport uses libcurl directly. Tests inject a hermetic
-/// transport so auth contracts never need a real account or network.
+/// The default transport uses WinHTTP on Windows and libcurl elsewhere. Tests
+/// inject a hermetic transport so auth contracts never need an account or network.
 class ConsoleClient {
    public:
     explicit ConsoleClient(Transport transport = {});

@@ -1,12 +1,21 @@
 #include "account/console.h"
 
 #include <algorithm>
-#include <curl/curl.h>
+#include <array>
+#include <chrono>
+#include <cstdint>
 #include <limits>
-#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <utility>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <winhttp.h>
+#else
+#include <curl/curl.h>
+#include <mutex>
+#endif
 
 #include "account/credentials.h"
 
@@ -15,6 +24,237 @@ namespace {
 
 using Json = nlohmann::json;
 constexpr std::size_t kMaximumResponseBytes = 1024 * 1024;
+
+#if defined(_WIN32)
+
+constexpr int kConnectTimeoutMs = 10000;
+constexpr int kTotalTimeoutMs = 30000;
+
+class WinHttpHandle {
+   public:
+    explicit WinHttpHandle(HINTERNET value = nullptr) : value_(value) {}
+    ~WinHttpHandle() {
+        if (value_ != nullptr) {
+            WinHttpCloseHandle(value_);
+        }
+    }
+
+    WinHttpHandle(const WinHttpHandle&) = delete;
+    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+
+    HINTERNET get() const { return value_; }
+    explicit operator bool() const { return value_ != nullptr; }
+
+   private:
+    HINTERNET value_;
+};
+
+bool Utf8ToWide(const std::string& input, std::wstring* output) {
+    if (output == nullptr ||
+        input.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        return false;
+    }
+    if (input.empty()) {
+        output->clear();
+        return true;
+    }
+    const int input_size = static_cast<int>(input.size());
+    const int output_size =
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, input.data(), input_size, nullptr, 0);
+    if (output_size <= 0) {
+        return false;
+    }
+    output->resize(static_cast<std::size_t>(output_size));
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, input.data(), input_size,
+                               output->data(), output_size) == output_size;
+}
+
+using Deadline = std::chrono::steady_clock::time_point;
+
+int RemainingTimeout(const Deadline& deadline) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               deadline - std::chrono::steady_clock::now())
+                               .count();
+    if (remaining <= 0) {
+        return 0;
+    }
+    return static_cast<int>(std::min<std::int64_t>(remaining, std::numeric_limits<int>::max()));
+}
+
+bool SetReceiveTimeout(HINTERNET request, const Deadline& deadline, bool include_headers) {
+    const int remaining = RemainingTimeout(deadline);
+    if (remaining == 0) {
+        return false;
+    }
+    DWORD timeout = static_cast<DWORD>(remaining);
+    if (include_headers && !WinHttpSetOption(request, WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT,
+                                             &timeout, sizeof(timeout))) {
+        return false;
+    }
+    return WinHttpSetOption(request, WINHTTP_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout)) !=
+           FALSE;
+}
+
+bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::string* error) {
+    std::wstring url;
+    std::wstring method;
+    if (!Utf8ToWide(input.url, &url) || !Utf8ToWide(input.method, &method) ||
+        url.size() > std::numeric_limits<DWORD>::max()) {
+        if (error != nullptr) {
+            *error = "could not create the console HTTP request";
+        }
+        return false;
+    }
+
+    URL_COMPONENTS components{};
+    components.dwStructSize = sizeof(components);
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(url.c_str(), static_cast<DWORD>(url.size()), ICU_REJECT_USERPWD,
+                         &components) ||
+        (components.nScheme != INTERNET_SCHEME_HTTP &&
+         components.nScheme != INTERNET_SCHEME_HTTPS)) {
+        if (error != nullptr) {
+            *error = "could not create the console HTTP request";
+        }
+        return false;
+    }
+
+    const std::wstring host(components.lpszHostName, components.dwHostNameLength);
+    std::wstring path;
+    if (components.dwUrlPathLength != 0) {
+        path.assign(components.lpszUrlPath, components.dwUrlPathLength);
+    }
+    if (components.dwExtraInfoLength != 0) {
+        path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+    }
+    if (path.empty()) {
+        path = L"/";
+    }
+    const bool loopback =
+        _wcsicmp(host.c_str(), L"localhost") == 0 || host == L"127.0.0.1" || host == L"::1";
+    const DWORD access_type =
+        loopback ? WINHTTP_ACCESS_TYPE_NO_PROXY : WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
+    const WinHttpHandle session(WinHttpOpen(L"rcli-cloud-auth/1", access_type,
+                                            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session || !WinHttpSetTimeouts(session.get(), kConnectTimeoutMs, kConnectTimeoutMs,
+                                        kTotalTimeoutMs, kTotalTimeoutMs)) {
+        if (error != nullptr) {
+            *error = "could not initialize the console HTTP client";
+        }
+        return false;
+    }
+
+    const Deadline deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(kTotalTimeoutMs);
+    const WinHttpHandle connection(
+        WinHttpConnect(session.get(), host.c_str(), components.nPort, 0));
+    const DWORD flags = components.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+    const WinHttpHandle request(
+        connection ? WinHttpOpenRequest(connection.get(), method.c_str(), path.c_str(), nullptr,
+                                        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags)
+                   : nullptr);
+    if (!connection || !request) {
+        if (error != nullptr) {
+            *error = "could not create the console HTTP client";
+        }
+        return false;
+    }
+
+    const int initial_timeout = RemainingTimeout(deadline);
+    DWORD redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    if (initial_timeout == 0 ||
+        !WinHttpSetTimeouts(request.get(), std::min(kConnectTimeoutMs, initial_timeout),
+                            std::min(kConnectTimeoutMs, initial_timeout), initial_timeout,
+                            initial_timeout) ||
+        !WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &redirect_policy,
+                          sizeof(redirect_policy))) {
+        if (error != nullptr) {
+            *error = "could not configure the console HTTP client";
+        }
+        return false;
+    }
+    // Do not set WINHTTP_OPTION_SECURITY_FLAGS: WinHTTP's default verifies the
+    // server certificate chain and hostname for WINHTTP_FLAG_SECURE requests.
+
+    std::wstring headers = L"Accept: application/json\r\nContent-Type: application/json\r\n";
+    if (!input.bearer_token.empty()) {
+        std::wstring token;
+        if (!Utf8ToWide(input.bearer_token, &token)) {
+            if (error != nullptr) {
+                *error = "could not create the console HTTP request";
+            }
+            return false;
+        }
+        headers += L"Authorization: Bearer " + token + L"\r\n";
+    }
+    if (headers.size() > std::numeric_limits<DWORD>::max() ||
+        input.body.size() > std::numeric_limits<DWORD>::max()) {
+        if (error != nullptr) {
+            *error = "could not create the console HTTP request";
+        }
+        return false;
+    }
+
+    void* body =
+        input.body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(input.body.data());
+    const DWORD body_size = static_cast<DWORD>(input.body.size());
+    if (!WinHttpSendRequest(request.get(), headers.c_str(), static_cast<DWORD>(headers.size()),
+                            body, body_size, body_size, 0) ||
+        !SetReceiveTimeout(request.get(), deadline, true) ||
+        !WinHttpReceiveResponse(request.get(), nullptr)) {
+        if (error != nullptr) {
+            *error = "could not reach the RunAnywhere console";
+        }
+        return false;
+    }
+
+    DWORD status = 0;
+    DWORD status_size = sizeof(status);
+    if (!WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_size,
+                             WINHTTP_NO_HEADER_INDEX) ||
+        status < 100 || status > 599) {
+        if (error != nullptr) {
+            *error = "could not reach the RunAnywhere console";
+        }
+        return false;
+    }
+
+    output->status = 0;
+    output->body.clear();
+    std::array<char, 8192> buffer{};
+    while (true) {
+        DWORD received = 0;
+        if (!SetReceiveTimeout(request.get(), deadline, false) ||
+            !WinHttpReadData(request.get(), buffer.data(), static_cast<DWORD>(buffer.size()),
+                             &received)) {
+            output->body.clear();
+            if (error != nullptr) {
+                *error = "could not reach the RunAnywhere console";
+            }
+            return false;
+        }
+        if (received == 0) {
+            break;
+        }
+        if (output->body.size() > kMaximumResponseBytes ||
+            received > kMaximumResponseBytes - output->body.size()) {
+            output->body.clear();
+            if (error != nullptr) {
+                *error = "console response exceeded the safety limit";
+            }
+            return false;
+        }
+        output->body.append(buffer.data(), received);
+    }
+    output->status = static_cast<int>(status);
+    return true;
+}
+
+#else
 
 struct ResponseBuffer {
     std::string* body = nullptr;
@@ -37,6 +277,8 @@ std::size_t CollectBody(char* bytes, std::size_t size, std::size_t count, void* 
     return length;
 }
 
+#endif
+
 bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::string* error) {
     if (output == nullptr) {
         if (error != nullptr) {
@@ -57,6 +299,9 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
         return false;
     }
 
+#if defined(_WIN32)
+    return WinHttpTransport(input, output, error);
+#else
     static std::once_flag curl_once;
     static CURLcode curl_init_result = CURLE_FAILED_INIT;
     std::call_once(curl_once, [] { curl_init_result = curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -133,6 +378,7 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
     }
     output->status = static_cast<int>(status);
     return true;
+#endif
 }
 
 void HttpError(const char* operation, int status, std::string* error) {

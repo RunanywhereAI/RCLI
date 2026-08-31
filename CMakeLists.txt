@@ -119,9 +119,16 @@ FetchContent_Declare(nlohmann_json
 FetchContent_MakeAvailable(cpp_httplib nlohmann_json)
 
 find_package(Threads REQUIRED)
-find_package(CURL REQUIRED)
 target_link_libraries(rcli_core PUBLIC rac_commons Threads::Threads)
-target_link_libraries(rcli_core PRIVATE CURL::libcurl httplib::httplib nlohmann_json::nlohmann_json)
+target_link_libraries(rcli_core PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+if(WIN32)
+    # The console client uses the Windows system HTTP stack so source builds and
+    # release archives do not need curl/OpenSSL DLLs beside rcli.exe.
+    target_link_libraries(rcli_core PRIVATE winhttp)
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(rcli_core PRIVATE CURL::libcurl)
+endif()
 target_compile_definitions(rcli_core PUBLIC
     RCLI_VERSION="${PROJECT_VERSION}"
     RCLI_PINNED_SDK_VERSION="${RCLI_PINNED_SDK_VERSION}"
