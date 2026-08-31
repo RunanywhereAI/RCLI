@@ -43,6 +43,8 @@ void register_info(CLI::App& app, GlobalOptions& options) {
         const char* platform = "macos";
 #elif defined(__linux__)
         const char* platform = "linux";
+#elif defined(_WIN32)
+        const char* platform = "windows";
 #else
         const char* platform = "unknown";
 #endif
