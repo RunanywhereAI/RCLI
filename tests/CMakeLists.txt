@@ -24,7 +24,13 @@ add_test(
     NAME rcli_account_cli_e2e
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_account_cli.py"
             "$<TARGET_FILE:rcli>")
-set_tests_properties(rcli_account_cli_e2e PROPERTIES TIMEOUT 20)
+# 20s was too tight and failed on the macOS runner: this launches the rcli
+# binary three times (login, whoami, logout) and each launch initialises the
+# whole SDK — the MLX e2e test alone takes ~10s on the same machine. The budget
+# is per-test, not per-command, and the individual commands are already bounded
+# by the 15s subprocess timeout inside test_account_cli.py, so a real hang is
+# still caught there rather than here.
+set_tests_properties(rcli_account_cli_e2e PROPERTIES TIMEOUT 120)
 
 add_executable(test_rcli_segment test_rcli_segment.cpp)
 target_include_directories(test_rcli_segment PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
