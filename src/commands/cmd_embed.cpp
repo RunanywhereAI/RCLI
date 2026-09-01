@@ -138,6 +138,26 @@ bool parse_normalize(const std::string& mode, bool* out, bool* has_value) {
     return true;
 }
 
+// `--input-type`. Asymmetric embedders prepend a different prompt for a query than for a
+// document, and getting it wrong is silent: on Nemotron-3-Embed-1B the unprefixed pair separates
+// a relevant passage from an irrelevant one by ~0.001, and the prefixed pair by 0.48. A model
+// that declares no prompt table ignores this and returns the same vector either way.
+bool parse_input_type(const std::string& mode, v1::EmbeddingsInputType* out) {
+    if (mode.empty()) {
+        *out = v1::EMBEDDINGS_INPUT_TYPE_UNSPECIFIED;
+        return true;
+    }
+    if (mode == "query") {
+        *out = v1::EMBEDDINGS_INPUT_TYPE_QUERY;
+        return true;
+    }
+    if (mode == "document" || mode == "doc") {
+        *out = v1::EMBEDDINGS_INPUT_TYPE_DOCUMENT;
+        return true;
+    }
+    return false;
+}
+
 bool parse_pooling(const std::string& mode, v1::EmbeddingsPoolingStrategy* out) {
     if (mode.empty()) {
         *out = v1::EMBEDDINGS_POOLING_STRATEGY_UNSPECIFIED;
@@ -155,7 +175,7 @@ bool parse_pooling(const std::string& mode, v1::EmbeddingsPoolingStrategy* out) 
 
 int run_embed(const GlobalOptions& options, const std::string& ref, const std::string& engine,
               const std::vector<std::string>& texts, const std::string& normalize,
-              const std::string& pooling) {
+              const std::string& pooling, const std::string& input_type) {
     Bootstrapped env;
     if (bootstrap(options, &env) != RAC_SUCCESS) {
         return 1;
@@ -202,9 +222,12 @@ int run_embed(const GlobalOptions& options, const std::string& ref, const std::s
     bool normalize_value = false;
     bool normalize_set = false;
     v1::EmbeddingsPoolingStrategy pooling_strategy;
+    v1::EmbeddingsInputType input_type_value;
     if (!parse_normalize(normalize, &normalize_value, &normalize_set) ||
-        !parse_pooling(pooling, &pooling_strategy)) {
-        out::error_line("--normalize expects l2|none and --pooling expects mean|cls|last");
+        !parse_pooling(pooling, &pooling_strategy) ||
+        !parse_input_type(input_type, &input_type_value)) {
+        out::error_line("--normalize expects l2|none, --pooling expects mean|cls|last, "
+                        "--input-type expects query|document");
         return 2;
     }
     if (normalize_set) {
@@ -212,6 +235,9 @@ int run_embed(const GlobalOptions& options, const std::string& ref, const std::s
     }
     if (pooling_strategy != v1::EMBEDDINGS_POOLING_STRATEGY_UNSPECIFIED) {
         request.mutable_options()->set_pooling(pooling_strategy);
+    }
+    if (input_type_value != v1::EMBEDDINGS_INPUT_TYPE_UNSPECIFIED) {
+        request.mutable_options()->set_input_type(input_type_value);
     }
 
     const std::string bytes = proto::serialize(request);
@@ -244,6 +270,7 @@ void register_embed(CLI::App& app, GlobalOptions& options) {
     auto option_texts = std::make_shared<std::vector<std::string>>();
     auto normalize = std::make_shared<std::string>();
     auto pooling = std::make_shared<std::string>();
+    auto input_type = std::make_shared<std::string>();
     cmd->add_option("input", *positional_text, "Text to embed");
     cmd->add_option("--model,-m", *model,
                     "Embedding model to use (default: " + std::string(kDefaultEmbeddingModel) + ")")
@@ -258,14 +285,20 @@ void register_embed(CLI::App& app, GlobalOptions& options) {
         ->check(CLI::IsMember({"l2", "none"}));
     cmd->add_option("--pooling", *pooling, "Collapse token vectors with this strategy")
         ->check(CLI::IsMember({"mean", "cls", "last"}));
-    cmd->callback([&options, model, engine, positional_text, option_texts, normalize, pooling]() {
+    cmd->add_option("--input-type", *input_type,
+                    "Which side of a retrieval pair this text is. Asymmetric models "
+                    "(Nemotron-3-Embed, bge, e5, gte) embed a query and a document "
+                    "differently; symmetric models ignore it.")
+        ->check(CLI::IsMember({"query", "document", "doc"}));
+    cmd->callback([&options, model, engine, positional_text, option_texts, normalize, pooling,
+                   input_type]() {
         std::vector<std::string> texts;
         if (!positional_text->empty()) {
             texts.push_back(*positional_text);
         }
         texts.insert(texts.end(), option_texts->begin(), option_texts->end());
         const int exit_code =
-            run_embed(options, *model, *engine, texts, *normalize, *pooling);
+            run_embed(options, *model, *engine, texts, *normalize, *pooling, *input_type);
         if (exit_code != 0) {
             throw CLI::RuntimeError(exit_code);
         }

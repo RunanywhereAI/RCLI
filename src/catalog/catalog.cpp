@@ -1678,8 +1678,8 @@ constexpr CatalogEntry kCatalog[] = {
      "resolve/main/"
      "coreml-stable-diffusion-v1-5-palettized_split_einsum_v2_compiled.zip",
      nullptr, 0, 1500 * MB, 0, false},
-    // NeuRT advertises LLM + STT; these are folder refs (same ModelInfo path
-    // as sd15). Pass a local compiled tree to `--model` — `rcli pull` of a
+    // NeuRT advertises LLM + STT + EMBED + RERANK + VLM + EMBED_IMAGE + DIFFUSION; folder refs (same ModelInfo
+    // path as sd15). Pass a local compiled tree to `--model` — `rcli pull` of a
     // Hugging Face repo page is HTML, not a bundle.
     {"lfm2_5_230m_ane", "lfm2-230m-ane", "LFM2.5 230M (Apple Neural Engine)",
      v1::MODEL_CATEGORY_LANGUAGE, v1::INFERENCE_FRAMEWORK_COREML,
@@ -1691,6 +1691,55 @@ constexpr CatalogEntry kCatalog[] = {
      v1::MODEL_FORMAT_MLPACKAGE,
      "https://huggingface.co/runanywhere/LFM2.5-350M_ANE", nullptr, 0, 0, 0,
      false},
+    // The first ANE EMBEDDING row. docs/BUNDLE_CONTRACT.md listed this exact bundle as the one
+    // that "loads, undrivable" — its manifest parsed and its encoder graph bound, but the SDK's
+    // neurt engine filled no embedding_ops, so nothing could drive it. Gate B on an M4 Max:
+    // cosine vs the fp32 gold min 0.9588 / mean 0.9890, relevant ranked above irrelevant in 4/4
+    // gold records. `rcli embed --engine ane --model <local tree>`.
+    //
+    // ASYMMETRIC: the bundle declares "query: " / "passage: " prefixes and returns a materially
+    // different vector per role. Measured here, prefixing correctly moves query-vs-relevant
+    // separation from ~0.001 to 0.53 — so a caller that ignores input_type does not get a slightly
+    // worse vector, it gets a useless one.
+    {"nemotron3_embed_1b_ane", "nemotron3-embed-ane",
+     "Nemotron-3-Embed-1B (Apple Neural Engine)",
+     v1::MODEL_CATEGORY_EMBEDDING, v1::INFERENCE_FRAMEWORK_COREML,
+     v1::MODEL_FORMAT_MLPACKAGE,
+     "https://huggingface.co/runanywhere/Nemotron-3-Embed-1B-BF16_ANE", nullptr,
+     0, 0, 0, false},
+    // The first ANE RERANK row. Its `score` graph role was outside NeuRT's manifest vocabulary, so
+    // the published bundle was rejected before a graph was touched. Gate on an M4 Max: positive
+    // beats negative on 5/5 gold triples, matching the reference. `rcli rerank --engine ane`.
+    //
+    // Category note: MODEL_CATEGORY_RERANK (value 12) exists and is the right one. RCLI's other
+    // reranker (bge-reranker-v2-m3, above) uses MODEL_CATEGORY_EMBEDDING — a pre-existing
+    // inconsistency left alone here rather than changed as a drive-by.
+    {"nv_rerankqa_1b_v2_ane", "nv-rerank-ane",
+     "NV-RerankQA-1B-v2 (Apple Neural Engine)",
+     v1::MODEL_CATEGORY_RERANK, v1::INFERENCE_FRAMEWORK_COREML,
+     v1::MODEL_FORMAT_MLPACKAGE,
+     "https://huggingface.co/runanywhere/llama-3.2-nv-rerankqa-1b-v2_ANE", nullptr,
+     0, 0, 0, false},
+    // The first ANE VLM row. Image + prompt -> text: the runtime runs the vision tower, splices its
+    // 256 visual tokens over the prompt's <IMG_CONTEXT> positions, then drives the ordinary chunked
+    // text decode. Gate on an M4 Max: reproduced all 3 gold generations EXACTLY, word for word,
+    // including prompt-token counts (274/273/274). `rcli vlm generate --engine ane`.
+    {"internvl3_5_1b_ane", "internvl-1b-ane",
+     "InternVL3.5 1B (Apple Neural Engine)",
+     v1::MODEL_CATEGORY_MULTIMODAL, v1::INFERENCE_FRAMEWORK_COREML,
+     v1::MODEL_FORMAT_MLPACKAGE,
+     "https://huggingface.co/runanywhere/InternVL3_5-1B_ANE", nullptr, 0, 0, 0,
+     false},
+    // The first ANE IMAGE-EMBEDDING row (pixels -> vector, for retrieval/similarity). Serves the
+    // RAC_PRIMITIVE_EMBED_IMAGE slot promoted from reserved_slot_3 in ABI v10. Gate on an M4 Max:
+    // cosine vs the fp32 gold min 0.9919 / mean 0.9979, and each augmented image ranks its original
+    // first (2/2), matching the gold's reference_ranks.
+    {"siglip2_base_256_ane", "siglip2-ane",
+     "SigLIP2 base-256 (Apple Neural Engine)",
+     v1::MODEL_CATEGORY_VISION, v1::INFERENCE_FRAMEWORK_COREML,
+     v1::MODEL_FORMAT_MLPACKAGE,
+     "https://huggingface.co/runanywhere/siglip2-base-patch16-256_ANE", nullptr,
+     0, 0, 0, false},
     {"parakeet_tdt_0_6b_v2_ane", "parakeet-tdt-v2-ane",
      "Parakeet TDT 0.6B v2 (Apple Neural Engine)",
      v1::MODEL_CATEGORY_SPEECH_RECOGNITION, v1::INFERENCE_FRAMEWORK_COREML,
