@@ -487,6 +487,26 @@ bool ReadGrant(const Json& object, Grant* grant, std::string* error) {
     return true;
 }
 
+/// Percent-encode a query value. Model names carry dots and slashes, and a
+/// filter is user input either way.
+std::string QueryEscape(const std::string& value) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string out;
+    for (const unsigned char c : value) {
+        const bool unreserved = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' ||
+                                c == '~';
+        if (unreserved) {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += kHex[c >> 4];
+            out += kHex[c & 0x0f];
+        }
+    }
+    return out;
+}
+
 bool ConsoleOrigin(const std::string& input, std::string* origin, std::string* error) {
     return NormalizeConsoleUrl(input, origin, error);
 }
@@ -686,6 +706,131 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
             *error = "console returned invalid account usage";
         }
         return IdentityResult::Failed;
+    }
+    return IdentityResult::Ok;
+}
+
+namespace {
+
+/// A console string that is safe to print in a terminal. Anything else is
+/// dropped rather than rendered: this text lands straight in the user's shell.
+std::string DisplaySafe(const std::string& value, std::size_t maximum) {
+    return DisplayTextIsSafe(value, maximum) ? value : std::string();
+}
+
+}  // namespace
+
+IdentityResult ConsoleClient::FetchUsage(const std::string& console_url,
+                                         const std::string& access_token, const UsageQuery& query,
+                                         Usage* usage, std::string* error) const {
+    if (usage == nullptr || !SessionTokenIsSafe(access_token)) {
+        if (error != nullptr) {
+            *error = "no access token is available";
+        }
+        return IdentityResult::Failed;
+    }
+    std::string origin;
+    if (!ConsoleOrigin(console_url, &origin, error)) {
+        return IdentityResult::Failed;
+    }
+    // One read for the whole report: a terminal draws it in a single pass, and
+    // three round-trips would only give it three chances to print parts that
+    // disagree about when they were taken.
+    std::string url = origin + "/v1/cli/usage?days=" + std::to_string(std::clamp(query.days, 1, 365)) +
+                      "&limit=" + std::to_string(std::clamp(query.limit, 1, 200));
+    if (!query.model.empty()) {
+        url += "&model=" + QueryEscape(query.model);
+    }
+
+    HttpResponse response;
+    if (!Send(transport_, {"GET", url, {}, access_token}, &response, error)) {
+        return IdentityResult::Failed;
+    }
+    if (response.status == 401) {
+        if (error != nullptr) {
+            *error = "console session expired";
+        }
+        return IdentityResult::Unauthorized;
+    }
+    if (response.status != 200) {
+        HttpError("usage request", response.status, error);
+        return IdentityResult::Failed;
+    }
+
+    Json object;
+    if (!ParseObject(response, &object, error)) {
+        return IdentityResult::Failed;
+    }
+
+    const auto credit = object.find("credit");
+    if (credit != object.end() && credit->is_object()) {
+        usage->credit.balance_micros = Number(*credit, "balance_micros");
+        usage->credit.granted_micros = Number(*credit, "granted_micros");
+        usage->credit.spent_micros = Number(*credit, "spent_micros");
+    }
+
+    const auto totals = object.find("totals");
+    if (totals != object.end() && totals->is_object()) {
+        usage->totals.requests = Number(*totals, "requests");
+        usage->totals.prompt_tokens = Number(*totals, "prompt_tokens");
+        usage->totals.completion_tokens = Number(*totals, "completion_tokens");
+        usage->totals.cached_tokens = Number(*totals, "cached_tokens");
+        usage->totals.cost_micros = Number(*totals, "cost_micros");
+    }
+
+    const auto timeline = object.find("timeline");
+    if (timeline != object.end() && timeline->is_array()) {
+        for (const Json& point : *timeline) {
+            if (!point.is_object()) {
+                continue;
+            }
+            UsageDay day;
+            day.date = DisplaySafe(OptionalString(point, "date"), 32);
+            day.requests = Number(point, "requests");
+            day.prompt_tokens = Number(point, "prompt_tokens");
+            day.completion_tokens = Number(point, "completion_tokens");
+            day.cost_micros = Number(point, "cost_micros");
+            usage->timeline.push_back(day);
+        }
+    }
+
+    const auto models = object.find("models");
+    if (models != object.end() && models->is_array()) {
+        for (const Json& entry : *models) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            UsageModel row;
+            row.model = DisplaySafe(OptionalString(entry, "model"), 128);
+            row.requests = Number(entry, "requests");
+            row.prompt_tokens = Number(entry, "prompt_tokens");
+            row.completion_tokens = Number(entry, "completion_tokens");
+            row.cached_tokens = Number(entry, "cached_tokens");
+            row.cost_micros = Number(entry, "cost_micros");
+            usage->models.push_back(row);
+        }
+    }
+
+    const auto events = object.find("recent");
+    if (events != object.end() && events->is_array()) {
+        for (const Json& entry : *events) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            UsageEvent event;
+            event.request_id = DisplaySafe(OptionalString(entry, "request_id"), 128);
+            event.model = DisplaySafe(OptionalString(entry, "model"), 128);
+            event.harness = DisplaySafe(OptionalString(entry, "harness"), 64);
+            event.started_at = DisplaySafe(OptionalString(entry, "ts_start"), 64);
+            event.error_code = DisplaySafe(OptionalString(entry, "error_code"), 64);
+            event.prompt_tokens = Number(entry, "prompt_tokens");
+            event.completion_tokens = Number(entry, "completion_tokens");
+            event.cached_tokens = Number(entry, "cached_tokens");
+            event.cost_micros = Number(entry, "cost_micros");
+            event.ttft_ms = Number(entry, "ttft_ms");
+            event.status_code = static_cast<int>(Number(entry, "status_code"));
+            usage->events.push_back(event);
+        }
     }
     return IdentityResult::Ok;
 }

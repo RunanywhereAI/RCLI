@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace rcli::account {
 
@@ -26,6 +27,67 @@ struct Identity {
     std::string plan;
     long tokens_this_month = 0;
     long monthly_token_limit = 0;
+};
+
+/// What the console meters. Money is integer micro-dollars everywhere: one
+/// dollar is 1,000,000, and a single request routinely costs a few hundred.
+struct UsageTotals {
+    long requests = 0;
+    long prompt_tokens = 0;
+    long completion_tokens = 0;
+    long cached_tokens = 0;
+    long cost_micros = 0;
+};
+
+struct UsageDay {
+    std::string date;
+    long requests = 0;
+    long prompt_tokens = 0;
+    long completion_tokens = 0;
+    long cost_micros = 0;
+};
+
+struct UsageEvent {
+    std::string request_id;
+    std::string model;
+    std::string harness;
+    std::string started_at;
+    std::string error_code;
+    long prompt_tokens = 0;
+    long completion_tokens = 0;
+    long cached_tokens = 0;
+    long cost_micros = 0;
+    long ttft_ms = 0;
+    int status_code = 0;
+};
+
+struct UsageModel {
+    std::string model;
+    long requests = 0;
+    long prompt_tokens = 0;
+    long completion_tokens = 0;
+    long cached_tokens = 0;
+    long cost_micros = 0;
+};
+
+struct Credits {
+    long balance_micros = 0;
+    long granted_micros = 0;
+    long spent_micros = 0;
+};
+
+struct Usage {
+    Credits credit;
+    UsageTotals totals;
+    std::vector<UsageDay> timeline;
+    std::vector<UsageModel> models;
+    std::vector<UsageEvent> events;
+};
+
+struct UsageQuery {
+    int days = 30;
+    std::string model;
+    int limit = 20;
 };
 
 struct Authorization {
@@ -65,6 +127,8 @@ class ConsoleClient {
                           Identity* identity, std::string* error) const;
     bool Revoke(const std::string& console_url, const std::string& access_token,
                 const std::string& refresh_token, std::string* error) const;
+    IdentityResult FetchUsage(const std::string& console_url, const std::string& access_token,
+                              const UsageQuery& query, Usage* usage, std::string* error) const;
 
    private:
     Transport transport_;

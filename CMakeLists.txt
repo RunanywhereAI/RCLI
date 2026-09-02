@@ -50,6 +50,7 @@ set(RCLI_SOURCES
     src/commands/cmd_editors.cpp
     src/commands/cmd_harness.cpp
     src/commands/cmd_account.cpp
+    src/commands/cmd_usage.cpp
     src/account/console.cpp
     src/account/credentials.cpp
     src/anthropic/messages.cpp
