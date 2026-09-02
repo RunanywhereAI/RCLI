@@ -36,6 +36,7 @@ set(RCLI_SOURCES
     src/commands/cmd_tool.cpp
     src/commands/cmd_image.cpp
     src/commands/cmd_segment.cpp
+    src/commands/cmd_ocr.cpp
     src/commands/cmd_serve.cpp
     src/commands/cmd_show.cpp
     src/commands/cmd_stt.cpp

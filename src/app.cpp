@@ -56,6 +56,7 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     commands::register_image(app, options);
     commands::register_diarize(app, options);
     commands::register_segment(app, options);
+    commands::register_ocr(app, options);
     commands::register_voice(app, options);
     commands::register_rag(app, options);
     commands::register_models(app, options);
