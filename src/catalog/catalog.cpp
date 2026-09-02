@@ -1740,6 +1740,26 @@ constexpr CatalogEntry kCatalog[] = {
      v1::MODEL_FORMAT_MLPACKAGE,
      "https://huggingface.co/runanywhere/siglip2-base-patch16-256_ANE", nullptr,
      0, 0, 0, false},
+    // The first ANE TEXT-TO-SPEECH row, and NeuRT's last null primitive filled (SDK 0.20.33).
+    // Kokoro-82M across three Core ML graphs (duration -> decode -> gen) plus two host seams that
+    // are not expressible as ANE ops: the duration->alignment expansion and the harmonic source.
+    // Ships its own G2P lexicon, so no runtime phonemizer is needed.
+    //
+    // Measured on an M4 Max against the PUBLISHED bundle downloaded fresh: 129 ms of synthesis for
+    // 4225 ms of audio (32.8x realtime), 24 kHz, no NaNs. Gate A mel distance 0.2832-0.3159, where
+    // upstream Kokoro's own real-op CustomSTFT scores 0.289 against its complex path and two
+    // DIFFERENT utterances score 2.63-2.71 -- i.e. at the vocoder's floor, not conversion loss.
+    {"kokoro_82m_ane", "kokoro-ane",
+     "Kokoro 82M (Apple Neural Engine)",
+     v1::MODEL_CATEGORY_SPEECH_SYNTHESIS, v1::INFERENCE_FRAMEWORK_COREML,
+     v1::MODEL_FORMAT_MLPACKAGE,
+     // The .zip, NOT the repo root. A bare huggingface.co/<org>/<repo> URL makes
+     // `rcli pull` fetch the repo's HTML PAGE -- 120 KB of markup written to disk
+     // under the model id, with a cheerful "done 100%". Every other ANE row here
+     // still has that shape and is therefore listable but not pullable.
+     "https://huggingface.co/runanywhere/Kokoro-82M_ANE/resolve/main/"
+     "kokoro-82m_ANE.zip",
+     nullptr, 0, 153037101LL, 0, false},
     {"parakeet_tdt_0_6b_v2_ane", "parakeet-tdt-v2-ane",
      "Parakeet TDT 0.6B v2 (Apple Neural Engine)",
      v1::MODEL_CATEGORY_SPEECH_RECOGNITION, v1::INFERENCE_FRAMEWORK_COREML,
