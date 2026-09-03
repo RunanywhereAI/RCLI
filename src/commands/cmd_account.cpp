@@ -38,11 +38,20 @@ void fail(int status) {
 /// check above still runs against what the server sent; this replaces the origin
 /// only afterwards, only from the environment, and only with an origin that
 /// passes the same rules — the path and request code stay exactly as sent.
-std::string RebaseApprovalUrl(const std::string& url) {
+/// The console origin the operator declared, normalised, or empty if none.
+std::string ConsoleWebOrigin() {
     const char* configured = std::getenv("RCLI_CONSOLE_WEB_URL");
     std::string origin;
     if (configured == nullptr || *configured == '\0' ||
         !account::NormalizeConsoleUrl(configured, &origin, nullptr)) {
+        return {};
+    }
+    return origin;
+}
+
+std::string RebaseApprovalUrl(const std::string& url) {
+    const std::string origin = ConsoleWebOrigin();
+    if (origin.empty()) {
         return url;
     }
     const std::size_t scheme = url.find("://");
@@ -158,12 +167,21 @@ int Login(const std::string& requested_console, bool open_browser) {
         out::error_line(failure);
         return 1;
     }
-    if (!account::BrowserUrlMatchesConsole(authorization.verification_url, console_url)) {
+    // Rebase first, then check what we will actually open.
+    //
+    // "Must match the API's own origin" was the wrong test: the control plane
+    // runs on Cloud Run and the console it hands you runs on Railway, so the two
+    // are never equal and the check refused every real sign-in. The origin we
+    // trust is the console origin the operator declared; with none declared we
+    // fall back to the old behaviour and demand the API's own.
+    const std::string trusted = ConsoleWebOrigin();
+    const std::string approval_url = RebaseApprovalUrl(authorization.verification_url);
+    if (!account::BrowserUrlMatchesConsole(approval_url,
+                                           trusted.empty() ? console_url : trusted)) {
         out::error_line("console returned an approval URL outside its origin");
         return 1;
     }
 
-    const std::string approval_url = RebaseApprovalUrl(authorization.verification_url);
     out::status_line("approve this sign-in in your browser");
     out::result_line("code  " + authorization.request_code);
     out::result_line("url   " + approval_url);

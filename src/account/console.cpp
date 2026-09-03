@@ -462,10 +462,13 @@ bool DisplayTextIsSafe(const std::string& value, std::size_t maximum) {
 }
 
 bool RequestCodeIsSafe(const std::string& value) {
+    // The control plane mints these with Python's `token_urlsafe`, whose
+    // alphabet is base64url: letters, digits, `-` and `_`. Omitting `_`
+    // rejected roughly half of all real codes as malformed.
     return value.size() >= 4 && value.size() <= 64 &&
            std::all_of(value.begin(), value.end(), [](unsigned char c) {
                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                      c == '-';
+                      c == '-' || c == '_';
            });
 }
 
