@@ -371,8 +371,11 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
         output->status = 0;
         output->body.clear();
         if (error != nullptr) {
+            // Names the origin actually contacted: with RCLI_CONSOLE_URL unset
+            // that is the production console, and a bare "could not reach the
+            // console" reads as a local dev server nobody pointed us at.
             *error = response.too_large ? "console response exceeded the safety limit"
-                                        : "could not reach the RunAnywhere console";
+                                        : "could not reach the RunAnywhere console at " + input.url;
         }
         return false;
     }
@@ -381,10 +384,13 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
 #endif
 }
 
-void HttpError(const char* operation, int status, std::string* error) {
+void HttpError(const char* operation, const std::string& origin, int status, std::string* error) {
     if (error != nullptr) {
-        *error =
-            std::string("console ") + operation + " failed with HTTP " + std::to_string(status);
+        // Names which console answered: with RCLI_CONSOLE_URL unset that is
+        // production, and a bare "failed with HTTP 404" reads as a bug rather
+        // than as the wrong console having been asked.
+        *error = std::string("console ") + operation + " (" + origin + ") failed with HTTP " +
+                std::to_string(status);
     }
 }
 
@@ -448,7 +454,10 @@ bool Send(const Transport& transport, HttpRequest request, HttpResponse* respons
           std::string* error) {
     if (!transport(request, response, error)) {
         if (error != nullptr && error->empty()) {
-            *error = "could not reach the RunAnywhere console";
+            // Names the origin actually contacted: with RCLI_CONSOLE_URL unset
+            // that is the production console, and a plain "could not reach the
+            // console" reads as a local server that was never told about.
+            *error = "could not reach the RunAnywhere console at " + request.url;
         }
         return false;
     }
@@ -538,7 +547,7 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         return false;
     }
     if (response.status != 200) {
-        HttpError("authorization", response.status, error);
+        HttpError("authorization", origin, response.status, error);
         return false;
     }
 
@@ -583,7 +592,7 @@ PollResult ConsoleClient::Poll(const std::string& console_url, const Authorizati
         return PollResult::Failed;
     }
     if (response.status != 200) {
-        HttpError("poll", response.status, error);
+        HttpError("poll", origin, response.status, error);
         return PollResult::Failed;
     }
 
@@ -642,7 +651,7 @@ bool ConsoleClient::Refresh(const std::string& console_url, const std::string& r
         return false;
     }
     if (response.status != 200) {
-        HttpError("refresh", response.status, error);
+        HttpError("refresh", origin, response.status, error);
         return false;
     }
     Json object;
@@ -685,7 +694,7 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
         return IdentityResult::Unauthorized;
     }
     if (response.status != 200) {
-        HttpError("identity request", response.status, error);
+        HttpError("identity request", origin, response.status, error);
         return IdentityResult::Failed;
     }
 
@@ -756,7 +765,7 @@ IdentityResult ConsoleClient::FetchUsage(const std::string& console_url,
         return IdentityResult::Unauthorized;
     }
     if (response.status != 200) {
-        HttpError("usage request", response.status, error);
+        HttpError("usage request", origin, response.status, error);
         return IdentityResult::Failed;
     }
 
@@ -861,7 +870,7 @@ bool ConsoleClient::Revoke(const std::string& console_url, const std::string& ac
         return false;
     }
     if (response.status != 200 && response.status != 204) {
-        HttpError("revoke", response.status, error);
+        HttpError("revoke", origin, response.status, error);
         return false;
     }
     return true;

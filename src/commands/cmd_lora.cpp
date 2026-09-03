@@ -16,6 +16,7 @@
 
 #include "commands/commands.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,6 +35,7 @@ namespace rcli::commands {
 namespace {
 
 namespace v1 = runanywhere::v1;
+namespace fs = std::filesystem;
 
 rac_lora_registry_handle_t require_lora_registry() {
   rac_lora_registry_handle_t registry = rac_get_lora_registry();
@@ -228,6 +230,17 @@ int run_lora_apply(const GlobalOptions &options, const std::string &model_id,
   if (bootstrap(options, &env) != RAC_SUCCESS) {
     return 1;
   }
+
+  // Checked before the (potentially multi-gigabyte) base model load: a
+  // missing adapter file has nothing to do with the model, and loading it
+  // first only to fail on the adapter afterward reports "failed to load the
+  // model" for a problem that was never about the model.
+  std::error_code exists_error;
+  if (!fs::is_regular_file(adapter_path, exists_error)) {
+    out::error_line("adapter file not found: " + adapter_path);
+    return 1;
+  }
+
   if (!load_llm_for_lora(options, model_id)) {
     return 1;
   }

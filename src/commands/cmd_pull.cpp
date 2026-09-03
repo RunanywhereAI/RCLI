@@ -101,6 +101,29 @@ int pull_model_flow(const GlobalOptions &options, const std::string &model_id) {
     }
   }
 
+  // Already on disk: planning and starting anyway would ask the
+  // orchestrator to "download" zero remaining bytes, which it reports as a
+  // download that completed instantly — a progress bar animating to 100% at
+  // whatever (bytes / ~0 elapsed) works out to, not a real transfer rate.
+  // Nothing to fetch, so say so and stop before any of that renders.
+  if (model_info.registry_status() == v1::MODEL_REGISTRY_STATUS_DOWNLOADED) {
+    if (options.json) {
+      out::JsonWriter json;
+      json.begin_object()
+          .field("id", model_info.id())
+          .field("name", model_info.name())
+          .field("local_path", model_info.local_path())
+          .field("already_downloaded", true)
+          .end_object();
+      out::result_line(json.str());
+    } else {
+      out::result_line(model_info.id() + " is already downloaded" +
+                       (model_info.local_path().empty() ? ""
+                                                        : " → " + model_info.local_path()));
+    }
+    return 0;
+  }
+
   // Plan
   v1::DownloadPlanRequest plan_request;
   plan_request.set_model_id(resolved.model_id);

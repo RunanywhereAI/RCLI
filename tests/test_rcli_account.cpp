@@ -9,8 +9,10 @@
 #include <vector>
 
 #if !defined(_WIN32)
+#include <cstdio>
 #include <unistd.h>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #endif
 
@@ -182,6 +184,112 @@ TestResult test_credential_roundtrip_and_permissions() {
     result.passed = true;
     return result;
 }
+
+// A document that simply omits console_url is not a malformed one: it must
+// fall back to DefaultConsoleUrl() cleanly rather than failing with "console
+// URL must be HTTPS" on a value that was never actually set.
+TestResult test_credentials_missing_console_url_falls_back() {
+    TestResult result;
+    result.test_name = "credentials_missing_console_url_falls_back";
+    TempDirectory temporary;
+    EnvVar profile("RCLI_PROFILE_DIR", temporary.path().string().c_str());
+    EnvVar console("RCLI_CONSOLE_URL", nullptr);
+
+    std::ofstream raw(rcli::account::CredentialsPath());
+    raw << Json{{"email", "dev@example.test"}, {"access_token", "a-token"}}.dump();
+    raw.close();
+#if !defined(_WIN32)
+    ::chmod(rcli::account::CredentialsPath().c_str(), 0600);
+#endif
+
+    rcli::account::Credentials credentials;
+    std::string error;
+    if (!rcli::account::Load(&credentials, &error)) {
+        result.details = error.empty() ? "load failed on a document missing console_url" : error;
+        return result;
+    }
+    if (credentials.console_url != "https://console.runanywhere.ai") {
+        result.expected = "https://console.runanywhere.ai";
+        result.actual = credentials.console_url;
+        result.details = "a missing console_url must fall back to the default, not error";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+#if !defined(_WIN32)
+// A group/world-readable credentials.json is tightened to 0600 silently
+// today; Load() must say so rather than leave the reader unaware their
+// bearer token was ever exposed.
+TestResult test_credentials_warns_on_exposed_permissions() {
+    TestResult result;
+    result.test_name = "credentials_warns_on_exposed_permissions";
+    TempDirectory temporary;
+    EnvVar profile("RCLI_PROFILE_DIR", temporary.path().string().c_str());
+    EnvVar console("RCLI_CONSOLE_URL", nullptr);
+
+    rcli::account::Credentials seed;
+    seed.console_url = "https://console.runanywhere.ai";
+    seed.email = "dev@example.test";
+    seed.access_token = "a-token";
+    seed.expires_at = 0;
+    std::string error;
+    if (!rcli::account::Save(seed, &error)) {
+        result.details = error;
+        return result;
+    }
+    const std::string path = rcli::account::CredentialsPath();
+    if (::chmod(path.c_str(), 0644) != 0) {
+        result.details = "could not widen permissions for the test fixture";
+        return result;
+    }
+
+    // Redirect stderr to a temp file for the duration of the Load() call, the
+    // only surface a low-level, SDK-independent module like credentials.cpp
+    // can use to say something without pulling in the CLI's output layer.
+    const std::string capture_path = temporary.path().string() + "/stderr-capture.txt";
+    const int saved_stderr = ::dup(fileno(stderr));
+    const int capture_fd = ::open(capture_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (saved_stderr < 0 || capture_fd < 0) {
+        result.details = "could not set up stderr capture";
+        return result;
+    }
+    std::fflush(stderr);
+    ::dup2(capture_fd, fileno(stderr));
+    ::close(capture_fd);
+
+    rcli::account::Credentials loaded;
+    const bool ok = rcli::account::Load(&loaded, &error);
+
+    std::fflush(stderr);
+    ::dup2(saved_stderr, fileno(stderr));
+    ::close(saved_stderr);
+
+    if (!ok) {
+        result.details = error;
+        return result;
+    }
+
+    struct stat after {};
+    if (::stat(path.c_str(), &after) != 0 || (after.st_mode & 0777) != 0600) {
+        result.details = "permissions must still be tightened to 0600";
+        return result;
+    }
+
+    std::ifstream capture(capture_path);
+    const std::string warning((std::istreambuf_iterator<char>(capture)),
+                              std::istreambuf_iterator<char>());
+    if (warning.find("warning") == std::string::npos ||
+        warning.find(path) == std::string::npos) {
+        result.details = "Load() must warn, naming the file, when it was exposed";
+        result.actual = warning;
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+#endif  // !defined(_WIN32)
 
 TestResult test_console_client_contract() {
     TestResult result;
@@ -368,6 +476,12 @@ int main(int argc, char** argv) {
     TestSuite suite("rcli_account");
     suite.add("console_url_validation", test_console_url_validation);
     suite.add("credential_roundtrip_and_permissions", test_credential_roundtrip_and_permissions);
+    suite.add("credentials_missing_console_url_falls_back",
+              test_credentials_missing_console_url_falls_back);
+#if !defined(_WIN32)
+    suite.add("credentials_warns_on_exposed_permissions",
+              test_credentials_warns_on_exposed_permissions);
+#endif
     suite.add("console_client_contract", test_console_client_contract);
     suite.add("console_errors_do_not_echo_secrets", test_console_errors_do_not_echo_secrets);
     suite.add("console_rejects_header_injection", test_console_rejects_header_injection);

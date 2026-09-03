@@ -266,8 +266,15 @@ int Usage(int days, const std::string& model, int limit, bool as_json) {
         client.FetchUsage(credentials.console_url, credentials.access_token, query, &usage,
                           &failure);
     if (result == account::IdentityResult::Unauthorized) {
-        if (!RefreshSession(client, &credentials, &failure)) {
-            out::error_line(failure);
+        // failure currently holds the 401 detail ("console session expired");
+        // a failed refresh here would otherwise overwrite it with the
+        // refresh call's own error and the reader would never learn the
+        // usage request was unauthorized in the first place.
+        std::string refresh_failure;
+        if (!RefreshSession(client, &credentials, &refresh_failure)) {
+            out::error_line("not signed in — the cloud session expired and could not be "
+                            "refreshed (" +
+                            refresh_failure + "); run `rcli login`");
             return 1;
         }
         usage = account::Usage{};

@@ -19,6 +19,12 @@ target_link_libraries(test_rcli_opencode PRIVATE rcli_core nlohmann_json::nlohma
 rcli_stage_windows_runtime_dlls(test_rcli_opencode)
 add_test(NAME rcli_opencode_tests COMMAND test_rcli_opencode --run-all)
 
+add_executable(test_rcli_harness test_rcli_harness.cpp)
+target_include_directories(test_rcli_harness PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(test_rcli_harness PRIVATE rcli_core nlohmann_json::nlohmann_json)
+rcli_stage_windows_runtime_dlls(test_rcli_harness)
+add_test(NAME rcli_harness_tests COMMAND test_rcli_harness --run-all)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(
     NAME rcli_account_cli_e2e

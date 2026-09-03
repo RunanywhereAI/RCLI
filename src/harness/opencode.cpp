@@ -1,5 +1,7 @@
 #include "harness/opencode.h"
 
+#include "harness/harness.h"
+
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
@@ -24,23 +26,7 @@ namespace {
 
 constexpr const char* kOpenCodeConfigVariable = "OPENCODE_CONFIG_CONTENT";
 
-long long EpochSeconds() {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
 
-bool ModelIsSafe(const std::string& model) {
-    if (model.empty() || model.size() > 512) {
-        return false;
-    }
-    for (const unsigned char byte : model) {
-        if (byte < 0x20 || byte == 0x7f) {
-            return false;
-        }
-    }
-    return true;
-}
 
 bool SetEnvironment(const char* name, const std::string& value) {
 #if defined(_WIN32)
@@ -150,30 +136,6 @@ int Spawn(const std::string& executable, const std::vector<std::string>& argumen
 #endif
 }
 
-bool RefreshCredentials(const account::ConsoleClient& console, account::Credentials* credentials,
-                        std::string* error) {
-    if (credentials->refresh_token.empty()) {
-        if (error != nullptr) {
-            *error = "the cloud session cannot be refreshed; run `rcli login`";
-        }
-        return false;
-    }
-
-    account::Grant grant;
-    if (!console.Refresh(credentials->console_url, credentials->refresh_token, &grant, error)) {
-        return false;
-    }
-    credentials->access_token = grant.access_token;
-    if (!grant.refresh_token.empty()) {
-        credentials->refresh_token = grant.refresh_token;
-    }
-    if (!grant.email.empty()) {
-        credentials->email = grant.email;
-    }
-    credentials->expires_at = EpochSeconds() + (grant.expires_in > 0 ? grant.expires_in : 3600);
-    return account::Save(*credentials, error);
-}
-
 }  // namespace
 
 std::string BuildOpenCodeCloudConfig(const std::string& model, const std::string& base_url,
@@ -191,8 +153,13 @@ std::string BuildOpenCodeCloudConfig(const std::string& model, const std::string
 
 int LaunchOpenCodeCloud(const std::string& model, const std::vector<std::string>& arguments,
                         const account::ConsoleClient& console, const SpawnFunction& spawn) {
-    if (!ModelIsSafe(model)) {
-        out::error_line("a non-empty cloud model name without control characters is required");
+    // The same two gates the local path gets. This function does not go through
+    // harness::Resolve(), so before this it had its own weaker model check
+    // (control characters only, so `/` and `<` sailed through) and trusted
+    // `signed_in()` — a non-empty string — as proof of a session. A fabricated
+    // token launched a real editor against the hosted endpoint.
+    if (!ModelIdIsSafe(model)) {
+        out::error_line("'" + model + "' is not a valid model id");
         return 2;
     }
 
@@ -206,9 +173,8 @@ int LaunchOpenCodeCloud(const std::string& model, const std::vector<std::string>
         out::error_line("not signed in - run `rcli login`");
         return 1;
     }
-    if (credentials.access_token_expired(EpochSeconds()) &&
-        !RefreshCredentials(console, &credentials, &error)) {
-        out::error_line(error);
+    if (!VerifyCloudSession(console, &credentials, nullptr, &error)) {
+        out::error_line("the signed-in cloud session did not check out: " + error);
         return 1;
     }
 

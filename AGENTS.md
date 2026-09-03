@@ -79,9 +79,11 @@ Two secrets do different jobs. `request_code` is public and names the attempt;
 `poll_secret` proves the process collecting the grant is the one that started
 it. The console stores only a hash of the second.
 
-`RCLI_CONSOLE_URL` points at the console; it defaults to `http://localhost:8080`,
-which is nothing, so a local run needs it set. `RCLI_PROFILE_DIR` moves the
-credential file, which is what lets several accounts share one machine.
+`RCLI_CONSOLE_URL` points at the console; it defaults to the production console
+(`https://console.runanywhere.ai`), so pointing at a local dev console needs it
+set explicitly, e.g. `RCLI_CONSOLE_URL=http://localhost:8080`. `RCLI_PROFILE_DIR`
+moves the credential file, which is what lets several accounts share one
+machine.
 
 The credential is a normal API key with the customer's credit behind it. Treat
 it as one: it goes in the profile file at `0600` and nowhere else, and it is
