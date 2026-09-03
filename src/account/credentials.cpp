@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -365,13 +366,30 @@ bool ReadDocument(const std::string& path, std::string* document, bool* exists,
     struct stat metadata{};
     if (::fstat(fd, &metadata) != 0 || !S_ISREG(metadata.st_mode) || metadata.st_uid != geteuid() ||
         metadata.st_nlink != 1 || metadata.st_size < 0 ||
-        static_cast<std::uintmax_t>(metadata.st_size) > kMaximumCredentialBytes ||
-        ::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        static_cast<std::uintmax_t>(metadata.st_size) > kMaximumCredentialBytes) {
         ::close(fd);
         if (error != nullptr) {
             *error = "cloud session has unsafe file metadata";
         }
         return false;
+    }
+    // A prior version, another tool, or a permissive umask may have left this
+    // group- or world-readable; the bearer token inside is as good as a
+    // password, so say so once rather than quietly tightening it and leaving
+    // the reader to wonder whether it was ever exposed.
+    const bool was_exposed = (metadata.st_mode & (S_IRWXG | S_IRWXO)) != 0;
+    if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        ::close(fd);
+        if (error != nullptr) {
+            *error = "cloud session has unsafe file metadata";
+        }
+        return false;
+    }
+    if (was_exposed) {
+        std::fprintf(stderr,
+                     "warning: %s was readable beyond your user; permissions have been "
+                     "restricted to your user only\n",
+                     path.c_str());
     }
     std::string body;
     char buffer[4096];
@@ -558,8 +576,13 @@ bool Load(Credentials* out, std::string* error) {
             }
             return false;
         }
+        // A missing or empty console_url is not a malformed one: `credentials`
+        // already carries the DefaultConsoleUrl()-derived origin set above, so
+        // only a value the document actually specifies gets validated. Without
+        // this, a hand-edited or partially-written file that simply omits the
+        // field fails with "console URL must be HTTPS" instead of falling back.
         const std::string stored_url = object.value("console_url", std::string());
-        if (!NormalizeConsoleUrl(stored_url, &credentials.console_url, error)) {
+        if (!stored_url.empty() && !NormalizeConsoleUrl(stored_url, &credentials.console_url, error)) {
             return false;
         }
         credentials.email = object.value("email", std::string());

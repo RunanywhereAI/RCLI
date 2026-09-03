@@ -139,19 +139,45 @@ std::vector<std::string> OpenArgs(const std::string& bundle, const anthropic::Sh
     return args;
 }
 
-/// Blocks until `name` is running or gone, whichever `running` asks for.
-///
-/// `timeout` in seconds, or 0 to wait indefinitely. Matched on the process name
-/// rather than the command line: `pgrep -f` would also match the shell running
-/// the search, and report the IDE as alive forever.
-void AwaitProcess(const std::string& name, bool running, int timeout) {
+/// Whether a process named `name` is currently running. Matched on the
+/// process name rather than the command line: `pgrep -f` would also match the
+/// shell running the search, and report the IDE as alive forever.
+bool ProcessRunning(const std::string& name) {
     const std::string probe = "pgrep -x " + name + " >/dev/null 2>&1";
+    return harness::Launch("/bin/sh", {}, {"-c", probe}) == 0;
+}
+
+/// Blocks until `name` is running or gone, whichever `running` asks for.
+/// `timeout` in seconds, or 0 to wait indefinitely.
+void AwaitProcess(const std::string& name, bool running, int timeout) {
     for (int waited = 0; timeout == 0 || waited < timeout; waited += 2) {
-        if ((harness::Launch("/bin/sh", {}, {"-c", probe}) == 0) == running) {
+        if (ProcessRunning(name) == running) {
             return;
         }
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
+}
+
+/// Refuses to quit a bundle that is actually running unless the reader asked
+/// for it. Quitting someone's live editor loses whatever it had open — unsaved
+/// buffers, a debug session, terminal state — and that should never be an
+/// implied side effect of pointing rcli at a model; it needs `--restart`.
+///
+/// True when there is nothing to quit (not installed as a bundle, or not
+/// running) or the reader passed `--restart`; false — having already
+/// explained why — otherwise.
+bool ConfirmQuit(const Editor& editor, const std::string& bundle, bool restart) {
+    const std::string name = BundleName(bundle);
+    if (name.empty() || !ProcessRunning(name)) {
+        return true;
+    }
+    if (!restart) {
+        out::error_line(name + " is currently running.");
+        out::status_line("pass --restart to quit it and relaunch it against " +
+                         std::string(editor.id));
+        return false;
+    }
+    return true;
 }
 
 /// Quits the app if it is running. A profile change is read at launch, so a
@@ -256,7 +282,7 @@ int Restore(const Editor& editor) {
 }
 
 int Run(const Editor& editor, const std::string& model,
-        const std::vector<std::string>& args, bool verbose) {
+        const std::vector<std::string>& args, bool verbose, bool restart) {
     const bool is_bundle = editor.bundle[0] != '\0';
     std::string bundle;
     if (is_bundle) {
@@ -311,6 +337,11 @@ int Run(const Editor& editor, const std::string& model,
             return 1;
         }
         out::status_line(std::string(editor.id) + " will talk to " + model + " through " + reachable);
+        if (!ConfirmQuit(editor, bundle, restart)) {
+            ide::StopProxy(&proxy);
+            harness::Release(endpoint);
+            return 1;
+        }
         QuitBundle(bundle);
         // `open -W` is wrong here. Quitting the running instance first means the
         // wait can attach to the one on its way out and return while the new one
@@ -366,6 +397,11 @@ int Run(const Editor& editor, const std::string& model,
             harness::Release(endpoint);
             return 1;
         }
+        if (!ConfirmQuit(editor, bundle, restart)) {
+            anthropic::Stop(&shim);
+            harness::Release(endpoint);
+            return 1;
+        }
         QuitBundle(bundle);
         status = harness::Launch("open", {}, OpenArgs(bundle, shim, args));
         if (!desktop::RestoreGateway(&failure)) {
@@ -375,6 +411,11 @@ int Run(const Editor& editor, const std::string& model,
         // An app that reads the variables itself, or spawns something that
         // does. Quit first: a running instance keeps the environment it was
         // started with, so the agent inside it would talk to the old endpoint.
+        if (!ConfirmQuit(editor, bundle, restart)) {
+            anthropic::Stop(&shim);
+            harness::Release(endpoint);
+            return 1;
+        }
         QuitBundle(bundle);
         status = harness::Launch("open", {}, OpenArgs(bundle, shim, args));
     } else {
@@ -399,6 +440,7 @@ void register_editors(CLI::App& app, GlobalOptions& options) {
     for (const Editor& editor : kEditors) {
         auto model = std::make_shared<std::string>();
         auto restore = std::make_shared<bool>(false);
+        auto restart = std::make_shared<bool>(false);
         auto rest = std::make_shared<std::vector<std::string>>();
         auto serve = std::make_shared<bool>(false);
         auto* command = app.add_subcommand(editor.id, editor.summary);
@@ -411,15 +453,23 @@ void register_editors(CLI::App& app, GlobalOptions& options) {
             command->add_flag("--restore", *restore,
                               "undo what we configured and launch nothing");
         }
+        if (editor.bundle[0] != '\0') {
+            // Quitting a running app is destructive — open buffers, a debug
+            // session, terminal state — so it has to be asked for, never
+            // implied by naming a model.
+            command->add_flag(
+                "--restart", *restart,
+                std::string("quit ") + editor.id + " if it is running, to relaunch it against this model");
+        }
         command->add_option("args", *rest, "passed through")->allow_extra_args();
         command->prefix_command();
-        command->callback([&options, &editor, model, rest, serve, restore] {
+        command->callback([&options, &editor, model, rest, serve, restore, restart] {
             if (*restore) {
                 fail(Restore(editor));
                 return;
             }
             fail(*serve ? Serve(*model, options.verbose)
-                        : Run(editor, *model, *rest, options.verbose));
+                        : Run(editor, *model, *rest, options.verbose, *restart));
         });
     }
 }
