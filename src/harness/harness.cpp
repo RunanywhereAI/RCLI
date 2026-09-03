@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstdlib>
+#include <filesystem>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -142,7 +143,62 @@ void UnsetConfigVariable() {
 #endif
 }
 
+/// How you get a harness we do not ship. Kept beside the spawn so a missing
+/// tool answers the only question the person actually has.
+std::string InstallHint(const std::string& tool) {
+    if (tool == "opencode") {
+        return "install it with `npm i -g opencode-ai`, then run this again";
+    }
+    return "install " + tool + " and put it on PATH, then run this again";
+}
+
+bool OnPath(const std::string& tool) {
+    const char* path = std::getenv("PATH");
+    if (path == nullptr) {
+        return false;
+    }
+#if defined(_WIN32)
+    constexpr char kSeparator = ';';
+    const std::vector<std::string> suffixes = {".exe", ".cmd", ".bat", ""};
+#else
+    constexpr char kSeparator = ':';
+    const std::vector<std::string> suffixes = {""};
+#endif
+    const std::string haystack(path);
+    std::size_t at = 0;
+    while (at <= haystack.size()) {
+        const std::size_t end = haystack.find(kSeparator, at);
+        const std::string dir =
+            haystack.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        if (!dir.empty()) {
+            for (const std::string& suffix : suffixes) {
+                std::error_code ec;
+                const std::filesystem::path candidate =
+                    std::filesystem::path(dir) / (tool + suffix);
+                if (std::filesystem::is_regular_file(candidate, ec) ||
+                    std::filesystem::is_symlink(candidate, ec)) {
+                    return true;
+                }
+            }
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
 int Spawn(const std::string& tool, const std::vector<std::string>& args) {
+    // Checked before the fork, not after: a failed exec happens in the child,
+    // where the only thing it can report back is the exit code a shell uses
+    // for "command not found" — so without this the person sees nothing at all.
+    if (!OnPath(tool)) {
+        out::status_line(tool + " is not installed on this machine");
+        out::status_line(InstallHint(tool));
+        return 127;
+    }
+
     std::vector<std::string> owned;
     owned.push_back(tool);
     owned.insert(owned.end(), args.begin(), args.end());

@@ -93,6 +93,13 @@ class ScopedOpenCodeConfig {
     bool active_ = false;
 };
 
+/// Not an error line. Nothing went wrong — the tool simply is not here yet,
+/// and the only useful thing to say is how to get it.
+void MissingOpenCode() {
+    out::status_line("opencode is not installed on this machine");
+    out::status_line("install it with `npm i -g opencode-ai`, then run this again");
+}
+
 int Spawn(const std::string& executable, const std::vector<std::string>& arguments) {
     std::vector<std::string> owned;
     owned.reserve(arguments.size() + 1);
@@ -109,7 +116,7 @@ int Spawn(const std::string& executable, const std::vector<std::string>& argumen
 #if defined(_WIN32)
     const intptr_t status = _spawnvp(_P_WAIT, executable.c_str(), argv.data());
     if (status < 0) {
-        out::error_line("OpenCode was not found on PATH");
+        MissingOpenCode();
         return 127;
     }
     return static_cast<int>(status);
@@ -137,7 +144,7 @@ int Spawn(const std::string& executable, const std::vector<std::string>& argumen
     }
     const int exit_code = WEXITSTATUS(status);
     if (exit_code == 127) {
-        out::error_line("OpenCode was not found on PATH");
+        MissingOpenCode();
     }
     return exit_code;
 #endif
