@@ -45,6 +45,32 @@ SDK — fix it there, then consume a new kit.
 - Never log API keys, tokens, or Authorization headers. Status/progress go to
   stderr.
 
+### P0 contract-first network rule
+
+Protobuf remains the source of truth for the packaged SDK/ABI boundary. For a
+direct HTTP API owned by RunAnywhere—especially Wally auth, account, billing,
+catalog, usage, and inference—the source of truth is the service's pinned
+OpenAPI 3.1 artifact. Add the operation to that contract first, then consume a
+generated C++ binding (or a mechanically verified thin adapter) from the exact
+contract hash.
+
+- Every operation has a stable `operationId` and named request, response,
+  error, parameter, and streaming-event schemas.
+- No command may invent JSON with string-built paths, ad-hoc objects,
+  untyped arrays, duplicated enums, or unchecked response parsing. Closed
+  values are generated enums; variants are discriminated unions; owned objects
+  are closed; IDs and scalar domains carry their contract constraints.
+- The transport may move opaque bytes for the SDK, but business code must never
+  treat opaque JSON as a typed result. SSE/OpenAI streaming adapters use
+  generated event/chunk types plus conformance tests.
+- Pin the OpenAPI artifact hash beside `SCHEMA_LOCK`. Contract, binding, CLI
+  adapter, fixtures, and drift/conformance tests land atomically; CI fails when
+  any one is stale.
+
+Do not wrap protobuf in OpenAPI merely to change protocol names. When RCLI only
+transports SDK-owned bytes, protobuf generation and `SCHEMA_LOCK` satisfy this
+rule. When RCLI directly owns an HTTP call, the OpenAPI requirement applies.
+
 Consistency with the SDK is `idl/SCHEMA_LOCK`, copied into the kit as
 `share/runanywhere/SCHEMA_LOCK` and pinned here as `RCLI_PINNED_IDL_SCHEMA_SHA256`.
 Configure fails if the kit's lock does not match (`cmake/RunAnywhereSDK.cmake`).
