@@ -438,13 +438,15 @@ std::string OptionalString(const Json& object, const char* key) {
     return found != object.end() && found->is_string() ? found->get<std::string>() : std::string();
 }
 
-long Number(const Json& object, const char* key, long fallback = 0) {
+// int64_t, not long: `long` is 32 bits on MSVC, and cost_micros passes 2^31
+// at about $2,147 of spend, so a Windows build silently truncated it.
+std::int64_t Number(const Json& object, const char* key, std::int64_t fallback = 0) {
     const auto found = object.find(key);
     if (found == object.end() || !found->is_number_integer()) {
         return fallback;
     }
     try {
-        return found->get<long>();
+        return found->get<std::int64_t>();
     } catch (const Json::exception&) {
         return fallback;
     }
@@ -486,7 +488,7 @@ bool ReadGrant(const Json& object, Grant* grant, std::string* error) {
     grant->refresh_token = OptionalString(object, "refresh_token");
     grant->email = OptionalString(object, "email");
     grant->plan = OptionalString(object, "plan");
-    grant->expires_in = std::max(0L, Number(object, "expires_in"));
+    grant->expires_in = std::max<std::int64_t>(0, Number(object, "expires_in"));
     if ((!grant->access_token.empty() && !SessionTokenIsSafe(grant->access_token)) ||
         (!grant->refresh_token.empty() && !SessionTokenIsSafe(grant->refresh_token)) ||
         (!grant->email.empty() && !DisplayTextIsSafe(grant->email, 320)) ||
@@ -565,10 +567,10 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         }
         return false;
     }
-    const long expires = Number(object, "expires_in", 600);
-    const long interval = Number(object, "interval", 2);
-    authorization->expires_in = static_cast<int>(std::clamp(expires, 30L, 1800L));
-    authorization->interval = static_cast<int>(std::clamp(interval, 1L, 30L));
+    const std::int64_t expires = Number(object, "expires_in", 600);
+    const std::int64_t interval = Number(object, "interval", 2);
+    authorization->expires_in = static_cast<int>(std::clamp<std::int64_t>(expires, 30, 1800));
+    authorization->interval = static_cast<int>(std::clamp<std::int64_t>(interval, 1, 30));
     return true;
 }
 
