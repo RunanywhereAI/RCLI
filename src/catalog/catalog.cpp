@@ -1749,6 +1749,31 @@ constexpr CatalogEntry kCatalog[] = {
     // 4225 ms of audio (32.8x realtime), 24 kHz, no NaNs. Gate A mel distance 0.2832-0.3159, where
     // upstream Kokoro's own real-op CustomSTFT scores 0.289 against its complex path and two
     // DIFFERENT utterances score 2.63-2.71 -- i.e. at the vocoder's floor, not conversion loss.
+    // The first ANE OCR row, and NeuRT's ninth served primitive (ABI v11). A detector +
+    // recognizer PAIR: the recognizer's input is a grid-sampled crop of the DETECTOR's
+    // 128-channel feature map, so neither half is usable alone -- which is why the three
+    // previously published nemotron-ocr bundles, recognizer-only, could never run. This bundle
+    // carries both, and the runtime now REFUSES a recognizer-only one by name.
+    //
+    // Gate A on an M4 Max: confidence 0.99995617, rbox 0.99993401, feature map 0.99999610
+    // (min 0.99993401 against a 0.999 bar). Detector latency 89.55 ms cpuAndNeuralEngine vs
+    // 186.65 ms cpuOnly -- 2.08x faster with the ANE admitted.
+    //
+    // DECODE QUALITY, stated rather than implied: greedy CTC, so reads are word-fragments.
+    // Upstream uses beam search plus a Kneser-Ney LM that lives in a torch CUDAExtension and
+    // cannot exist on Apple hardware. The pipeline itself is proven correct -- identical
+    // line-for-line to a pure-Python reference built from the torch detector, geometry_ref.py
+    // and the verbatim torch recognizer.
+    //
+    // The .zip, NOT the repo root: a bare huggingface.co/<org>/<repo> URL makes `rcli pull`
+    // fetch the repo's HTML page and report `done 100%`.
+    {"nemotron_ocr_v1_full_ane", "ocr-ane",
+     "Nemotron-OCR v1 detector+recognizer (Apple Neural Engine)",
+     v1::MODEL_CATEGORY_OCR, v1::INFERENCE_FRAMEWORK_COREML,
+     v1::MODEL_FORMAT_MLPACKAGE,
+     "https://huggingface.co/runanywhere/nemotron-ocr-v1-full_ANE/resolve/main/"
+     "nemotron-ocr-v1-full_ANE.zip",
+     nullptr, 0, 93253733LL, 0, false},
     {"kokoro_82m_ane", "kokoro-ane",
      "Kokoro 82M (Apple Neural Engine)",
      v1::MODEL_CATEGORY_SPEECH_SYNTHESIS, v1::INFERENCE_FRAMEWORK_COREML,

@@ -42,6 +42,7 @@ void register_rerank(CLI::App& app, GlobalOptions& options);
 void register_image(CLI::App& app, GlobalOptions& options);
 void register_diarize(CLI::App& app, GlobalOptions& options);
 void register_segment(CLI::App& app, GlobalOptions& options);
+void register_ocr(CLI::App& app, GlobalOptions& options);
 void register_voice(CLI::App& app, GlobalOptions& options);
 void register_rag(CLI::App& app, GlobalOptions& options);
 void register_models(CLI::App& app, GlobalOptions& options);
