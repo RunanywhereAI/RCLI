@@ -169,8 +169,17 @@ bool OnPath(const std::string& tool) {
     std::size_t at = 0;
     while (at <= haystack.size()) {
         const std::size_t end = haystack.find(kSeparator, at);
-        const std::string dir =
+        std::string dir =
             haystack.substr(at, end == std::string::npos ? std::string::npos : end - at);
+#if !defined(_WIN32)
+        // POSIX reads an empty PATH component as the working directory, and
+        // execvp honours that. Skipping it here made this preflight stricter
+        // than the exec it is meant to predict, so `./tool` on an empty
+        // component was reported missing and never run.
+        if (dir.empty()) {
+            dir = ".";
+        }
+#endif
         if (!dir.empty()) {
             for (const std::string& suffix : suffixes) {
                 std::error_code ec;
