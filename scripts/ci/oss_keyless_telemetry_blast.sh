@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OSS keyless gate: kit-linked rcli → development → public staging backend blast.
+# OSS keyless gate: kit-linked wally → development → public staging backend blast.
 # No API key. Asserts exit 0 and all 12 modalities stored ≥ 1.
 #
 # Requires a staging backend origin via env (never hardcode private infra hosts):
@@ -28,10 +28,10 @@ case "$(uname -s)" in
     ;;
 esac
 
-KIT="${RCLI_SDK_KIT:-$ROOT/kit}"
-RCLI="${RA_RCLI_BIN:-$ROOT/build/rcli-cxx}"
-if [[ ! -x "$RCLI" ]]; then
-  RCLI="${RA_RCLI_BIN:-$ROOT/build/rcli}"
+KIT="${WALLY_SDK_KIT:-$ROOT/kit}"
+WALLY="${RA_WALLY_BIN:-$ROOT/build/wally-cxx}"
+if [[ ! -x "$WALLY" ]]; then
+  WALLY="${RA_WALLY_BIN:-$ROOT/build/wally}"
 fi
 
 if [[ "${RA_SKIP_BUILD:-0}" != "1" ]]; then
@@ -43,8 +43,8 @@ if [[ "${RA_SKIP_BUILD:-0}" != "1" ]]; then
   cmake --build "$ROOT/build" -j "$JOBS"
 fi
 
-[[ -x "$RCLI" ]] || {
-  echo "rcli not executable: $RCLI" >&2
+[[ -x "$WALLY" ]] || {
+  echo "wally not executable: $WALLY" >&2
   exit 1
 }
 
@@ -61,12 +61,12 @@ export XDG_DATA_HOME="$TMP_HOME/data"
 export XDG_STATE_HOME="$TMP_HOME/state"
 export RUNANYWHERE_HOME="$TMP_HOME/home"
 
-echo "[oss-keyless] rcli=$RCLI"
+echo "[oss-keyless] wally=$WALLY"
 echo "[oss-keyless] base_url=$OSS_URL"
 echo "[oss-keyless] session_id=$SESSION"
 
 set +e
-OUT="$("$RCLI" --environment development \
+OUT="$("$WALLY" --environment development \
   --base-url "$OSS_URL" \
   telemetry blast \
   --processing-ms 42.5 \
@@ -78,7 +78,7 @@ set -e
 printf '%s\n' "$OUT"
 
 if [[ "$RC" -ne 0 ]]; then
-  echo "[oss-keyless] FAIL: rcli exited $RC" >&2
+  echo "[oss-keyless] FAIL: wally exited $RC" >&2
   exit "$RC"
 fi
 

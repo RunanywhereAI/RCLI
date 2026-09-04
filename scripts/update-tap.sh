@@ -2,15 +2,15 @@
 # =============================================================================
 # update-tap.sh <version>
 #
-# Stamps Formula/rcli.rb from a PUBLISHED GitHub Release (reads .sha256
-# sidecars) and pushes Formula/rcli.rb to the Homebrew tap.
+# Stamps Formula/wally.rb from a PUBLISHED GitHub Release (reads .sha256
+# sidecars) and pushes Formula/wally.rb to the Homebrew tap.
 #
 #   ./scripts/update-tap.sh 0.5.0
 #
 # Environment:
-#   RCLI_TAP_REPO   Tap git remote to update (required unless DRY_RUN=1)
-#   RCLI_TAP_DIR    Existing tap checkout to reuse (default: fresh temp clone)
-#   DRY_RUN=1       Render + print, do not commit/push
+#   WALLY_TAP_REPO   Tap git remote to update (required unless DRY_RUN=1)
+#   WALLY_TAP_DIR    Existing tap checkout to reuse (default: fresh temp clone)
+#   DRY_RUN=1        Render + print, do not commit/push
 # =============================================================================
 
 set -euo pipefail
@@ -20,9 +20,12 @@ VERSION="${VERSION#v}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-FORMULA="${CLI_ROOT}/Formula/rcli.rb"
+FORMULA="${CLI_ROOT}/Formula/wally.rb"
+# The repo itself is still RCLI -- only the binary, formula and tap file
+# renamed to wally. Do not "fix" this to RunanywhereAI/wally; that repo
+# doesn't exist.
 RELEASE_BASE="https://github.com/RunanywhereAI/RCLI/releases/download/v${VERSION}"
-TAP_REPO="${RCLI_TAP_REPO:-}"
+TAP_REPO="${WALLY_TAP_REPO:-}"
 
 fetch_sha() {
     local asset="$1"
@@ -33,7 +36,7 @@ fetch_sha() {
 }
 
 echo "Fetching release checksums for v${VERSION}..."
-SHA_MAC_ARM="$(fetch_sha "rcli-${VERSION}-macos-arm64.tar.gz")"
+SHA_MAC_ARM="$(fetch_sha "wally-${VERSION}-macos-arm64.tar.gz")"
 
 if [[ -f "${CLI_ROOT}/scripts/stamp-formula.py" ]]; then
     python3 "${CLI_ROOT}/scripts/stamp-formula.py" "${VERSION}" \
@@ -54,20 +57,20 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
 fi
 
 if [[ -z "${TAP_REPO}" ]]; then
-    echo "ERROR: set RCLI_TAP_REPO explicitly; the canonical RCLI vs homebrew-tap repository has not been decided." >&2
+    echo "ERROR: set WALLY_TAP_REPO explicitly; the canonical RCLI vs homebrew-tap repository has not been decided." >&2
     exit 1
 fi
 
-TAP_DIR="${RCLI_TAP_DIR:-}"
+TAP_DIR="${WALLY_TAP_DIR:-}"
 if [[ -z "${TAP_DIR}" ]]; then
     TAP_DIR="$(mktemp -d)/homebrew-tap"
     git clone --depth 1 "${TAP_REPO}" "${TAP_DIR}"
 fi
 
 mkdir -p "${TAP_DIR}/Formula"
-cp "${FORMULA}" "${TAP_DIR}/Formula/rcli.rb"
-git -C "${TAP_DIR}" add Formula/rcli.rb
-git -C "${TAP_DIR}" commit -m "rcli ${VERSION}"
+cp "${FORMULA}" "${TAP_DIR}/Formula/wally.rb"
+git -C "${TAP_DIR}" add Formula/wally.rb
+git -C "${TAP_DIR}" commit -m "wally ${VERSION}"
 git -C "${TAP_DIR}" push
 
 echo "Tap formula updated in ${TAP_REPO}"

@@ -1,5 +1,5 @@
-#ifndef RCLI_ANTHROPIC_MESSAGES_H
-#define RCLI_ANTHROPIC_MESSAGES_H
+#ifndef WALLY_ANTHROPIC_MESSAGES_H
+#define WALLY_ANTHROPIC_MESSAGES_H
 
 #include <string>
 
@@ -10,7 +10,7 @@
 /// Claude Code, Claude Desktop and Cowork all talk the Anthropic Messages API
 /// and are pointed elsewhere with ANTHROPIC_BASE_URL. Our server speaks
 /// OpenAI: /v1/models, /v1/chat/completions, /health, and nothing else. The two
-/// never meet, which is why `rcli opencode` works today and `rcli claude-code`
+/// never meet, which is why `wally opencode` works today and `wally claude-code`
 /// could not.
 ///
 /// This is the translator between them. It serves POST /v1/messages on
@@ -23,7 +23,7 @@
 /// vendor's wire format, which is an integration detail of this CLI, not
 /// inference logic every SDK consumer needs. If a second consumer ever wants
 /// it, that is the moment to move it down a layer.
-namespace rcli::anthropic {
+namespace wally::anthropic {
 
 /// A running translator.
 struct Shim {
@@ -57,6 +57,6 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
 /// Stops the translator and waits for its thread. Safe on a stopped shim.
 void Stop(Shim* shim);
 
-}  // namespace rcli::anthropic
+}  // namespace wally::anthropic
 
-#endif  // RCLI_ANTHROPIC_MESSAGES_H
+#endif  // WALLY_ANTHROPIC_MESSAGES_H

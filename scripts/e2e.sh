@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# Kit-consumer e2e for a built rcli binary. Does not compile the SDK.
+# Kit-consumer e2e for a built wally binary. Does not compile the SDK.
 #
-#   scripts/e2e.sh <path-to-rcli>
+#   scripts/e2e.sh <path-to-wally>
 #
-# Always runs scripts/smoke.sh (no model download). Set RCLI_E2E_MODEL to also
+# Always runs scripts/smoke.sh (no model download). Set WALLY_E2E_MODEL to also
 # pull a catalog model and run one generation — that needs network + disk.
 # Overlay / device round-trips live in scripts/e2e-modalities.sh and are keyed
 # by primitive, not engine. Public CI leaves those knobs unset (skip).
-# CMAKE_PREFIX_PATH is optional; RCLI_SDK_KIT is preferred. Unset is fine.
+# CMAKE_PREFIX_PATH is optional; WALLY_SDK_KIT is preferred. Unset is fine.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RCLI="${1:?usage: e2e.sh <path-to-rcli>}"
-if [[ ! -e "${RCLI}" ]]; then
-    echo "not found: ${RCLI}" >&2
+WALLY="${1:?usage: e2e.sh <path-to-wally>}"
+if [[ ! -e "${WALLY}" ]]; then
+    echo "not found: ${WALLY}" >&2
     exit 1
 fi
-if [[ ! -x "${RCLI}" && "${RCLI}" != *.exe && "${RCLI}" != *.EXE ]]; then
-    echo "not executable: ${RCLI}" >&2
+if [[ ! -x "${WALLY}" && "${WALLY}" != *.exe && "${WALLY}" != *.EXE ]]; then
+    echo "not executable: ${WALLY}" >&2
     exit 1
 fi
 
 kit_cfg=""
-kit_root="${RCLI_SDK_KIT:-${CMAKE_PREFIX_PATH-}}"
+kit_root="${WALLY_SDK_KIT:-${CMAKE_PREFIX_PATH-}}"
 # CMAKE_PREFIX_PATH may be a list: ':' separated on POSIX, ';' on Windows. Take
 # the first entry, but never split a Windows path at its drive-letter colon --
-# doing that turned "D:/a/RCLI/kit" into "D", the kit Config was then never
+# doing that turned "D:/a/WALLY/kit" into "D", the kit Config was then never
 # found, and the backend check silently fell back to expecting llamacpp + onnx
 # + sherpa. On x64 that default happens to be correct so the bug stayed hidden;
 # on ARM64, whose kit ships none of them, it failed the job.
@@ -51,10 +51,10 @@ if [[ -n "${kit_root}" ]]; then
 fi
 
 # Win32 LoadLibrary searches the exe directory, then PATH. Stage kit DLLs
-# next to rcli.exe and put third_party on PATH so onnx/sherpa can register
+# next to wally.exe and put third_party on PATH so onnx/sherpa can register
 # even if CMake's configure-time GLOB missed a file.
-if [[ "${RCLI}" == *.exe || "${RCLI}" == *.EXE ]] && [[ -n "${kit_root}" ]]; then
-    exe_dir="$(cd "$(dirname "${RCLI}")" && pwd)"
+if [[ "${WALLY}" == *.exe || "${WALLY}" == *.EXE ]] && [[ -n "${kit_root}" ]]; then
+    exe_dir="$(cd "$(dirname "${WALLY}")" && pwd)"
     for d in "${kit_root}/third_party" "${kit_root}/bin" "${kit_root}/lib"; do
         [[ -d "${d}" ]] || continue
         if command -v cygpath >/dev/null 2>&1; then
@@ -67,7 +67,7 @@ if [[ "${RCLI}" == *.exe || "${RCLI}" == *.EXE ]] && [[ -n "${kit_root}" ]]; the
     export PATH
 fi
 
-bash "${ROOT}/scripts/smoke.sh" "${RCLI}"
+bash "${ROOT}/scripts/smoke.sh" "${WALLY}"
 
 fail=0
 check() {
@@ -80,12 +80,12 @@ check() {
     fi
 }
 
-echo "e2e (modelless extras): ${RCLI}"
-check "info" "${RCLI}" info
+echo "e2e (modelless extras): ${WALLY}"
+check "info" "${WALLY}" info
 
 # Assert the engines this binary's kit actually ships. A 0.20.26 Windows kit
 # may only advertise llamacpp; 0.20.28+ kits advertise onnx + sherpa too.
-# Product `rcli` on Apple Silicon also includes MLX. Intermediate `rcli-cxx` does not.
+# Product `wally` on Apple Silicon also includes MLX. Intermediate `wally-cxx` does not.
 
 expected_backends=()
 kit_flag_true() {
@@ -108,16 +108,16 @@ else
         expected_backends+=(sherpa)
     fi
 fi
-base="$(basename "${RCLI}")"
+base="$(basename "${WALLY}")"
 base="${base%.exe}"
-if [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 && "${base}" == "rcli" ]]; then
+if [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 && "${base}" == "wally" ]]; then
     expected_backends+=(mlx)
 fi
 # Overlay archives flip HAS_NEURT/HAS_QHEXRT at find_package time, but the
 # packaged Config.cmake still says FALSE. Presence of the backend library is
-# the source of truth. Only RCLI_SDK_KIT counts — ambient CMAKE_PREFIX_PATH
+# the source of truth. Only WALLY_SDK_KIT counts — ambient CMAKE_PREFIX_PATH
 # from an overlay rebuild must not fail a public-bottle e2e.
-overlay_root="${RCLI_SDK_KIT-}"
+overlay_root="${WALLY_SDK_KIT-}"
 if [[ -n "${overlay_root}" ]] && command -v cygpath >/dev/null 2>&1; then
     overlay_root="$(cygpath -u "${overlay_root}")"
 fi
@@ -131,47 +131,47 @@ if [[ -n "${overlay_root}" ]]; then
 fi
 if [[ ${#expected_backends[@]} -eq 0 ]]; then
     echo "  skip  backends (kit has no engines)"
-elif bash "${ROOT}/scripts/assert-backends.sh" "${RCLI}" "${expected_backends[@]}"; then
+elif bash "${ROOT}/scripts/assert-backends.sh" "${WALLY}" "${expected_backends[@]}"; then
     echo "  ok    backends ${expected_backends[*]}"
 else
     echo "  FAIL  backends ${expected_backends[*]}"
     fail=1
 fi
 if [[ ${#expected_backends[@]} -gt 0 ]]; then
-    if bash "${ROOT}/scripts/assert-binary-backends.sh" "${RCLI}" "${expected_backends[@]}"; then
+    if bash "${ROOT}/scripts/assert-binary-backends.sh" "${WALLY}" "${expected_backends[@]}"; then
         echo "  ok    binary ${expected_backends[*]}"
     else
         echo "  FAIL  binary ${expected_backends[*]}"
         fail=1
     fi
 fi
-if "${RCLI}" models list --help >/dev/null 2>&1; then
-    check "models list" "${RCLI}" models list
+if "${WALLY}" models list --help >/dev/null 2>&1; then
+    check "models list" "${WALLY}" models list
 fi
 
 # Per-backend help surfaces that only compile in when the engine is linked.
 for name in "${expected_backends[@]}"; do
     case "${name}" in
         neurt)
-            check "image generate --help" "${RCLI}" image generate --help
+            check "image generate --help" "${WALLY}" image generate --help
             ;;
         mlx|qhexrt)
-            check "run --help" "${RCLI}" run --help
+            check "run --help" "${WALLY}" run --help
             ;;
     esac
 done
 
 # Modality round-trips (engine-agnostic). Skip when no model is discovered.
-# RCLI_E2E_MODALITIES=0 disables this so public CI can stay modelless-only.
-if [[ "${RCLI_E2E_MODALITIES:-1}" != "0" ]]; then
-    if bash "${ROOT}/scripts/e2e-modalities.sh" "${RCLI}"; then
+# WALLY_E2E_MODALITIES=0 disables this so public CI can stay modelless-only.
+if [[ "${WALLY_E2E_MODALITIES:-1}" != "0" ]]; then
+    if bash "${ROOT}/scripts/e2e-modalities.sh" "${WALLY}"; then
         echo "  ok    modalities"
     else
         echo "  FAIL  modalities"
         fail=1
     fi
 else
-    echo "  skip  modalities (RCLI_E2E_MODALITIES=0)"
+    echo "  skip  modalities (WALLY_E2E_MODALITIES=0)"
 fi
 
 exit "${fail}"

@@ -1,6 +1,6 @@
 /**
  * @file cmd_diarize.cpp
- * @brief `rcli diarize <audio.wav> --model <id-or-path>` — offline speaker
+ * @brief `wally diarize <audio.wav> --model <id-or-path>` — offline speaker
  *        diarization via the commons diarization service (audio-in → typed
  *        speaker segments out).
  *
@@ -28,7 +28,7 @@
 #include "rac/features/diarization/rac_diarization_service.h"
 #include "rac/features/diarization/rac_diarization_types.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -180,4 +180,4 @@ void register_diarize(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

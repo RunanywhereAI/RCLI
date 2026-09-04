@@ -1,8 +1,8 @@
 /**
  * @file cmd_tts.cpp
- * @brief `rcli tts synthesize "text" --output o.wav` — speech synthesis.
+ * @brief `wally tts synthesize "text" --output o.wav` — speech synthesis.
  *
- * `rcli tts --text "…" --output o.wav` is the same command: the options live on
+ * `wally tts --text "…" --output o.wav` is the same command: the options live on
  * the `tts` namespace and `synthesize` is a CLI11 fallthrough alias.
  *
  * The sherpa TTS engine returns float PCM at the voice's native sample rate
@@ -20,7 +20,7 @@
 #include "rac/features/tts/rac_tts_component.h"
 #include "rac/features/tts/rac_tts_types.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -159,4 +159,4 @@ void register_tts(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

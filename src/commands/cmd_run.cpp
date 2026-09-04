@@ -1,7 +1,7 @@
 /**
  * @file cmd_run.cpp
- * @brief `rcli llm generate|stream`, `rcli vlm generate`, and the terminal
- *        aliases `rcli run` / `rcli chat`.
+ * @brief `wally llm generate|stream`, `wally vlm generate`, and the terminal
+ *        aliases `wally run` / `wally chat`.
  *
  * Canonical SDK flow, all heavy lifting in commons:
  *   rac_model_lifecycle_load_proto(validate_availability=true)  → auto-pulls
@@ -16,7 +16,7 @@
  *   Ctrl-C: rac_llm_cancel_proto from the token callback thread.
  *
  * REPL turns are independent generations (no cross-turn memory yet — that
- * needs a commons chat-session API; tracked in the rcli plan doc).
+ * needs a commons chat-session API; tracked in the wally plan doc).
  */
 
 #include "commands/commands.h"
@@ -50,7 +50,7 @@
 #include "repl/repl.h"
 #include "util/term.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -649,7 +649,7 @@ int run_llm(const GlobalOptions& options, LlmVerb verb, const std::string& promp
 
     std::string effective_prompt = prompt;
     if (effective_prompt.empty() && !term::stdin_is_tty()) {
-        // Piped stdin is the prompt: echo "..." | rcli llm generate -m qwen3
+        // Piped stdin is the prompt: echo "..." | wally llm generate -m qwen3
         effective_prompt = read_piped_prompt();
     }
 
@@ -784,4 +784,4 @@ void register_llm_aliases(CLI::App& app, GlobalOptions& options) {
         options, LlmVerb::Chat, ModelArg::Positional);
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

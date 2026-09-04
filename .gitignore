@@ -18,7 +18,7 @@ swift/.build/
 # creates this now; the pattern stays so an old working copy is not committed.
 deps/
 
-# Model weights, in case any land in the tree. rcli keeps them out of the repo,
+# Model weights, in case any land in the tree. wally keeps them out of the repo,
 # under ~/.local/share/runanywhere.
 # Use /models/ (root-level only) to avoid ignoring src/models/ headers
 /models/

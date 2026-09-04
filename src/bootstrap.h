@@ -1,6 +1,6 @@
 /**
  * @file bootstrap.h
- * @brief One-call SDK bring-up for every rcli command.
+ * @brief One-call SDK bring-up for every wally command.
  *
  * Mirrors the canonical bootstrap proven by the commons real-inference tests
  * (tests/test_voice_agent.cpp) with real desktop I/O:
@@ -11,8 +11,8 @@
  * Commands call bootstrap() exactly once; it is idempotent within a process.
  */
 
-#ifndef RCLI_BOOTSTRAP_H
-#define RCLI_BOOTSTRAP_H
+#ifndef WALLY_BOOTSTRAP_H
+#define WALLY_BOOTSTRAP_H
 
 #include <string>
 
@@ -21,7 +21,7 @@
 
 typedef struct rac_telemetry_manager rac_telemetry_manager_t;
 
-namespace rcli {
+namespace wally {
 
 /** Global flags shared by all subcommands (parsed in main.cpp). */
 struct GlobalOptions {
@@ -90,6 +90,6 @@ void shutdown();
  */
 rac_telemetry_manager_t* active_telemetry_manager();
 
-}  // namespace rcli
+}  // namespace wally
 
-#endif  // RCLI_BOOTSTRAP_H
+#endif  // WALLY_BOOTSTRAP_H

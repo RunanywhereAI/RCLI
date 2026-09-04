@@ -1,8 +1,8 @@
 /**
  * @file cmd_vad.cpp
- * @brief `rcli vad detect <a.wav>` — speech segment detection.
+ * @brief `wally vad detect <a.wav>` — speech segment detection.
  *
- * `rcli vad --input a.wav` is the same command: the options live on the `vad`
+ * `wally vad --input a.wav` is the same command: the options live on the `vad`
  * namespace and `detect` is a CLI11 fallthrough alias.
  *
  * Feeds 16 kHz float frames through the VAD component (Silero when the model
@@ -22,7 +22,7 @@
 #include "io/output.h"
 #include "io/wav_io.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -181,4 +181,4 @@ void register_vad(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

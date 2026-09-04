@@ -1,6 +1,6 @@
 /**
  * @file cmd_bench.cpp
- * @brief `rcli bench [model]` — auto-benchmark installed models, like the
+ * @brief `wally bench [model]` — auto-benchmark installed models, like the
  *        Android app's benchmark screen.
  *
  * With no model argument it enumerates every downloaded, non-built-in model
@@ -50,7 +50,7 @@
 #include "rac/features/vlm/rac_vlm_service.h"
 #include "rac/infrastructure/model_management/rac_model_registry.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -650,7 +650,7 @@ int run_bench(const GlobalOptions& options, const std::string& model_ref_arg, in
     // bundle directory, an HF ref or a URL all work here too. collect_models
     // only ever scans the registry, so without this an unregistered ref — which
     // is what a freshly staged bundle on disk is — reported "not a downloaded
-    // benchmarkable model" even though `rcli run` could load it fine.
+    // benchmarkable model" even though `wally run` could load it fine.
     std::string only_model = model_ref_arg;
     if (!model_ref_arg.empty()) {
         model_ref::Resolved resolved;
@@ -671,7 +671,7 @@ int run_bench(const GlobalOptions& options, const std::string& model_ref_arg, in
     }
     if (models.empty()) {
         out::error_line(only_model.empty()
-                            ? "no downloaded models to benchmark (pull one with `rcli pull`)"
+                            ? "no downloaded models to benchmark (pull one with `wally pull`)"
                             : "model '" + only_model + "' is not a downloaded benchmarkable model");
         return 1;
     }
@@ -783,4 +783,4 @@ void register_bench(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

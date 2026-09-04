@@ -2,6 +2,8 @@
 
 #include <exception>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <CLI11.hpp>
 
@@ -11,14 +13,14 @@
 
 #include "rac/core/rac_logger.h"
 
-#ifndef RCLI_VERSION
-#define RCLI_VERSION "0.0.0-dev"
+#ifndef WALLY_VERSION
+#define WALLY_VERSION "0.0.0-dev"
 #endif
 
-namespace rcli {
+namespace wally {
 
 void configure_app(CLI::App& app, GlobalOptions& options) {
-    app.set_version_flag("--version,-V", std::string("rcli ") + RCLI_VERSION);
+    app.set_version_flag("--version,-V", std::string("wally ") + WALLY_VERSION);
     app.require_subcommand(0, 1);
     app.fallthrough(true);
 
@@ -77,6 +79,53 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     commands::register_editors(app, options);
     commands::register_harness(app, options);
     commands::register_telemetry(app, options);
+
+    // `--help` groups: CLI11 prints one heading per distinct group string, in
+    // the order each group is first seen (Formatter::make_subcommands), so
+    // this order is the print order. Centralized here rather than one
+    // ->group() call per register_* file: 36 top-level commands with no
+    // grouping at all used to land in a single default SUBCOMMANDS: bucket.
+    const std::vector<std::pair<const char*, const char*>> help_groups = {
+        {"llm", "Generate"},      {"vlm", "Generate"},      {"stt", "Generate"},
+        {"tts", "Generate"},      {"vad", "Generate"},      {"embed", "Generate"},
+        {"rerank", "Generate"},   {"image", "Generate"},    {"diarize", "Generate"},
+        {"segment", "Generate"},  {"voice", "Generate"},    {"rag", "Generate"},
+        {"run", "Shortcuts"},     {"chat", "Shortcuts"},     {"ls", "Shortcuts"},
+        {"show", "Shortcuts"},    {"pull", "Shortcuts"},     {"rm", "Shortcuts"},
+        {"models", "Models"},     {"lora", "Models"},
+        {"serve", "Serve & measure"}, {"bench", "Serve & measure"},
+        {"backends", "Serve & measure"}, {"info", "Serve & measure"},
+        {"version", "Serve & measure"},
+        {"auth", "Account"},      {"login", "Account"},      {"logout", "Account"},
+        {"whoami", "Account"},    {"usage", "Account"},
+        {"opencode", "Editors & agents"},    {"claude-code", "Editors & agents"},
+        {"claude-desktop", "Editors & agents"}, {"clion", "Editors & agents"},
+        {"rustrover", "Editors & agents"},
+    };
+    // configure_app() runs ahead of run()'s own try/catch (and tests call it
+    // directly with none at all), so a typo here must never propagate as an
+    // uncaught exception -- that crashed the Windows CI binaries outright
+    // (0xC0000409, no diagnostic) the one time a name here didn't match.
+    // Report it and keep going with the default flat listing rather than
+    // taking the whole CLI down over a --help cosmetic.
+    for (const auto& [name, group] : help_groups) {
+        try {
+            app.get_subcommand(name)->group(group);
+        } catch (const CLI::OptionNotFound&) {
+            out::error_line(std::string("internal: --help grouping named an unknown "
+                                        "subcommand '") +
+                            name + "', skipping it");
+        }
+    }
+    // Internal debug tool, not a command a user reaches for. An empty group
+    // string drops a subcommand out of the default listing entirely
+    // (Formatter::make_subcommands) while it stays fully callable —
+    // `wally telemetry --help` still works.
+    try {
+        app.get_subcommand("telemetry")->group("");
+    } catch (const CLI::OptionNotFound&) {
+        // Nothing to hide if it isn't there.
+    }
 }
 
 int run(int argc, char** argv) {
@@ -90,7 +139,7 @@ int run(int argc, char** argv) {
     try {
         app.parse(argc, argv);
         if (app.get_subcommands().empty()) {
-            // Bare `rcli` prints help like `ollama` does.
+            // Bare `wally` prints help like `ollama` does.
             out::status_line(app.help());
         }
     } catch (const CLI::CallForHelp& e) {
@@ -111,23 +160,31 @@ int run(int argc, char** argv) {
     return exit_code;
 }
 
-}  // namespace rcli
+}  // namespace wally
 
-extern "C" int rcli_run_main(int argc, char** argv) {
-    // Here, not in main(). The shipped Apple binary is the Swift MLX host,
-    // which registers its callbacks and enters at this symbol; it never runs
-    // main.cpp, so the quieting that used to live there covered `rcli-cxx` and
-    // left the product binary noisy. Measured on `info`: `rcli` 4 RAC lines,
-    // `rcli-cxx` 2. Moving it here is what puts the product binary on the same
-    // footing; the 2 it should land on is inferred from rcli-cxx, not measured,
-    // because the Swift host does not build without the SDK Swift tree.
+// Called from Swift, before MLX.register() — measured, not inferred: the
+// Swift host logs 3 more INFO lines during that call (Swift callbacks
+// registered, MLX backend registered, RunAnywhereMLX backend registered
+// successfully), all before wally_run_main ever runs, so muting only inside
+// wally_run_main left 5 RAC lines on `wally --version` instead of the 2 the
+// old comment here assumed. Splitting the mute into its own entry point,
+// called from WallyMLX.swift ahead of MLX.register(), is what actually gets
+// there.
+extern "C" void wally_quiet_sdk_logging() {
+    rac_logger_set_min_level(RAC_LOG_ERROR);
+}
+
+extern "C" int wally_run_main(int argc, char** argv) {
+    // Covers `wally-cxx` and any other entry that skips the Swift host, where
+    // wally_quiet_sdk_logging() above is never called. Idempotent with it.
     //
-    // Those 2 are backend registration WARNs emitted during static
-    // initialisation, which completes before any entry point runs. No call from
-    // inside the process can catch them; silencing them needs a pre-registration
-    // hook in the kit, and the kit owns backend registration.
+    // The 2 RAC lines still on stderr on every entry point are backend
+    // registration WARNs emitted during static initialisation, which
+    // completes before any entry point runs. No call from inside the process
+    // can catch them; silencing them needs a pre-registration hook in the
+    // kit, and the kit owns backend registration.
     //
     // `--verbose` raises the level again in bootstrap().
     rac_logger_set_min_level(RAC_LOG_ERROR);
-    return rcli::run(argc, argv);
+    return wally::run(argc, argv);
 }

@@ -6,15 +6,15 @@
  * stay 0 / absent. Harness wall clocks (load/warmup/measured e2e) are separate.
  */
 
-#ifndef RCLI_COMMANDS_BENCH_METRICS_H
-#define RCLI_COMMANDS_BENCH_METRICS_H
+#ifndef WALLY_COMMANDS_BENCH_METRICS_H
+#define WALLY_COMMANDS_BENCH_METRICS_H
 
 #include "llm_options.pb.h"
 #include "vlm_options.pb.h"
 
 #include <cstdint>
 
-namespace rcli::commands::bench_metrics {
+namespace wally::commands::bench_metrics {
 
 struct LlmVlmMetrics {
     double end_to_end_ms = 0.0;
@@ -75,6 +75,6 @@ inline bool fill_vlm(const runanywhere::v1::VLMResult& r, double measured_e2e_ms
     return true;
 }
 
-}  // namespace rcli::commands::bench_metrics
+}  // namespace wally::commands::bench_metrics
 
-#endif  // RCLI_COMMANDS_BENCH_METRICS_H
+#endif  // WALLY_COMMANDS_BENCH_METRICS_H

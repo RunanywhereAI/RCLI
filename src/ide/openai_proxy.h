@@ -1,5 +1,5 @@
-#ifndef RCLI_IDE_OPENAI_PROXY_H
-#define RCLI_IDE_OPENAI_PROXY_H
+#ifndef WALLY_IDE_OPENAI_PROXY_H
+#define WALLY_IDE_OPENAI_PROXY_H
 
 #include <string>
 
@@ -13,11 +13,11 @@
 /// it in the IDE's credential store, and the IDE never reads what we write
 /// there — the provider comes up with an empty key and the console answers 401.
 ///
-/// So the token stays here. rcli listens on loopback, adds the header, and
+/// So the token stays here. wally listens on loopback, adds the header, and
 /// forwards. The IDE is configured exactly as it is for a local model, with no
 /// key at all, which is the case already known to work. It also keeps the
 /// reader's token out of a second store that neither of us controls.
-namespace rcli::ide {
+namespace wally::ide {
 
 struct Proxy {
     bool running = false;
@@ -31,7 +31,7 @@ struct Proxy {
 /// whatever it asked for. The console lists its provider's whole catalogue,
 /// deprecated entries included, and an editor showing all of them invites a
 /// choice that fails — which is how `models/gemini-2.5-pro`, retired for new
-/// users, ended up being asked a question. rcli was told which model to serve;
+/// users, ended up being asked a question. wally was told which model to serve;
 /// that is the one the editor gets.
 ///
 /// Returns false having already said why. Nothing else is translated on the way
@@ -42,6 +42,6 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
 /// Stops the listener. Safe on a proxy that never started.
 void StopProxy(Proxy* proxy);
 
-}  // namespace rcli::ide
+}  // namespace wally::ide
 
-#endif  // RCLI_IDE_OPENAI_PROXY_H
+#endif  // WALLY_IDE_OPENAI_PROXY_H

@@ -8,8 +8,8 @@
  * the buffer.
  */
 
-#ifndef RCLI_IO_PROTO_H
-#define RCLI_IO_PROTO_H
+#ifndef WALLY_IO_PROTO_H
+#define WALLY_IO_PROTO_H
 
 #include <string>
 
@@ -17,7 +17,7 @@
 
 #include "io/output.h"
 
-namespace rcli::proto {
+namespace wally::proto {
 
 /**
  * Parse an out-buffer into `message`, freeing the buffer in all paths.
@@ -31,7 +31,7 @@ bool parse_proto_buffer(rac_proto_buffer_t* buffer, Message* message, std::strin
         if (error) {
             *error = (buffer->error_message && buffer->error_message[0] != '\0')
                          ? buffer->error_message
-                         : rcli::out::describe_result(buffer->status);
+                         : wally::out::describe_result(buffer->status);
         }
     } else if (!message->ParseFromArray(buffer->data, static_cast<int>(buffer->size))) {
         if (error) {
@@ -56,6 +56,6 @@ std::string serialize(const Message& message) {
     return bytes;
 }
 
-}  // namespace rcli::proto
+}  // namespace wally::proto
 
-#endif  // RCLI_IO_PROTO_H
+#endif  // WALLY_IO_PROTO_H

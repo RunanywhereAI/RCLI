@@ -21,7 +21,7 @@
 #include "commands/commands.h"
 #include "io/output.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 namespace {
 
 void fail(int status) {
@@ -40,7 +40,12 @@ void fail(int status) {
 /// passes the same rules — the path and request code stay exactly as sent.
 /// The console origin the operator declared, normalised, or empty if none.
 std::string ConsoleWebOrigin() {
-    const char* configured = std::getenv("RCLI_CONSOLE_WEB_URL");
+    const char* configured = std::getenv("WALLY_CONSOLE_WEB_URL");
+    if (configured == nullptr || *configured == '\0') {
+        // rcli-era override, still honored so it doesn't go silently unread
+        // after the wally rename.
+        configured = std::getenv("RCLI_CONSOLE_WEB_URL");
+    }
     std::string origin;
     if (configured == nullptr || *configured == '\0' ||
         !account::NormalizeConsoleUrl(configured, &origin, nullptr)) {
@@ -139,7 +144,7 @@ bool RefreshSession(const account::ConsoleClient& client, account::Credentials* 
                     std::string* error) {
     if (credentials->refresh_token.empty()) {
         if (error != nullptr) {
-            *error = "the cloud session cannot be refreshed; run `rcli login`";
+            *error = "the cloud session cannot be refreshed; run `wally login`";
         }
         return false;
     }
@@ -262,7 +267,7 @@ int WhoAmI() {
         return 1;
     }
     if (!credentials.signed_in()) {
-        out::error_line("not signed in — run `rcli login`");
+        out::error_line("not signed in — run `wally login`");
         return 1;
     }
 
@@ -311,7 +316,7 @@ void register_account(CLI::App& app, GlobalOptions& options) {
     login
         ->add_option("--console-url", *console_url,
                      "console API origin (default: " + account::DefaultConsoleUrl() + ")")
-        ->envname("RCLI_CONSOLE_URL");
+        ->envname("WALLY_CONSOLE_URL");
     login->callback([no_browser, console_url] { fail(Login(*console_url, !*no_browser)); });
 
     auto* logout = app.add_subcommand("logout", "revoke and remove the cloud session");
@@ -321,4 +326,4 @@ void register_account(CLI::App& app, GlobalOptions& options) {
     whoami->callback([] { fail(WhoAmI()); });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

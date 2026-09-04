@@ -1,6 +1,6 @@
 /**
  * @file cmd_voice.cpp
- * @brief `rcli voice --input a.wav` — one-shot voice turn (STT → LLM → TTS)
+ * @brief `wally voice --input a.wav` — one-shot voice turn (STT → LLM → TTS)
  *        via the commons voice agent, mirroring tests/test_voice_agent.cpp.
  */
 
@@ -23,7 +23,7 @@
 #include "io/proto.h"
 #include "io/wav_io.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -174,4 +174,4 @@ void register_voice(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

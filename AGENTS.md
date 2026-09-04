@@ -1,17 +1,17 @@
-# AGENTS.md — RCLI
+# AGENTS.md — Wally
 
 > **`AGENTS.md` is the real file.** `CLAUDE.md` is a committed symlink to it.
 > Editing either name edits the same bytes. `bash scripts/ci/check-agents-sync.sh --fix`
 > recreates the link and mirrors `.claude/skills/` → `.agents/skills/`. CI fails
 > if the pair drifts.
 
-This repository is the official `rcli` product CLI. It consumes a **packaged
+This repository is the official `wally` product CLI. It consumes a **packaged
 C++ desktop kit** via `find_package(RunAnywhere)`. It does not `add_subdirectory`
 or FetchContent the SDK, and it does not compile llama.cpp / Sherpa / ONNX / MLX
 from source.
 
-Pin: `cmake/sdk-pin.cmake`. Prefix: `-DCMAKE_PREFIX_PATH=` or `-DRCLI_SDK_KIT=`.
-Pointing `RCLI_SDK_DIR` at SDK **source** is a configure error.
+Pin: `cmake/sdk-pin.cmake`. Prefix: `-DCMAKE_PREFIX_PATH=` or `-DWALLY_SDK_KIT=`.
+Pointing `WALLY_SDK_DIR` at SDK **source** is a configure error.
 
 `BEST_PRACTISES.md` / `BEST_PRACTICES.md` (if present) is a local playbook and
 must stay gitignored. The rules below are the subset that applies to this CLI.
@@ -67,12 +67,12 @@ contract hash.
   adapter, fixtures, and drift/conformance tests land atomically; CI fails when
   any one is stale.
 
-Do not wrap protobuf in OpenAPI merely to change protocol names. When RCLI only
+Do not wrap protobuf in OpenAPI merely to change protocol names. When Wally only
 transports SDK-owned bytes, protobuf generation and `SCHEMA_LOCK` satisfy this
-rule. When RCLI directly owns an HTTP call, the OpenAPI requirement applies.
+rule. When Wally directly owns an HTTP call, the OpenAPI requirement applies.
 
 Consistency with the SDK is `idl/SCHEMA_LOCK`, copied into the kit as
-`share/runanywhere/SCHEMA_LOCK` and pinned here as `RCLI_PINNED_IDL_SCHEMA_SHA256`.
+`share/runanywhere/SCHEMA_LOCK` and pinned here as `WALLY_PINNED_IDL_SCHEMA_SHA256`.
 Configure fails if the kit's lock does not match (`cmake/RunAnywhereSDK.cmake`).
 When the schema changes, consume a new kit and bump the pin — never regenerate
 headers locally.
@@ -91,7 +91,7 @@ or a retired MetalRT / hardcoded catalog.
 
 ## Signing in to a console
 
-`rcli login` is a device flow, the same shape `gh auth login` uses. The terminal
+`wally login` is a device flow, the same shape `gh auth login` uses. The terminal
 asks for a code, a browser the person already trusts approves it, and the
 terminal collects a key. No password ever reaches the CLI.
 
@@ -111,16 +111,16 @@ the page a person approves the sign-in on.
 
 | | Default | Override |
 |---|---|---|
-| API | `https://inference.runanywhere.ai` | `RCLI_CONSOLE_URL` |
-| Approval page | `https://console.runanywhere.ai` | `RCLI_CONSOLE_WEB_URL` |
+| API | `https://inference.runanywhere.ai` | `WALLY_CONSOLE_URL` |
+| Approval page | `https://console.runanywhere.ai` | `WALLY_CONSOLE_WEB_URL` |
 
 Both defaults live together in `src/account/credentials.cpp` so they cannot
 drift apart, and `TrustedBrowserOrigins()` is what pairs them: with no override
 it trusts the deployed console, and for any other API origin it trusts only
-that origin. Pointing at a local dev console needs `RCLI_CONSOLE_URL` set
-explicitly, e.g. `RCLI_CONSOLE_URL=http://localhost:8080`.
+that origin. Pointing at a local dev console needs `WALLY_CONSOLE_URL` set
+explicitly, e.g. `WALLY_CONSOLE_URL=http://localhost:8080`.
 
-`RCLI_PROFILE_DIR` moves the credential file, which is what lets several
+`WALLY_PROFILE_DIR` moves the credential file, which is what lets several
 accounts share one machine.
 
 The credential is a normal API key with the customer's credit behind it. Treat
@@ -129,13 +129,13 @@ never logged.
 
 ## Building against the SDK
 
-`RCLI_SDK_KIT` points at a built kit, not at SDK source. `cmake/sdk-pin.cmake`
+`WALLY_SDK_KIT` points at a built kit, not at SDK source. `cmake/sdk-pin.cmake`
 pins the IDL version and its hash; a mismatch is a hard error and the fix is to
 consume a matching kit or bump the pin, **never to run protoc**.
 
-Two binaries come out of a build. `rcli-cxx` is the CLI. `rcli` is the same
-thing plus the MLX backend, and it only builds when `RCLI_SDK_SWIFT_PATH` names
-an SDK checkout with the Swift tree. Ship `rcli`.
+Two binaries come out of a build. `wally-cxx` is the CLI. `wally` is the same
+thing plus the MLX backend, and it only builds when `WALLY_SDK_SWIFT_PATH` names
+an SDK checkout with the Swift tree. Ship `wally`.
 
 MLX resolves its Metal shaders from `mlx-swift_Cmlx.bundle` beside the
 executable. Copy the binary somewhere on its own and MLX silently fails to
@@ -151,20 +151,20 @@ register, so an install puts both together and points a wrapper at them.
 
 ## Tests
 
-Hermetic unit tests (`tests/test_rcli_unit.cpp`): no models, no network, no real
+Hermetic unit tests (`tests/test_wally_unit.cpp`): no models, no network, no real
 keys. `ctest` is the default CI bar.
 
 Smoke / e2e (`scripts/smoke.sh`, `scripts/e2e.sh`) prove the product promise
 against a **pinned kit**, not SDK source. `scripts/e2e-modalities.sh` (called
 from `e2e.sh`) runs optional round-trips **by modality** — LLM, STT, TTS, VLM,
 embed, image, VAD, rerank, segment — and never requires `--engine`. Discover
-models via `RCLI_E2E_<MOD>` (path or catalog id), `RCLI_E2E_MODEL_ROOTS`, or
-`RCLI_E2E_AUTO=1`. Legacy `RCLI_E2E_MODEL` / `RCLI_E2E_MLX_MODEL` /
-`RCLI_E2E_NEURT_MODEL` / `RCLI_E2E_QHEXRT_MODEL` still map onto those
+models via `WALLY_E2E_<MOD>` (path or catalog id), `WALLY_E2E_MODEL_ROOTS`, or
+`WALLY_E2E_AUTO=1`. Legacy `WALLY_E2E_MODEL` / `WALLY_E2E_MLX_MODEL` /
+`WALLY_E2E_NEURT_MODEL` / `WALLY_E2E_QHEXRT_MODEL` still map onto those
 primitives. Public CI leaves every knob unset (skip). There is one CLI named
-`rcli`. On Apple, `cmake --build` links the Swift MLX host as `build/rcli`
-(llama.cpp + ONNX + Sherpa + MLX). Windows is `build/rcli.exe` (no MLX).
-`rcli-cxx` is an Apple compile artifact, not the product. Full MLX model
+`wally`. On Apple, `cmake --build` links the Swift MLX host as `build/wally`
+(llama.cpp + ONNX + Sherpa + MLX). Windows is `build/wally.exe` (no MLX).
+`wally-cxx` is an Apple compile artifact, not the product. Full MLX model
 smoke: `scripts/smoke-mlx.sh`.
 
 ## CI
@@ -183,16 +183,16 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/path/to/cpp-desktop-<os>-<arch>
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
 ctest --test-dir build --output-on-failure
-# Apple: ./build/rcli   Windows: ./build/rcli.exe
-bash scripts/e2e.sh ./build/rcli
+# Apple: ./build/wally   Windows: ./build/wally.exe
+bash scripts/e2e.sh ./build/wally
 ```
 
-On Apple Silicon, `cmake --build` produces `build/rcli` (Swift host wrapping
-`rcli_run_main`). Users never run `rcli-cxx`; that name exists only so CMake
+On Apple Silicon, `cmake --build` produces `build/wally` (Swift host wrapping
+`wally_run_main`). Users never run `wally-cxx`; that name exists only so CMake
 cannot overwrite the product binary. Independent clones set
-`RCLI_SDK_SWIFT_PATH` to a runanywhere-sdks checkout (CI does this). Nested
-`EXTERNAL/RCLI` finds `../../Package.swift` automatically. Disable the host
-with `-DRCLI_APPLE_MLX_HOST=OFF` only for a C++-only compile loop.
+`WALLY_SDK_SWIFT_PATH` to a runanywhere-sdks checkout (CI does this). Nested
+`EXTERNAL/Wally` finds `../../Package.swift` automatically. Disable the host
+with `-DWALLY_APPLE_MLX_HOST=OFF` only for a C++-only compile loop.
 
 NeuRT and QHexRT are optional private packs (`NEURUN_TOKEN`), never required to
 configure or link the public bottle. QHexRT is not shipped for Windows x64.
@@ -205,10 +205,10 @@ Canonical tree: `.claude/skills/` (Claude Code). Mirror: `.agents/skills/`
 
 | Skill | When |
 |---|---|
-| `rcli-architecture` | New commands, layering, proto, "where does this logic go?" |
-| `rcli-kit-pin` | Bump `cmake/sdk-pin.cmake`, consume a new kit |
-| `rcli-e2e` | macOS / Windows verification against a kit |
-| `rcli-release` | Cut a product release (independent of SDK version) |
+| `wally-architecture` | New commands, layering, proto, "where does this logic go?" |
+| `wally-kit-pin` | Bump `cmake/sdk-pin.cmake`, consume a new kit |
+| `wally-e2e` | macOS / Windows verification against a kit |
+| `wally-release` | Cut a product release (independent of SDK version) |
 
 ## Definition of done
 

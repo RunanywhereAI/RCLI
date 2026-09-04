@@ -5,7 +5,7 @@
 #
 # Requires: gh, and either shasum or sha256sum.
 # Pins live in cmake/sdk-pin.cmake. SDK_VERSION, if set, must equal
-# RCLI_PINNED_SDK_VERSION — checksums are keyed to that pin, not a repo variable.
+# WALLY_PINNED_SDK_VERSION — checksums are keyed to that pin, not a repo variable.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,9 +14,9 @@ DEST="${2:?usage: fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest>}"
 PIN="${ROOT}/cmake/sdk-pin.cmake"
 
 case "$PLATFORM" in
-  macos-arm64) SHA_VAR=RCLI_PINNED_KIT_SHA256_MACOS_ARM64 ;;
-  windows-x64) SHA_VAR=RCLI_PINNED_KIT_SHA256_WINDOWS_X64 ;;
-  windows-arm64) SHA_VAR=RCLI_PINNED_KIT_SHA256_WINDOWS_ARM64 ;;
+  macos-arm64) SHA_VAR=WALLY_PINNED_KIT_SHA256_MACOS_ARM64 ;;
+  windows-x64) SHA_VAR=WALLY_PINNED_KIT_SHA256_WINDOWS_X64 ;;
+  windows-arm64) SHA_VAR=WALLY_PINNED_KIT_SHA256_WINDOWS_ARM64 ;;
   *) echo "error: unknown platform '$PLATFORM'" >&2; exit 2 ;;
 esac
 
@@ -25,14 +25,14 @@ pin_value() {
   sed -n "s/^set(${key} \"\\(.*\\)\")/\\1/p" "$PIN" | head -1
 }
 
-PINNED_SDK="$(pin_value RCLI_PINNED_SDK_VERSION)"
+PINNED_SDK="$(pin_value WALLY_PINNED_SDK_VERSION)"
 EXPECTED="$(pin_value "$SHA_VAR")"
 if [[ -z "$PINNED_SDK" || -z "$EXPECTED" ]]; then
-  echo "error: missing $SHA_VAR or RCLI_PINNED_SDK_VERSION in $PIN" >&2
+  echo "error: missing $SHA_VAR or WALLY_PINNED_SDK_VERSION in $PIN" >&2
   exit 1
 fi
 if [[ -n "${SDK_VERSION:-}" && "$SDK_VERSION" != "$PINNED_SDK" ]]; then
-  echo "error: SDK_VERSION=$SDK_VERSION does not match RCLI_PINNED_SDK_VERSION=$PINNED_SDK in $PIN" >&2
+  echo "error: SDK_VERSION=$SDK_VERSION does not match WALLY_PINNED_SDK_VERSION=$PINNED_SDK in $PIN" >&2
   echo "  bump cmake/sdk-pin.cmake (version + SHA-256) together; do not override only SDK_VERSION" >&2
   exit 1
 fi
@@ -76,7 +76,7 @@ tar xzf "$file" -C "$DEST" --strip-components=1
 echo "kit verified and extracted to $DEST"
 
 # Optional NeuRT / QHexRT overlay. Missing overlay is not a failure unless
-# RCLI_REQUIRE_PRIVATE=1 — public bottles stay OSS.
+# WALLY_REQUIRE_PRIVATE=1 — public bottles stay OSS.
 if [[ -x "$ROOT/scripts/fetch-private-pack.sh" ]]; then
   "$ROOT/scripts/fetch-private-pack.sh" "$PLATFORM" "$DEST"
 fi

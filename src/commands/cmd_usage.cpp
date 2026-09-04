@@ -8,7 +8,7 @@
 #include "commands/commands.h"
 #include "io/output.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 namespace {
 
 void fail(int status) {
@@ -44,7 +44,7 @@ bool RefreshSession(const account::ConsoleClient& client, account::Credentials* 
                     std::string* error) {
     if (credentials->refresh_token.empty()) {
         if (error != nullptr) {
-            *error = "the cloud session cannot be refreshed; run `rcli login`";
+            *error = "the cloud session cannot be refreshed; run `wally login`";
         }
         return false;
     }
@@ -153,7 +153,7 @@ int Usage(bool as_json) {
         return 1;
     }
     if (!credentials.signed_in()) {
-        out::error_line("not signed in — run `rcli login`");
+        out::error_line("not signed in — run `wally login`");
         return 1;
     }
 
@@ -183,7 +183,7 @@ int Usage(bool as_json) {
             // was is not something we know — and sending someone to re-login
             // over a revoked key wastes the trip.
             out::error_line("the console rejected this session (" + refresh_failure +
-                            "); run `rcli login`");
+                            "); run `wally login`");
             return 1;
         }
         usage = account::Usage{};
@@ -210,10 +210,10 @@ void register_usage(CLI::App& app, GlobalOptions& options) {
 
     auto* usage = app.add_subcommand("usage", "credit left, and what the last day cost");
     usage->add_flag("--json", *as_json, "machine-readable output");
-    // `rcli --json usage` and `rcli usage --json` mean the same thing. The root
+    // `wally --json usage` and `wally usage --json` mean the same thing. The root
     // parser accepts the first, so reading only the command-local flag printed a
     // human table to something asking for one JSON document.
     usage->callback([as_json, &options] { fail(Usage(*as_json || options.json)); });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

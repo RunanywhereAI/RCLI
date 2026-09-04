@@ -30,7 +30,7 @@
 #include <sys/types.h>
 #endif
 
-namespace rcli::account {
+namespace wally::account {
 namespace {
 
 namespace fs = std::filesystem;
@@ -89,6 +89,22 @@ constexpr const char* kFileName = "credentials.json";
 std::string Env(const char* name) {
     const char* value = std::getenv(name);
     return value != nullptr ? std::string(value) : std::string();
+}
+
+/// `name` (the current, documented variable) wins whenever it's set. `legacy`
+/// is read only when `name` is unset, so an installed rcli-era override still
+/// works after the wally rename — with a one-line notice, since it's a name
+/// nobody should be setting a year from now.
+std::string EnvWithLegacyFallback(const char* name, const char* legacy) {
+    std::string value = Env(name);
+    if (!value.empty()) {
+        return value;
+    }
+    std::string legacy_value = Env(legacy);
+    if (!legacy_value.empty()) {
+        std::fprintf(stderr, "warning: %s is deprecated, use %s instead\n", legacy, name);
+    }
+    return legacy_value;
 }
 
 std::string Lower(std::string value) {
@@ -281,7 +297,7 @@ bool Protect(const std::string& plaintext, std::vector<unsigned char>* protected
     DATA_BLOB input{static_cast<DWORD>(plaintext.size()),
                     reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data()))};
     DATA_BLOB output{};
-    if (!CryptProtectData(&input, L"RunAnywhere RCLI cloud session", nullptr, nullptr, nullptr,
+    if (!CryptProtectData(&input, L"RunAnywhere Wally cloud session", nullptr, nullptr, nullptr,
                           CRYPTPROTECT_UI_FORBIDDEN, &output)) {
         if (error != nullptr) {
             *error = "Windows could not protect the cloud session";
@@ -515,14 +531,14 @@ bool WriteDocument(const std::string& path, const std::string& document, std::st
 }  // namespace
 
 std::string DefaultConsoleUrl() {
-    const std::string configured = Env("RCLI_CONSOLE_URL");
+    const std::string configured = EnvWithLegacyFallback("WALLY_CONSOLE_URL", "RCLI_CONSOLE_URL");
     return configured.empty() ? kProductionConsoleApi : configured;
 }
 
 std::vector<std::string> TrustedBrowserOrigins(const std::string& console_url) {
     // An operator who declared one has said which console they trust, and that
     // is then the only one.
-    const std::string declared = Env("RCLI_CONSOLE_WEB_URL");
+    const std::string declared = EnvWithLegacyFallback("WALLY_CONSOLE_WEB_URL", "RCLI_CONSOLE_WEB_URL");
     std::string normalized;
     if (!declared.empty() && NormalizeConsoleUrl(declared, &normalized, nullptr)) {
         return {normalized};
@@ -582,20 +598,20 @@ bool SessionTokenIsSafe(const std::string& token) {
 }
 
 std::string ProfileDirectory() {
-    const std::string override_dir = Env("RCLI_PROFILE_DIR");
+    const std::string override_dir = EnvWithLegacyFallback("WALLY_PROFILE_DIR", "RCLI_PROFILE_DIR");
     if (!override_dir.empty()) {
         return override_dir;
     }
 #if defined(_WIN32)
     const std::string home = HomeDirectory();
-    return home.empty() ? std::string() : home + "/RunAnywhere/RCLI";
+    return home.empty() ? std::string() : home + "/RunAnywhere/Wally";
 #else
     const std::string xdg = Env("XDG_CONFIG_HOME");
     if (!xdg.empty()) {
-        return xdg + "/rcli";
+        return xdg + "/wally";
     }
     const std::string home = HomeDirectory();
-    return home.empty() ? std::string() : home + "/.config/rcli";
+    return home.empty() ? std::string() : home + "/.config/wally";
 #endif
 }
 
@@ -736,4 +752,4 @@ bool Clear(std::string* error) {
     return true;
 }
 
-}  // namespace rcli::account
+}  // namespace wally::account

@@ -1,6 +1,6 @@
 /**
  * @file cmd_serve.cpp
- * @brief `rcli serve [model]` — OpenAI-compatible local HTTP server.
+ * @brief `wally serve [model]` — OpenAI-compatible local HTTP server.
  *
  * Wraps the existing commons rac_server (include/rac/server/rac_server.h —
  * same engine behind tools/runanywhere-server.cpp). Scope inherited from
@@ -17,20 +17,20 @@
 #include <string>
 #include <thread>
 
-#if defined(RCLI_HAS_SERVER)
+#if defined(WALLY_HAS_SERVER)
 #include "rac/server/rac_server.h"
 #endif
 
 #include "commands/model_setup.h"
 #include "io/output.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
 constexpr const char* kDefaultServeModel = "qwen3-0.6b";
 
-#if defined(RCLI_HAS_SERVER)
+#if defined(WALLY_HAS_SERVER)
 
 // Async-signal-safe shutdown: the handler only sets a flag; the main thread
 // polls and performs the actual stop. Calling rac_server_stop() from signal
@@ -98,14 +98,14 @@ int run_serve(const GlobalOptions& options, const std::string& ref, const std::s
     return exit_code;
 }
 
-#endif  // RCLI_HAS_SERVER
+#endif  // WALLY_HAS_SERVER
 
 }  // namespace
 
 void register_serve(CLI::App& app, GlobalOptions& options) {
     CLI::App* cmd =
         app.add_subcommand("serve", "Serve a model over an OpenAI-compatible HTTP API");
-#if defined(RCLI_HAS_SERVER)
+#if defined(WALLY_HAS_SERVER)
     auto ref = std::make_shared<std::string>();
     auto host = std::make_shared<std::string>("127.0.0.1");
     auto port = std::make_shared<uint16_t>(8080);
@@ -131,10 +131,10 @@ void register_serve(CLI::App& app, GlobalOptions& options) {
     });
 #else
     cmd->callback([]() {
-        out::error_line("this rcli build does not include the server (RAC_BUILD_SERVER=OFF)");
+        out::error_line("this wally build does not include the server (RAC_BUILD_SERVER=OFF)");
         throw CLI::RuntimeError(1);
     });
 #endif
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

@@ -1,5 +1,5 @@
-#ifndef RCLI_ACCOUNT_CONSOLE_H
-#define RCLI_ACCOUNT_CONSOLE_H
+#ifndef WALLY_ACCOUNT_CONSOLE_H
+#define WALLY_ACCOUNT_CONSOLE_H
 
 #include <cstdint>
 
@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace rcli::account {
+namespace wally::account {
 
 struct HttpRequest {
     std::string method;
@@ -165,6 +165,6 @@ bool Refresh(const std::string& console_url, const std::string& refresh_token, G
 bool WhoAmI(const std::string& console_url, const std::string& token, Identity* identity,
             std::string* error);
 
-}  // namespace rcli::account
+}  // namespace wally::account
 
-#endif  // RCLI_ACCOUNT_CONSOLE_H
+#endif  // WALLY_ACCOUNT_CONSOLE_H

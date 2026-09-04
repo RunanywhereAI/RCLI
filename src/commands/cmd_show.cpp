@@ -1,6 +1,6 @@
 /**
  * @file cmd_show.cpp
- * @brief `rcli models get <model>` (alias `rcli show`) — registry entry
+ * @brief `wally models get <model>` (alias `wally show`) — registry entry
  *        details.
  */
 
@@ -19,7 +19,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -135,4 +135,4 @@ void configure_models_get(CLI::App *cmd, GlobalOptions &options) {
   });
 }
 
-} // namespace rcli::commands
+} // namespace wally::commands

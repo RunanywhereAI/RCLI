@@ -7,14 +7,14 @@
  * thin wrappers that forward to those primitives.
  */
 
-#ifndef RCLI_IO_WAV_IO_H
-#define RCLI_IO_WAV_IO_H
+#ifndef WALLY_IO_WAV_IO_H
+#define WALLY_IO_WAV_IO_H
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace rcli::wav {
+namespace wally::wav {
 
 struct WavData {
     std::vector<int16_t> samples;  // mono (channels collapsed by averaging)
@@ -38,6 +38,6 @@ std::vector<int16_t> resample(const std::vector<int16_t>& samples, int from_rate
 /** int16 → float [-1, 1] via rac_audio_pcm16_to_float32. */
 std::vector<float> to_float(const std::vector<int16_t>& samples);
 
-}  // namespace rcli::wav
+}  // namespace wally::wav
 
-#endif  // RCLI_IO_WAV_IO_H
+#endif  // WALLY_IO_WAV_IO_H

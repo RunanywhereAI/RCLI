@@ -38,45 +38,45 @@ class ReleaseAssetTests(unittest.TestCase):
 
     def test_valid_macos_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            archive = pathlib.Path(temporary) / "rcli-1.2.3-macos-arm64.tar.gz"
+            archive = pathlib.Path(temporary) / "wally-1.2.3-macos-arm64.tar.gz"
             with tarfile.open(archive, "w:gz") as bundle:
-                self.add_tar_file(bundle, "rcli-macos-arm64/README.md", b"readme", 0o644)
-                self.add_tar_file(bundle, "rcli-macos-arm64/bin/rcli", b"binary", 0o755)
+                self.add_tar_file(bundle, "wally-macos-arm64/README.md", b"readme", 0o644)
+                self.add_tar_file(bundle, "wally-macos-arm64/bin/wally", b"binary", 0o755)
             VERIFY.verify(archive, self.sidecar(archive))
 
     def test_valid_windows_archive_with_backslash_members(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            archive = pathlib.Path(temporary) / "rcli-1.2.3-windows-x86_64.zip"
+            archive = pathlib.Path(temporary) / "wally-1.2.3-windows-x86_64.zip"
             with zipfile.ZipFile(archive, "w") as bundle:
-                bundle.writestr("rcli-windows-x86_64\\README.md", b"readme")
-                bundle.writestr("rcli-windows-x86_64\\bin\\rcli.exe", b"binary")
+                bundle.writestr("wally-windows-x86_64\\README.md", b"readme")
+                bundle.writestr("wally-windows-x86_64\\bin\\wally.exe", b"binary")
             VERIFY.verify(archive, self.sidecar(archive))
 
     def test_rejects_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            archive = pathlib.Path(temporary) / "rcli-1.2.3-windows-x86_64.zip"
+            archive = pathlib.Path(temporary) / "wally-1.2.3-windows-x86_64.zip"
             with zipfile.ZipFile(archive, "w") as bundle:
-                bundle.writestr("rcli-windows-x86_64/README.md", b"readme")
-                bundle.writestr("rcli-windows-x86_64/bin/rcli.exe", b"binary")
-                bundle.writestr("rcli-windows-x86_64/../outside", b"bad")
+                bundle.writestr("wally-windows-x86_64/README.md", b"readme")
+                bundle.writestr("wally-windows-x86_64/bin/wally.exe", b"binary")
+                bundle.writestr("wally-windows-x86_64/../outside", b"bad")
             with self.assertRaisesRegex(VERIFY.VerificationError, "unsafe archive member"):
                 VERIFY.verify(archive, self.sidecar(archive))
 
     def test_rejects_wrong_checksum_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            archive = pathlib.Path(temporary) / "rcli-1.2.3-macos-arm64.tar.gz"
+            archive = pathlib.Path(temporary) / "wally-1.2.3-macos-arm64.tar.gz"
             with tarfile.open(archive, "w:gz") as bundle:
-                self.add_tar_file(bundle, "rcli-macos-arm64/README.md", b"readme", 0o644)
-                self.add_tar_file(bundle, "rcli-macos-arm64/bin/rcli", b"binary", 0o755)
+                self.add_tar_file(bundle, "wally-macos-arm64/README.md", b"readme", 0o644)
+                self.add_tar_file(bundle, "wally-macos-arm64/bin/wally", b"binary", 0o755)
             with self.assertRaisesRegex(VERIFY.VerificationError, "sidecar names"):
                 VERIFY.verify(archive, self.sidecar(archive, filename="different.tar.gz"))
 
     def test_rejects_non_executable_macos_binary(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            archive = pathlib.Path(temporary) / "rcli-1.2.3-macos-arm64.tar.gz"
+            archive = pathlib.Path(temporary) / "wally-1.2.3-macos-arm64.tar.gz"
             with tarfile.open(archive, "w:gz") as bundle:
-                self.add_tar_file(bundle, "rcli-macos-arm64/README.md", b"readme", 0o644)
-                self.add_tar_file(bundle, "rcli-macos-arm64/bin/rcli", b"binary", 0o644)
+                self.add_tar_file(bundle, "wally-macos-arm64/README.md", b"readme", 0o644)
+                self.add_tar_file(bundle, "wally-macos-arm64/bin/wally", b"binary", 0o644)
             with self.assertRaisesRegex(VERIFY.VerificationError, "executable mode bit"):
                 VERIFY.verify(archive, self.sidecar(archive))
 

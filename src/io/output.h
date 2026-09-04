@@ -2,14 +2,14 @@
  * @file output.h
  * @brief Output discipline helpers + minimal JSON emission.
  *
- * Contract (see rcli/AGENTS.md):
+ * Contract (see wally/AGENTS.md):
  *   - command RESULTS go to stdout;
  *   - logs, progress, banners, prompts go to stderr;
  *   - --json mode prints exactly ONE JSON document on stdout.
  */
 
-#ifndef RCLI_IO_OUTPUT_H
-#define RCLI_IO_OUTPUT_H
+#ifndef WALLY_IO_OUTPUT_H
+#define WALLY_IO_OUTPUT_H
 
 #include <cstdint>
 #include <string>
@@ -17,13 +17,13 @@
 
 #include "rac/core/rac_types.h"
 
-namespace rcli::out {
+namespace wally::out {
 
 /** JSON-escape a UTF-8 string (quotes not included). */
 std::string json_escape(const std::string& value);
 
 /**
- * Minimal JSON document builder — enough for rcli's flat objects/arrays
+ * Minimal JSON document builder — enough for wally's flat objects/arrays
  * without pulling a JSON dependency into the CLI.
  */
 class JsonWriter {
@@ -73,6 +73,6 @@ std::string human_bytes(uint64_t bytes);
 void table(const std::vector<std::string>& header,
            const std::vector<std::vector<std::string>>& rows);
 
-}  // namespace rcli::out
+}  // namespace wally::out
 
-#endif  // RCLI_IO_OUTPUT_H
+#endif  // WALLY_IO_OUTPUT_H

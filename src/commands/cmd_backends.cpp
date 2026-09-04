@@ -1,6 +1,6 @@
 /**
  * @file cmd_backends.cpp
- * @brief `rcli backends` — registered engine plugins per primitive.
+ * @brief `wally backends` — registered engine plugins per primitive.
  */
 
 #include "commands/commands.h"
@@ -16,7 +16,7 @@
 
 #include "io/output.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -101,4 +101,4 @@ void register_backends(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

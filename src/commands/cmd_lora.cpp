@@ -1,6 +1,6 @@
 /**
  * @file cmd_lora.cpp
- * @brief `rcli lora apply|remove|list|catalog` — LoRA adapters on the loaded
+ * @brief `wally lora apply|remove|list|catalog` — LoRA adapters on the loaded
  *        LLM.
  *
  * `list` reports the adapters currently attached (rac_lora_state_proto) — the
@@ -30,7 +30,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -346,4 +346,4 @@ void register_lora(CLI::App &app, GlobalOptions &options) {
   // package's own rule: never wire a flag/verb the C ABI cannot serve.
 }
 
-} // namespace rcli::commands
+} // namespace wally::commands

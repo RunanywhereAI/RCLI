@@ -1,5 +1,5 @@
-#ifndef RCLI_ANTHROPIC_TRANSLATE_H
-#define RCLI_ANTHROPIC_TRANSLATE_H
+#ifndef WALLY_ANTHROPIC_TRANSLATE_H
+#define WALLY_ANTHROPIC_TRANSLATE_H
 
 #include <map>
 #include <string>
@@ -13,7 +13,7 @@
 /// and reading JSON back, which is the only part of this worth testing: the
 /// HTTP plumbing is cpp-httplib's, and the interesting bugs are all in the
 /// shapes.
-namespace rcli::anthropic::translate {
+namespace wally::anthropic::translate {
 
 using Json = nlohmann::json;
 
@@ -82,6 +82,6 @@ std::string ErrorBody(const std::string& type, const std::string& message);
 /// Returns false when `payload` carries no error, which is the ordinary case.
 bool PayloadError(const Json& payload, std::string* type, std::string* message);
 
-}  // namespace rcli::anthropic::translate
+}  // namespace wally::anthropic::translate
 
-#endif  // RCLI_ANTHROPIC_TRANSLATE_H
+#endif  // WALLY_ANTHROPIC_TRANSLATE_H

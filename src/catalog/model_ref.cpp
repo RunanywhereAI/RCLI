@@ -16,7 +16,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::model_ref {
+namespace wally::model_ref {
 
 namespace {
 
@@ -46,7 +46,7 @@ bool is_local_path(const std::string &ref) {
   }
   // Only treat something as a path when it looks like one. A bare word is a
   // model id; requiring a separator (or a Windows drive prefix) keeps
-  // `rcli run qwen3` from probing the cwd and finding a stray directory.
+  // `wally run qwen3` from probing the cwd and finding a stray directory.
   const bool has_sep = ref.find('/') != std::string::npos ||
                        ref.find('\\') != std::string::npos;
   const bool win_drive = ref.size() >= 2 &&
@@ -78,7 +78,7 @@ std::string id_for_local_path(const std::string &path) {
   std::string full = without_trailing_slashes(path);
   // Canonicalize first so the same bundle spelled differently (relative, `..`,
   // a symlink) keeps ONE id; the raw path is the fallback when it cannot be
-  // resolved. `std::filesystem` rather than `realpath` because rcli builds on
+  // resolved. `std::filesystem` rather than `realpath` because wally builds on
   // Windows too and `realpath` is POSIX-only; `weakly_canonical` also tolerates
   // a path that does not fully exist instead of failing outright.
   std::error_code ec;
@@ -164,7 +164,7 @@ void infer_local_kind(const std::string &path,
   }
   // QHexRT HNPU bundles: Hexagon arch folder (v75/v79/v81), a context.bin, or
   // a top-level non-aux .json next to QNN binaries. `_HNPU` is the published
-  // repo suffix; honor it so `rcli run --engine qhexrt <dir>` is not required.
+  // repo suffix; honor it so `wally run --engine qhexrt <dir>` is not required.
   const std::string leaf = p.filename().string();
   auto looks_qnn = [&]() -> bool {
     if (leaf.find("_HNPU") != std::string::npos || leaf.find("-npu") != std::string::npos) {
@@ -198,7 +198,7 @@ void infer_local_kind(const std::string &path,
 }
 
 // Register an already-present local bundle so the lifecycle loader can resolve
-// it by id, with no download. Mirrors what `rcli image` has always done for a
+// it by id, with no download. Mirrors what `wally image` has always done for a
 // local CoreML diffusion bundle (cmd_image.cpp::register_local_bundle) — this
 // is that capability moved down to the shared resolver, so every command that
 // takes a model ref gets it instead of just one.
@@ -344,11 +344,11 @@ rac_result_t resolve(const std::string &ref, Resolved *out, std::string *error,
       }
       *error += "?";
     } else {
-      *error += " (try `rcli list --all`, an hf.co/org/repo[:quant] ref, a "
+      *error += " (try `wally list --all`, an hf.co/org/repo[:quant] ref, a "
                 "direct URL, or a path to a local bundle directory)";
     }
   }
   return RAC_ERROR_NOT_FOUND;
 }
 
-} // namespace rcli::model_ref
+} // namespace wally::model_ref

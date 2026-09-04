@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Assert the binary actually contains the engines `rcli backends` claims.
+# Assert the binary actually contains the engines `wally backends` claims.
 #
-#   scripts/assert-binary-backends.sh <path-to-rcli> <name> [<name>...]
+#   scripts/assert-binary-backends.sh <path-to-wally> <name> [<name>...]
 #
 # Release bottles (especially the Swift MLX host) strip global C symbols.
 # Stream nm/strings into grep. `grep -q` closes the pipe early; with
@@ -9,14 +9,14 @@
 # for the scan.
 set -euo pipefail
 
-RCLI="${1:?usage: assert-binary-backends.sh <rcli> <name>...}"
+WALLY="${1:?usage: assert-binary-backends.sh <wally> <name>...}"
 shift
 if [[ $# -eq 0 ]]; then
-    echo "usage: assert-binary-backends.sh <rcli> <name>..." >&2
+    echo "usage: assert-binary-backends.sh <wally> <name>..." >&2
     exit 2
 fi
-if [[ ! -e "${RCLI}" ]]; then
-    echo "not found: ${RCLI}" >&2
+if [[ ! -e "${WALLY}" ]]; then
+    echo "not found: ${WALLY}" >&2
     exit 1
 fi
 
@@ -55,7 +55,7 @@ blob_match() {
     set +e
     set +o pipefail
     if [[ -n "${strings_bin}" ]]; then
-        "${strings_bin}" -a "${RCLI}" 2>/dev/null | grep -a -qiE "${pat}"
+        "${strings_bin}" -a "${WALLY}" 2>/dev/null | grep -a -qiE "${pat}"
         if [[ $? -eq 0 ]]; then
             set -e
             set -o pipefail
@@ -63,7 +63,7 @@ blob_match() {
         fi
     fi
     if command -v nm >/dev/null 2>&1; then
-        nm -a "${RCLI}" 2>/dev/null | grep -a -qiE "${pat}"
+        nm -a "${WALLY}" 2>/dev/null | grep -a -qiE "${pat}"
         if [[ $? -eq 0 ]]; then
             set -e
             set -o pipefail
@@ -71,7 +71,7 @@ blob_match() {
         fi
     fi
     if command -v dumpbin >/dev/null 2>&1; then
-        dumpbin /ALL "${RCLI}" 2>/dev/null | grep -a -qiE "${pat}"
+        dumpbin /ALL "${WALLY}" 2>/dev/null | grep -a -qiE "${pat}"
         if [[ $? -eq 0 ]]; then
             set -e
             set -o pipefail
@@ -84,7 +84,7 @@ blob_match() {
 }
 
 fail=0
-exe_dir="$(cd "$(dirname "${RCLI}")" && pwd)"
+exe_dir="$(cd "$(dirname "${WALLY}")" && pwd)"
 for name in "$@"; do
     if [[ "${name}" == mlx && -d "${exe_dir}/mlx-swift_Cmlx.bundle" ]]; then
         echo "  ok    binary has mlx (mlx-swift_Cmlx.bundle)"

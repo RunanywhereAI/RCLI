@@ -11,7 +11,7 @@
 #include "anthropic/translate.h"
 #include "io/output.h"
 
-namespace rcli::anthropic {
+namespace wally::anthropic {
 namespace {
 
 using Json = nlohmann::json;
@@ -218,7 +218,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
             }
         } catch (const std::exception& error) {
             // httplib does not catch, and an exception leaving here reaches
-            // std::terminate: the editor's model call would abort rcli.
+            // std::terminate: the editor's model call would abort wally.
             if (raw->verbose) {
                 out::status_line(std::string("anthropic: request failed: ") + error.what());
             }
@@ -278,7 +278,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
             response.set_content(
                 translate::ErrorBody("not_found_error",
                                      request.method + " " + request.path +
-                                         " is not something rcli translates"),
+                                         " is not something wally translates"),
                 "application/json");
         }
     });
@@ -297,7 +297,7 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
     // Never the upstream key: the client only has to send something, and
     // handing it a real console token would put it in that process's
     // environment where it does not belong.
-    shim->auth_token = "rcli-local";
+    shim->auth_token = "wally-local";
     shim->running = true;
     return true;
 }
@@ -317,4 +317,4 @@ void Stop(Shim* shim) {
     }
 }
 
-}  // namespace rcli::anthropic
+}  // namespace wally::anthropic

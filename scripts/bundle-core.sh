@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Merges everything the rcli executable links into one static archive, and
+# Merges everything the wally executable links into one static archive, and
 # writes out the system flags that are left over.
 #
 # The Swift build needs both: SwiftPM owns the final link for the MLX binary
@@ -10,23 +10,23 @@
 set -euo pipefail
 
 BUILD="${1:-build}"
-LINK_TXT="${BUILD}/CMakeFiles/rcli.dir/link.txt"
-OUT_LIB="${BUILD}/librcli_bundle.a"
-OUT_FLAGS="${BUILD}/rcli-link-flags.txt"
+LINK_TXT="${BUILD}/CMakeFiles/wally.dir/link.txt"
+OUT_LIB="${BUILD}/libwally_bundle.a"
+OUT_FLAGS="${BUILD}/wally-link-flags.txt"
 
 # Ninja never writes CMakeFiles/<tgt>.dir/link.txt (Makefiles only). The last
-# command ninja runs for `rcli` is the link; compile lines also contain
-# `CMakeFiles/rcli.dir/` so grepping for "rcli" picks compiles.
+# command ninja runs for `wally` is the link; compile lines also contain
+# `CMakeFiles/wally.dir/` so grepping for "wally" picks compiles.
 if [[ ! -s "${LINK_TXT}" && -f "${BUILD}/build.ninja" ]]; then
-    mkdir -p "${BUILD}/CMakeFiles/rcli.dir"
+    mkdir -p "${BUILD}/CMakeFiles/wally.dir"
     ninja_bin="$(command -v ninja || command -v ninja-build || true)"
     if [[ -n "${ninja_bin}" ]]; then
-        "${ninja_bin}" -C "${BUILD}" -t commands rcli | tail -1 > "${LINK_TXT}" || true
+        "${ninja_bin}" -C "${BUILD}" -t commands wally | tail -1 > "${LINK_TXT}" || true
     fi
 fi
 
 if [[ ! -s "${LINK_TXT}" ]]; then
-    echo "no ${LINK_TXT} — build the rcli target first (Ninja or Makefiles)" >&2
+    echo "no ${LINK_TXT} — build the wally target first (Ninja or Makefiles)" >&2
     exit 1
 fi
 
@@ -64,10 +64,10 @@ contains() {
     return 1
 }
 
-# Plugin backends are -force_load on rcli-cxx so their static registrars run.
+# Plugin backends are -force_load on wally-cxx so their static registrars run.
 # llama-common is a regular archive: force-loading it pulls download.cpp.o,
 # which references cpp-httplib methods that the kit never emitted as objects
-# (rcli-cxx never pulled that TU). Split so Swift can force_load plugins
+# (wally-cxx never pulled that TU). Split so Swift can force_load plugins
 # without dragging those undefineds in.
 plugins=()
 regular=()
@@ -126,7 +126,7 @@ if [[ ${#regular[@]} -eq 0 ]]; then
     exit 1
 fi
 
-OUT_PLUGINS="${BUILD}/librcli_plugins.a"
+OUT_PLUGINS="${BUILD}/libwally_plugins.a"
 # libtool rather than ar: it merges archives rather than nesting them, and it
 # is what ships with the toolchain that produced them.
 libtool -static -o "${OUT_LIB}" "${regular[@]}"

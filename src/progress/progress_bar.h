@@ -7,15 +7,15 @@
  * so CI logs stay readable.
  */
 
-#ifndef RCLI_PROGRESS_PROGRESS_BAR_H
-#define RCLI_PROGRESS_PROGRESS_BAR_H
+#ifndef WALLY_PROGRESS_PROGRESS_BAR_H
+#define WALLY_PROGRESS_PROGRESS_BAR_H
 
 #include <mutex>
 #include <string>
 
 #include "download_service.pb.h"
 
-namespace rcli::progress {
+namespace wally::progress {
 
 class ProgressRenderer {
    public:
@@ -39,7 +39,7 @@ class ProgressRenderer {
 /**
  * RAII wrapper: registers the process-wide download progress callback and
  * renders updates for one model while alive (used by commands whose commons
- * call may auto-download, e.g. lifecycle load in `rcli run`). Only one scope
+ * call may auto-download, e.g. lifecycle load in `wally run`). Only one scope
  * may be active per process at a time. Thread-safe — events arrive on
  * orchestrator worker threads.
  */
@@ -56,6 +56,6 @@ class DownloadProgressScope {
     std::string model_id_;
 };
 
-}  // namespace rcli::progress
+}  // namespace wally::progress
 
-#endif  // RCLI_PROGRESS_PROGRESS_BAR_H
+#endif  // WALLY_PROGRESS_PROGRESS_BAR_H
