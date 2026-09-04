@@ -24,6 +24,7 @@
 #include "rac/infrastructure/model_management/rac_model_registry.h"
 
 #include "commands/engine_options.h"
+#include "commands/model_setup.h"
 #include "catalog/model_ref.h"
 #include "io/output.h"
 #include "io/proto.h"
@@ -82,6 +83,18 @@ void progress_callback(const uint8_t *proto_bytes, size_t proto_size,
 int pull_model_flow(const GlobalOptions &options, const std::string &model_id) {
   const model_ref::Resolved resolved{model_id, false};
   std::string error;
+
+  // bootstrap() registers the catalog; it does not rescan what is on disk. So
+  // registry_status() below can still read DOWNLOADED for a model whose files
+  // were deleted since, and `rcli pull` would report success without fetching
+  // anything. A refresh failure is not fatal here: the download path that
+  // follows is the fallback, and refusing to pull because a rescan failed would
+  // be worse than pulling something already present.
+  std::string refresh_error;
+  if (!refresh_registry(&refresh_error)) {
+    out::status_line("could not rescan local models (" + refresh_error +
+                     "); continuing from the registry as it stands");
+  }
 
   // The orchestrator plans from embedded metadata (it does not consult the
   // registry), so fetch the saved ModelInfo first.
