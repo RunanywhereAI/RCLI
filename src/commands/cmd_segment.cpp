@@ -1,6 +1,6 @@
 /**
  * @file cmd_segment.cpp
- * @brief `rcli segment <image.ppm> --model <path>` — segmentation via
+ * @brief `wally segment <image.ppm> --model <path>` — segmentation via
  *        the commons segmentation service (image-in → per-class mask summary).
  *
  * Mirrors cmd_image's structure (bootstrap → resolve model → one commons path →
@@ -30,7 +30,7 @@
 #include "rac/features/segmentation/rac_segmentation_service.h"
 #include "rac/features/segmentation/rac_segmentation_types.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -194,4 +194,4 @@ void register_segment(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

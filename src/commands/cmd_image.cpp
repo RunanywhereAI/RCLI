@@ -1,6 +1,6 @@
 /**
  * @file cmd_image.cpp
- * @brief `rcli image generate` — text-to-image via NeuRT (Core ML diffusion).
+ * @brief `wally image generate` — text-to-image via NeuRT (Core ML diffusion).
  *
  * Canonical SDK flow, all heavy lifting in commons (mirrors cmd_run/cmd_embed):
  *   rac_model_lifecycle_load_proto(category=IMAGE_GENERATION, validate=true)
@@ -24,7 +24,7 @@
 
 #include "io/output.h"
 
-#if defined(RCLI_HAS_NEURT)
+#if defined(WALLY_HAS_NEURT)
 #include <fstream>
 #include <ios>
 #include <sys/stat.h>
@@ -42,7 +42,7 @@
 #include "progress/progress_bar.h"
 #endif
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -61,7 +61,7 @@ struct ImageParams {
     int64_t seed = -1;      // -1 = random
 };
 
-#if defined(RCLI_HAS_NEURT)
+#if defined(WALLY_HAS_NEURT)
 
 namespace v1 = runanywhere::v1;
 
@@ -172,7 +172,7 @@ bool write_image(const v1::DiffusionImage& image_result, const std::string& out_
     return true;
 }
 
-#endif  // RCLI_HAS_NEURT
+#endif  // WALLY_HAS_NEURT
 
 int run_image_generate(const GlobalOptions& options, const ImageParams& params) {
     Bootstrapped env;
@@ -180,7 +180,7 @@ int run_image_generate(const GlobalOptions& options, const ImageParams& params) 
         return 1;
     }
 
-#if !defined(RCLI_HAS_NEURT)
+#if !defined(WALLY_HAS_NEURT)
     (void)params;
     out::error_line("image generation (diffusion) requires NeuRT (Apple Neural Engine)");
     return 1;
@@ -318,4 +318,4 @@ void register_image(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

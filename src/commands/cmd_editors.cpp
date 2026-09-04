@@ -14,7 +14,7 @@
 #include "ide/jetbrains_profile.h"
 #include "ide/openai_proxy.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 namespace {
 
 /// CLI11 callbacks return void, so a non-zero status leaves as the runtime
@@ -26,7 +26,7 @@ void fail(int status) {
 }
 
 
-/// One editor or agent rcli can point at a model.
+/// One editor or agent wally can point at a model.
 ///
 /// The list is the whole integration surface: a new target is a row here plus
 /// whatever `apply` has to set. Everything before that — resolving the model,
@@ -45,7 +45,7 @@ enum class Wiring {
 };
 
 struct Editor {
-    /// What the reader types after `rcli`.
+    /// What the reader types after `wally`.
     const char* id;
     /// An executable on PATH, or empty when this is a desktop app.
     const char* command;
@@ -61,11 +61,11 @@ constexpr ide::Product kCLion{"clion", "CLion.app", "clion", "CLion"};
 constexpr ide::Product kRustRover{"rustrover", "RustRover.app", "rustrover", "RustRover"};
 
 /// Only tools that speak the Anthropic Messages API belong here. Anything
-/// OpenAI-shaped needs no translator and goes through `rcli opencode`.
+/// OpenAI-shaped needs no translator and goes through `wally opencode`.
 ///
 /// Claude Desktop earns its place because it forwards a fixed set of variables
 /// to the Claude Code it runs inside itself, and ANTHROPIC_BASE_URL is one of
-/// them. That is the same trick as `rcli claude-code`, one process further out.
+/// them. That is the same trick as `wally claude-code`, one process further out.
 constexpr Editor kEditors[] = {
     {"claude-code", "claude", "", "open Claude Code against a model", Wiring::Environment,
      nullptr},
@@ -194,7 +194,7 @@ class ScopedEnv {
 /// Starts the translator and holds it open, printing what to point at it.
 ///
 /// Worth having beyond debugging: it is how anything that speaks the Anthropic
-/// API but is not on the list above gets wired up, without rcli needing to know
+/// API but is not on the list above gets wired up, without wally needing to know
 /// that tool exists.
 int Serve(const std::string& model, bool verbose) {
     harness::Endpoint endpoint;
@@ -257,7 +257,7 @@ int Run(const Editor& editor, const std::string& model,
 
     if (model.empty()) {
         // No model named means no wiring to do, so the tool runs exactly as the
-        // reader has it configured. Same contract as `rcli opencode`.
+        // reader has it configured. Same contract as `wally opencode`.
         return is_bundle ? harness::Launch("open", {}, OpenArgs(bundle, {}, args))
                          : harness::Launch(editor.command, {}, args);
     }
@@ -413,4 +413,4 @@ void register_editors(CLI::App& app, GlobalOptions& options) {
     }
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

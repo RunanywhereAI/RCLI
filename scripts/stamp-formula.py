@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point Formula/rcli.rb at a published release.
+"""Point Formula/wally.rb at a published release.
 
     stamp-formula.py VERSION PLATFORM=SHA256 [PLATFORM=SHA256 ...]
 
@@ -21,7 +21,9 @@ rather than being half-rewritten.
 import re
 import sys
 
-FORMULA = "Formula/rcli.rb"
+FORMULA = "Formula/wally.rb"
+# Repo stays RunanywhereAI/RCLI -- only the binary, formula and tap file are
+# named wally.
 RELEASES = "https://github.com/RunanywhereAI/RCLI/releases/download"
 
 # The archive extension per platform, since Windows would be a zip if it were
@@ -39,7 +41,7 @@ def stamp_platform(source: str, version: str, platform: str, digest: str) -> str
     """Rewrite the url naming `platform` and the sha256 line beneath it."""
     if platform not in SUFFIX:
         raise SystemExit(f"unknown platform {platform!r}; known: {', '.join(SUFFIX)}")
-    asset = f"rcli-{version}-{platform}.{SUFFIX[platform]}"
+    asset = f"wally-{version}-{platform}.{SUFFIX[platform]}"
     url = f"{RELEASES}/v{version}/{asset}"
 
     # Any url mentioning this platform, whatever version it currently names.

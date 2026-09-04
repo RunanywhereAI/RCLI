@@ -20,7 +20,7 @@ EMAIL = "developer@example.test"
 # is 0 in the 24h window on purpose: SGLang does not report cached tokens for
 # glm-5.3, so zero is what a real console sends today and the row has to survive
 # it honestly rather than disappear. `timeline`, `models` and `recent` are
-# present because the console sends them; `rcli usage` ignores all three.
+# present because the console sends them; `wally usage` ignores all three.
 USAGE_WINDOWS = [
     {
         "window": "1h",
@@ -157,7 +157,7 @@ def run(binary, arguments, environment):
 
 def main():
     if len(sys.argv) != 2:
-        raise SystemExit("usage: test_account_cli.py /path/to/rcli")
+        raise SystemExit("usage: test_account_cli.py /path/to/wally")
     binary = sys.argv[1]
     server = ThreadingHTTPServer(("127.0.0.1", 0), ConsoleHandler)
     ConsoleHandler.console_origin = f"http://127.0.0.1:{server.server_port}"
@@ -165,10 +165,10 @@ def main():
     thread.start()
 
     try:
-        with tempfile.TemporaryDirectory(prefix="rcli-account-e2e-") as profile:
+        with tempfile.TemporaryDirectory(prefix="wally-account-e2e-") as profile:
             environment = os.environ.copy()
-            environment["RCLI_PROFILE_DIR"] = profile
-            environment["RCLI_CONSOLE_URL"] = ConsoleHandler.console_origin
+            environment["WALLY_PROFILE_DIR"] = profile
+            environment["WALLY_CONSOLE_URL"] = ConsoleHandler.console_origin
             for name in (
                 "RUNANYWHERE_API_KEY",
                 "RUNANYWHERE_API_SECRET",
@@ -219,7 +219,7 @@ def main():
                     raise AssertionError(f"usage still prints {banned!r}:\n{usage}")
 
             # The root flag and the command flag mean the same thing. The root
-            # parser accepts `rcli --json usage`, and reading only the local
+            # parser accepts `wally --json usage`, and reading only the local
             # flag printed a human table to something asking for one document.
             for argv in (["usage", "--json"], ["--json", "usage"]):
                 combined = run(binary, argv, environment)

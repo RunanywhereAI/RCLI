@@ -33,7 +33,7 @@
 #include <fstream>
 #endif
 
-namespace rcli {
+namespace wally {
 
 namespace {
 
@@ -570,7 +570,7 @@ void device_set_registered(rac_bool_t registered, void * /*user_data*/) {
   state().registered = registered == RAC_TRUE;
 }
 
-// Same control-plane POST shape as rcli_telemetry_http_callback: commons base
+// Same control-plane POST shape as wally_telemetry_http_callback: commons base
 // URL + relative endpoint over the registered desktop HTTP transport, bearer
 // token attached when the auth manager holds one.
 rac_result_t device_http_post(const char *endpoint, const char *json_body,
@@ -688,4 +688,4 @@ rac_result_t install_device_callbacks() {
   return rac_device_manager_set_callbacks(&callbacks);
 }
 
-} // namespace rcli
+} // namespace wally

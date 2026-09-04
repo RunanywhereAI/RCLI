@@ -1,5 +1,5 @@
-#ifndef RCLI_HARNESS_OPENCODE_H
-#define RCLI_HARNESS_OPENCODE_H
+#ifndef WALLY_HARNESS_OPENCODE_H
+#define WALLY_HARNESS_OPENCODE_H
 
 #include <functional>
 #include <string>
@@ -7,7 +7,7 @@
 
 #include "account/console.h"
 
-namespace rcli::harness {
+namespace wally::harness {
 
 using SpawnFunction =
     std::function<int(const std::string& executable, const std::vector<std::string>& arguments)>;
@@ -28,6 +28,6 @@ int LaunchOpenCodeCloud(const std::string& model, const std::vector<std::string>
 int LaunchOpenCodeCloud(const std::string& model, const std::vector<std::string>& arguments,
                         const account::ConsoleClient& console, const SpawnFunction& spawn);
 
-}  // namespace rcli::harness
+}  // namespace wally::harness
 
-#endif  // RCLI_HARNESS_OPENCODE_H
+#endif  // WALLY_HARNESS_OPENCODE_H

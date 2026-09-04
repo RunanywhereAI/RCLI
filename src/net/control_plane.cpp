@@ -1,6 +1,6 @@
 /**
  * @file control_plane.cpp
- * @brief Control-plane network wiring for rcli — see control_plane.h.
+ * @brief Control-plane network wiring for wally — see control_plane.h.
  *
  * The CLI drives the canonical commons entry points and adds only what is
  * genuinely CLI-shaped: a buffered POST helper the telemetry commands reuse and
@@ -27,7 +27,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::net {
+namespace wally::net {
 
 namespace {
 
@@ -246,4 +246,4 @@ rac_result_t login(LoginSummary* out, std::string* error) {
     return RAC_SUCCESS;
 }
 
-}  // namespace rcli::net
+}  // namespace wally::net

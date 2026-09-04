@@ -1,6 +1,6 @@
 /**
  * @file cmd_tool.cpp
- * @brief `rcli llm tool-call` — exercise the tool-calling loop end to end.
+ * @brief `wally llm tool-call` — exercise the tool-calling loop end to end.
  *
  * Thin wrapper over rac_tool_calling_run_loop_proto: load an LLM, hand commons
  * a prompt plus two built-in demo tools (get_weather, calculate), and let
@@ -31,7 +31,7 @@
 #include "io/proto.h"
 #include "progress/progress_bar.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 namespace {
 
 namespace v1 = runanywhere::v1;
@@ -283,4 +283,4 @@ void register_tool(CLI::App& app, GlobalOptions& options) {
         options);
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

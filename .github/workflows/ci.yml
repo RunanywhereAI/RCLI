@@ -10,7 +10,7 @@ on:
     # `main` plus the launch branches, because a pull request stacked onto one
     # of those is still a pull request that has to be green. With `main` alone
     # the branches filter matches on the PR's base, so retargeting a PR from
-    # `main` to `launch/open-frontier-rcli` did not fail CI — it ran no CI at
+    # `main` to `launch/open-frontier-wally` did not fail CI — it ran no CI at
     # all, and the PR reported nothing rather than reporting a problem.
     branches: [main, 'launch/**']
 
@@ -32,8 +32,8 @@ jobs:
           set -euo pipefail
           python3 tests/test_release_assets.py
           python3 -m py_compile scripts/verify-release-assets.py scripts/stamp-formula.py
-          bash -n install.sh scripts/package-rcli.sh scripts/update-tap.sh
-          ruby -c Formula/rcli.rb
+          bash -n install.sh scripts/package-wally.sh scripts/update-tap.sh
+          ruby -c Formula/wally.rb
 
   macos:
     # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is
@@ -41,7 +41,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 90
     env:
-      RCLI_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
+      WALLY_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,8 +80,8 @@ jobs:
         run: ctest --test-dir build --output-on-failure
       - name: Product e2e (MLX host)
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally
 
   windows-arm64:
     # Native ARM64 runner, free for public repos. Cross-compiling from the x64
@@ -121,8 +121,8 @@ jobs:
       - name: Smoke
         shell: bash
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli.exe
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally.exe
 
   windows:
     runs-on: windows-2022
@@ -157,5 +157,5 @@ jobs:
       - name: Smoke
         shell: bash
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli.exe
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally.exe

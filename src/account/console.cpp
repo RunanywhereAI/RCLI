@@ -19,7 +19,7 @@
 
 #include "account/credentials.h"
 
-namespace rcli::account {
+namespace wally::account {
 namespace {
 
 using Json = nlohmann::json;
@@ -137,7 +137,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
         _wcsicmp(host.c_str(), L"localhost") == 0 || host == L"127.0.0.1" || host == L"::1";
     const DWORD access_type =
         loopback ? WINHTTP_ACCESS_TYPE_NO_PROXY : WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
-    const WinHttpHandle session(WinHttpOpen(L"rcli-cloud-auth/1", access_type,
+    const WinHttpHandle session(WinHttpOpen(L"wally-cloud-auth/1", access_type,
                                             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session || !WinHttpSetTimeouts(session.get(), kConnectTimeoutMs, kConnectTimeoutMs,
                                         kTotalTimeoutMs, kTotalTimeoutMs)) {
@@ -350,7 +350,7 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
         curl_easy_setopt(request, CURLOPT_FOLLOWLOCATION, 0L) == CURLE_OK &&
         curl_easy_setopt(request, CURLOPT_SSL_VERIFYPEER, 1L) == CURLE_OK &&
         curl_easy_setopt(request, CURLOPT_SSL_VERIFYHOST, 2L) == CURLE_OK &&
-        curl_easy_setopt(request, CURLOPT_USERAGENT, "rcli-cloud-auth/1") == CURLE_OK &&
+        curl_easy_setopt(request, CURLOPT_USERAGENT, "wally-cloud-auth/1") == CURLE_OK &&
         curl_easy_setopt(request, CURLOPT_WRITEFUNCTION, CollectBody) == CURLE_OK &&
         curl_easy_setopt(request, CURLOPT_WRITEDATA, &response) == CURLE_OK;
     if (configured && !input.body.empty()) {
@@ -371,7 +371,7 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
         output->status = 0;
         output->body.clear();
         if (error != nullptr) {
-            // Names the origin actually contacted: with RCLI_CONSOLE_URL unset
+            // Names the origin actually contacted: with WALLY_CONSOLE_URL unset
             // that is the production console, and a bare "could not reach the
             // console" reads as a local dev server nobody pointed us at.
             *error = response.too_large ? "console response exceeded the safety limit"
@@ -386,7 +386,7 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
 
 void HttpError(const char* operation, const std::string& origin, int status, std::string* error) {
     if (error != nullptr) {
-        // Names which console answered: with RCLI_CONSOLE_URL unset that is
+        // Names which console answered: with WALLY_CONSOLE_URL unset that is
         // production, and a bare "failed with HTTP 404" reads as a bug rather
         // than as the wrong console having been asked.
         *error = std::string("console ") + operation + " (" + origin + ") failed with HTTP " +
@@ -456,7 +456,7 @@ bool Send(const Transport& transport, HttpRequest request, HttpResponse* respons
           std::string* error) {
     if (!transport(request, response, error)) {
         if (error != nullptr && error->empty()) {
-            // Names the origin actually contacted: with RCLI_CONSOLE_URL unset
+            // Names the origin actually contacted: with WALLY_CONSOLE_URL unset
             // that is the production console, and a plain "could not reach the
             // console" reads as a local server that was never told about.
             *error = "could not reach the RunAnywhere console at " + request.url;
@@ -542,6 +542,13 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
     if (!ConsoleOrigin(console_url, &origin, error)) {
         return false;
     }
+    // Wire value, not a display string -- InferenceInfra's CliClient StrEnum
+    // (api/app/services/cli_auth.py) only recognizes "rcli", pinned by
+    // api/tests/fixtures/rcli_console_contract.json. Sending "wally" here
+    // 422s /auth/cli/start for real: found live, testing this rename against
+    // a local control-plane instance. Renaming this needs a coordinated
+    // InferenceInfra change (add "wally" to the enum + update the pinned
+    // fixture) — a separate, cross-repo decision, not part of this PR.
     const Json payload = {{"hostname", hostname}, {"client", "rcli"}};
     HttpResponse response;
     if (!Send(transport_, {"POST", origin + "/auth/cli/start", payload.dump(), {}}, &response,
@@ -902,9 +909,9 @@ bool ConsoleClient::Revoke(const std::string& console_url, const std::string& ac
     return true;
 }
 
-}  // namespace rcli::account
+}  // namespace wally::account
 
-namespace rcli::account {
+namespace wally::account {
 
 bool BeginAuthorization(const std::string& console_url, const std::string& hostname,
                         Authorization* authorization, std::string* error) {
@@ -926,4 +933,4 @@ bool WhoAmI(const std::string& console_url, const std::string& token, Identity* 
     return ConsoleClient().WhoAmI(console_url, token, identity, error) == IdentityResult::Ok;
 }
 
-}  // namespace rcli::account
+}  // namespace wally::account

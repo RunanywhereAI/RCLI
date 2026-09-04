@@ -1,22 +1,22 @@
 /**
  * @file image_io.h
- * @brief Minimal RGBA → PNG encoder for `rcli image` output.
+ * @brief Minimal RGBA → PNG encoder for `wally image` output.
  *
  * CLI-owned file I/O, mirroring io/wav_io: commons diffusion engines return
- * raw RGBA pixels (image_media_type "image/raw-rgba"); rcli renders them to a
+ * raw RGBA pixels (image_media_type "image/raw-rgba"); wally renders them to a
  * real PNG so `--out foo.png` is a valid image. Self-contained (no libpng /
  * zlib dependency): emits a PNG whose IDAT is a zlib stream of *stored*
  * (uncompressed) DEFLATE blocks, which every decoder accepts.
  */
 
-#ifndef RCLI_IO_IMAGE_IO_H
-#define RCLI_IO_IMAGE_IO_H
+#ifndef WALLY_IO_IMAGE_IO_H
+#define WALLY_IO_IMAGE_IO_H
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace rcli::image {
+namespace wally::image {
 
 /**
  * Write 8-bit RGBA pixels (row-major, width*height*4 bytes) as a PNG file.
@@ -40,6 +40,6 @@ struct RgbImage {
  */
 bool read_ppm(const std::string& path, RgbImage* out, std::string* error);
 
-}  // namespace rcli::image
+}  // namespace wally::image
 
-#endif  // RCLI_IO_IMAGE_IO_H
+#endif  // WALLY_IO_IMAGE_IO_H

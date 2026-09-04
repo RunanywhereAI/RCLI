@@ -14,17 +14,17 @@
 #include <winsock2.h>
 // Winsock spells these differently: a socket is an unsigned SOCKET rather than
 // a file descriptor, and getsockname takes an int length rather than socklen_t.
-using rcli_socklen_t = int;
+using wally_socklen_t = int;
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
-using rcli_socklen_t = socklen_t;
+using wally_socklen_t = socklen_t;
 #endif
 
-#if defined(RCLI_HAS_SERVER)
+#if defined(WALLY_HAS_SERVER)
 #include "rac/server/rac_server.h"
 #endif
 
@@ -34,13 +34,13 @@ using rcli_socklen_t = socklen_t;
 #include "bootstrap.h"
 #include "harness/local_models.h"
 
-namespace rcli::harness {
+namespace wally::harness {
 namespace {
 
 
 /// A port nothing is listening on, found by letting the OS pick one and giving
 /// it straight back. There is a race between closing and the server binding,
-/// but the alternative is a fixed port that collides with a second rcli.
+/// but the alternative is a fixed port that collides with a second wally.
 ///
 /// `preferred` asks for one particular port and settles for any free one when
 /// it is taken. An integration that writes the port into a config file wants
@@ -75,7 +75,7 @@ int FreePort(int preferred) {
     address.sin_port = htons(static_cast<uint16_t>(preferred));
     int port = 0;
     if (bind(sock, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
-        rcli_socklen_t length = static_cast<rcli_socklen_t>(sizeof(address));
+        wally_socklen_t length = static_cast<wally_socklen_t>(sizeof(address));
         if (getsockname(sock, reinterpret_cast<sockaddr*>(&address), &length) == 0) {
             port = ntohs(address.sin_port);
         }
@@ -263,14 +263,14 @@ long long EpochSeconds() {
         .count();
 }
 
-/// The refresh half of the same dance `rcli usage` uses: exchange the refresh
+/// The refresh half of the same dance `wally usage` uses: exchange the refresh
 /// token for a new access token and persist it, so later commands in the same
 /// session do not pay for the refresh again.
 bool RefreshSession(const account::ConsoleClient& console, account::Credentials* credentials,
                     std::string* error) {
     if (credentials->refresh_token.empty()) {
         if (error != nullptr) {
-            *error = "the cloud session cannot be refreshed; run `rcli login`";
+            *error = "the cloud session cannot be refreshed; run `wally login`";
         }
         return false;
     }
@@ -388,7 +388,7 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
             out::error_line("could not find a free port for the local server");
             return false;
         }
-#if !defined(RCLI_HAS_SERVER)
+#if !defined(WALLY_HAS_SERVER)
         // This kit was built without the OpenAI-compatible server, so there is
         // nothing here that can serve a file on disk. An upstream model still
         // works, and saying which is the case beats starting nothing and
@@ -414,7 +414,7 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
         }
         serving = true;
         base_url = "http://127.0.0.1:" + std::to_string(port) + "/v1";
-#endif  // RCLI_HAS_SERVER
+#endif  // WALLY_HAS_SERVER
     } else {
         account::Credentials credentials;
         std::string load_error;
@@ -424,15 +424,15 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
         }
         if (!credentials.signed_in()) {
             out::error_line(model + " is not on this machine, and you are not signed in");
-            out::status_line("run `rcli login`, or `rcli pull " + model + "` to run it here");
+            out::status_line("run `wally login`, or `wally pull " + model + "` to run it here");
             return false;
         }
         // signed_in() only proves a token is present, not that it is real: a
         // hand-written credentials.json satisfies it with any non-empty
         // string. Everything past this point is destructive to a caller's
         // running app or session, so confirm the session against the console
-        // first — the same identity check `rcli whoami` makes, with the same
-        // refresh-on-401 dance `rcli usage` uses.
+        // first — the same identity check `wally whoami` makes, with the same
+        // refresh-on-401 dance `wally usage` uses.
         const account::ConsoleClient console;
         std::string email;
         std::string verify_error;
@@ -441,7 +441,7 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
                             " is not on this machine, and the signed-in cloud session did not "
                             "check out: " +
                             verify_error);
-            out::status_line("run `rcli login`, or `rcli pull " + model + "` to run it here");
+            out::status_line("run `wally login`, or `wally pull " + model + "` to run it here");
             return false;
         }
         base_url = credentials.console_url + "/v1";
@@ -457,7 +457,7 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
 
 void Release(const Endpoint& endpoint) {
     if (endpoint.serving) {
-#if defined(RCLI_HAS_SERVER)
+#if defined(WALLY_HAS_SERVER)
         rac_server_stop();
 #endif
     }
@@ -496,4 +496,4 @@ int Launch(const std::string& tool, const std::string& model,
     return status;
 }
 
-}  // namespace rcli::harness
+}  // namespace wally::harness

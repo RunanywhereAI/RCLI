@@ -62,9 +62,9 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          REVIEWED=$(sed -nE 's/^project\(rcli VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | head -1)
+          REVIEWED=$(sed -nE 's/^project\(wally VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | head -1)
           if [ -z "$REVIEWED" ]; then
-            echo "::error::Could not read project(rcli VERSION ...) from CMakeLists.txt"
+            echo "::error::Could not read project(wally VERSION ...) from CMakeLists.txt"
             exit 1
           fi
           echo "Reviewed version: $REVIEWED"

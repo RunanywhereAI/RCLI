@@ -1,9 +1,9 @@
 /**
  * @file cmd_stt.cpp
- * @brief `rcli stt transcribe <audio.wav>` — file transcription via the STT
+ * @brief `wally stt transcribe <audio.wav>` — file transcription via the STT
  *        component (same call sequence as the commons real-inference tests).
  *
- * `rcli stt --input a.wav` is the same command: the options live on the `stt`
+ * `wally stt --input a.wav` is the same command: the options live on the `stt`
  * namespace and `transcribe` is a CLI11 fallthrough alias, so both spellings
  * reach one callback.
  */
@@ -20,7 +20,7 @@
 #include "io/output.h"
 #include "io/wav_io.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -161,4 +161,4 @@ void register_stt(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

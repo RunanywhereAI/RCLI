@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  RCLI_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  WALLY_VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
 jobs:
   macos:
@@ -24,7 +24,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 90
     env:
-      RCLI_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
+      WALLY_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,23 +50,23 @@ jobs:
           cmake --build build -j "$(sysctl -n hw.logicalcpu)"
       - name: Product e2e
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally
       - name: Package
         run: |
-          VERSION="${RCLI_VERSION#v}"
-          RCLI_VERSION="${VERSION}" RCLI_SDK_KIT="${GITHUB_WORKSPACE}/kit" \
-            bash scripts/package-rcli.sh build macos-arm64
+          VERSION="${WALLY_VERSION#v}"
+          WALLY_VERSION="${VERSION}" WALLY_SDK_KIT="${GITHUB_WORKSPACE}/kit" \
+            bash scripts/package-wally.sh build macos-arm64
           python3 scripts/verify-release-assets.py \
-            "dist/rcli-${VERSION}-macos-arm64.tar.gz" \
-            "dist/rcli-${VERSION}-macos-arm64.tar.gz.sha256"
+            "dist/wally-${VERSION}-macos-arm64.tar.gz" \
+            "dist/wally-${VERSION}-macos-arm64.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-macos-arm64
-          path: dist/rcli-*-macos-arm64.tar.gz*
+          name: wally-macos-arm64
+          path: dist/wally-*-macos-arm64.tar.gz*
 
   windows-arm64:
-    # install.ps1 already prefers rcli-<ver>-windows-arm64.zip and warns when it
+    # install.ps1 already prefers wally-<ver>-windows-arm64.zip and warns when it
     # is absent; until this job existed the preferred path could never be taken
     # and every Windows-on-ARM user silently got the emulated x64 build.
     runs-on: windows-11-arm
@@ -98,21 +98,21 @@ jobs:
       - name: Product e2e
         shell: bash
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli.exe
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally.exe
       - name: Package
         shell: pwsh
         run: |
-          $ver = $env:RCLI_VERSION.TrimStart('v')
+          $ver = $env:WALLY_VERSION.TrimStart('v')
           $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
-          $env:RCLI_SDK_KIT = $kit
-          & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit -Platform windows-arm64
+          $env:WALLY_SDK_KIT = $kit
+          & powershell -File scripts/package-wally-windows.ps1 -BuildDir build -Version $ver -KitDir $kit -Platform windows-arm64
           python scripts/verify-release-assets.py `
-            "dist/rcli-$ver-windows-arm64.zip" `
-            "dist/rcli-$ver-windows-arm64.zip.sha256"
+            "dist/wally-$ver-windows-arm64.zip" `
+            "dist/wally-$ver-windows-arm64.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-windows-arm64
+          name: wally-windows-arm64
           path: |
             dist/*.zip
             dist/*.zip.sha256
@@ -146,23 +146,23 @@ jobs:
       - name: Product e2e
         shell: bash
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli.exe
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally.exe
       - name: Package
         shell: pwsh
         run: |
-          $ver = $env:RCLI_VERSION.TrimStart('v')
+          $ver = $env:WALLY_VERSION.TrimStart('v')
           $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
-          $env:RCLI_SDK_KIT = $kit
-          & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit
+          $env:WALLY_SDK_KIT = $kit
+          & powershell -File scripts/package-wally-windows.ps1 -BuildDir build -Version $ver -KitDir $kit
           python scripts/verify-release-assets.py `
-            "dist/rcli-$ver-windows-x86_64.zip" `
-            "dist/rcli-$ver-windows-x86_64.zip.sha256"
-      # Zip only. onnxruntime.dll lives next to rcli.exe *inside* the archive;
+            "dist/wally-$ver-windows-x86_64.zip" `
+            "dist/wally-$ver-windows-x86_64.zip.sha256"
+      # Zip only. onnxruntime.dll lives next to wally.exe *inside* the archive;
       # uploading the loose DLL/exe made them look like first-class release assets.
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-windows-x64
+          name: wally-windows-x64
           path: |
             dist/*.zip
             dist/*.zip.sha256
@@ -182,31 +182,31 @@ jobs:
       - name: Verify release archives
         run: |
           set -euo pipefail
-          VERSION="${RCLI_VERSION#v}"
+          VERSION="${WALLY_VERSION#v}"
           python3 scripts/verify-release-assets.py \
-            "artifacts/rcli-${VERSION}-macos-arm64.tar.gz" \
-            "artifacts/rcli-${VERSION}-macos-arm64.tar.gz.sha256"
+            "artifacts/wally-${VERSION}-macos-arm64.tar.gz" \
+            "artifacts/wally-${VERSION}-macos-arm64.tar.gz.sha256"
           python3 scripts/verify-release-assets.py \
-            "artifacts/rcli-${VERSION}-windows-x86_64.zip" \
-            "artifacts/rcli-${VERSION}-windows-x86_64.zip.sha256"
+            "artifacts/wally-${VERSION}-windows-x86_64.zip" \
+            "artifacts/wally-${VERSION}-windows-x86_64.zip.sha256"
           python3 scripts/verify-release-assets.py \
-            "artifacts/rcli-${VERSION}-windows-arm64.zip" \
-            "artifacts/rcli-${VERSION}-windows-arm64.zip.sha256"
+            "artifacts/wally-${VERSION}-windows-arm64.zip" \
+            "artifacts/wally-${VERSION}-windows-arm64.zip.sha256"
       - name: Generate Homebrew formula update
         run: |
           set -euo pipefail
-          VERSION="${RCLI_VERSION#v}"
-          sidecar="artifacts/rcli-${VERSION}-macos-arm64.tar.gz.sha256"
+          VERSION="${WALLY_VERSION#v}"
+          sidecar="artifacts/wally-${VERSION}-macos-arm64.tar.gz.sha256"
           digest=$(awk 'NF == 2 { print $1 }' "$sidecar")
           [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
           python3 scripts/stamp-formula.py "$VERSION" "macos-arm64=${digest}"
-          ruby -c Formula/rcli.rb
+          ruby -c Formula/wally.rb
           mkdir -p release-metadata
-          cp Formula/rcli.rb release-metadata/rcli.rb
+          cp Formula/wally.rb release-metadata/wally.rb
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-homebrew-formula
-          path: release-metadata/rcli.rb
+          name: wally-homebrew-formula
+          path: release-metadata/wally.rb
           if-no-files-found: error
       - name: Create the release
         uses: softprops/action-gh-release@v2
@@ -214,10 +214,10 @@ jobs:
           tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
           name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
           files: |
-            artifacts/rcli-*.tar.gz
-            artifacts/rcli-*.tar.gz.sha256
-            artifacts/rcli-*.zip
-            artifacts/rcli-*.zip.sha256
+            artifacts/wally-*.tar.gz
+            artifacts/wally-*.tar.gz.sha256
+            artifacts/wally-*.zip
+            artifacts/wally-*.zip.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true
         env:

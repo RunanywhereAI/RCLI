@@ -1,6 +1,6 @@
 /**
  * @file cmd_rag.cpp
- * @brief `rcli rag query` / `rcli rag search` — retrieval-augmented generation
+ * @brief `wally rag query` / `wally rag search` — retrieval-augmented generation
  *        via the commons RAG session ABI.
  *
  * Single-shot flow in one process (the CLI is stateless across invocations and
@@ -23,14 +23,14 @@
 // The RAG pipeline is not folded into this binary (RAC_BACKEND_RAG=OFF, e.g. the
 // Windows CLI preset), so the rac_rag_*_proto symbols are unavailable. Register
 // no `rag` subcommand rather than fail to link.
-namespace rcli::commands {
+namespace wally::commands {
 
 void register_rag(CLI::App& app, GlobalOptions& options) {
     (void)app;
     (void)options;
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands
 
 #else
 
@@ -47,7 +47,7 @@ void register_rag(CLI::App& app, GlobalOptions& options) {
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -108,7 +108,7 @@ bool collect_documents(const RagParams& params, std::vector<std::string>* docume
 bool open_and_ingest(const GlobalOptions& options, const RagParams& params,
                      const std::vector<std::string>& documents, rac_handle_t* session) {
     // Models must already be downloaded — the session resolves them from the
-    // registry. (Pull them first with `rcli models download <id>`.)
+    // registry. (Pull them first with `wally models download <id>`.)
     v1::RAGConfiguration config;
     config.set_embedding_model_id(params.embed_model);
     if (params.require_llm || !params.llm_model.empty()) {
@@ -417,6 +417,6 @@ void register_rag(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands
 
 #endif  // RAC_HAVE_RAG

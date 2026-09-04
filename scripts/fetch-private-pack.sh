@@ -5,10 +5,10 @@
 #
 # There is no remote fetch (this repo has no token that can see SDK private
 # workflow artifacts). Resolution order:
-#   1. RCLI_PRIVATE_OVERLAY  — local tarball
+#   1. WALLY_PRIVATE_OVERLAY  — local tarball
 #   2. tarball next to the kit prefix named
 #      RunAnywhere-cpp-desktop-{macos-arm64-neurt,windows-arm64-qhexrt}-private-v*.tar.gz
-#   3. skip (OSS bottle) unless RCLI_REQUIRE_PRIVATE=1
+#   3. skip (OSS bottle) unless WALLY_REQUIRE_PRIVATE=1
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -37,12 +37,12 @@ apply_tar() {
   echo "private overlay applied: $tar -> $DEST"
 }
 
-if [[ -n "${RCLI_PRIVATE_OVERLAY:-}" ]]; then
-  [[ -f "$RCLI_PRIVATE_OVERLAY" ]] || {
-    echo "error: RCLI_PRIVATE_OVERLAY is not a file: $RCLI_PRIVATE_OVERLAY" >&2
+if [[ -n "${WALLY_PRIVATE_OVERLAY:-}" ]]; then
+  [[ -f "$WALLY_PRIVATE_OVERLAY" ]] || {
+    echo "error: WALLY_PRIVATE_OVERLAY is not a file: $WALLY_PRIVATE_OVERLAY" >&2
     exit 1
   }
-  apply_tar "$RCLI_PRIVATE_OVERLAY"
+  apply_tar "$WALLY_PRIVATE_OVERLAY"
   exit 0
 fi
 
@@ -57,9 +57,9 @@ if [[ ${#local_hits[@]} -gt 0 ]]; then
 fi
 shopt -u nullglob
 
-if [[ "${RCLI_REQUIRE_PRIVATE:-}" == "1" ]]; then
+if [[ "${WALLY_REQUIRE_PRIVATE:-}" == "1" ]]; then
   echo "error: no private ${ENGINE} overlay found for $PLATFORM" >&2
-  echo "  set RCLI_PRIVATE_OVERLAY or drop the tarball next to the kit prefix" >&2
+  echo "  set WALLY_PRIVATE_OVERLAY or drop the tarball next to the kit prefix" >&2
   exit 1
 fi
 echo "skip: no private ${ENGINE} overlay for $PLATFORM (OSS kit only)"

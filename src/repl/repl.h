@@ -3,12 +3,12 @@
  * @brief Thin RAII wrapper over vendored linenoise (history + line input).
  */
 
-#ifndef RCLI_REPL_REPL_H
-#define RCLI_REPL_REPL_H
+#ifndef WALLY_REPL_REPL_H
+#define WALLY_REPL_REPL_H
 
 #include <string>
 
-namespace rcli::repl {
+namespace wally::repl {
 
 class LineEditor {
    public:
@@ -26,6 +26,6 @@ class LineEditor {
     std::string history_path_;
 };
 
-}  // namespace rcli::repl
+}  // namespace wally::repl
 
-#endif  // RCLI_REPL_REPL_H
+#endif  // WALLY_REPL_REPL_H

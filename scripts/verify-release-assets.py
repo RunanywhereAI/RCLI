@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed validation for an RCLI release archive and SHA-256 sidecar."""
+"""Fail-closed validation for an Wally release archive and SHA-256 sidecar."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import zipfile
 
 
 ASSET = re.compile(
-    r"^rcli-(?P<version>[0-9]+\.[0-9]+\.[0-9]+)-"
+    r"^wally-(?P<version>[0-9]+\.[0-9]+\.[0-9]+)-"
     r"(?P<platform>macos-arm64|windows-x86_64)\.(?P<suffix>tar\.gz|zip)$"
 )
 MAX_MEMBERS = 100_000
@@ -75,7 +75,7 @@ def validate_members(
         raise VerificationError(f"archive is missing non-empty {readme}")
     if sizes.get(binary, 0) <= 0:
         raise VerificationError(f"archive is missing non-empty {binary}")
-    if executable == "rcli" and not executable_bits.get(binary, False):
+    if executable == "wally" and not executable_bits.get(binary, False):
         raise VerificationError(f"{binary} has no executable mode bit")
 
 
@@ -93,7 +93,7 @@ def verify_tar(archive: pathlib.Path, expected_root: str) -> None:
                 )
     except (tarfile.TarError, OSError) as exc:
         raise VerificationError(f"could not read tar archive: {exc}") from exc
-    validate_members(members, expected_root, "rcli")
+    validate_members(members, expected_root, "wally")
 
 
 def verify_zip(archive: pathlib.Path, expected_root: str) -> None:
@@ -110,7 +110,7 @@ def verify_zip(archive: pathlib.Path, expected_root: str) -> None:
                 )
     except (zipfile.BadZipFile, OSError) as exc:
         raise VerificationError(f"could not read zip archive: {exc}") from exc
-    validate_members(members, expected_root, "rcli.exe")
+    validate_members(members, expected_root, "wally.exe")
 
 
 def verify_sidecar(archive: pathlib.Path, sidecar: pathlib.Path) -> None:
@@ -146,7 +146,7 @@ def verify(archive: pathlib.Path, sidecar: pathlib.Path) -> None:
         raise VerificationError(f"release asset is missing or empty: {archive}")
     verify_sidecar(archive, sidecar)
     platform = match.group("platform")
-    expected_root = f"rcli-{platform}"
+    expected_root = f"wally-{platform}"
     if match.group("suffix") == "tar.gz":
         verify_tar(archive, expected_root)
     else:

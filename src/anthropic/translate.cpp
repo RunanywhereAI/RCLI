@@ -3,7 +3,7 @@
 #include <string>
 #include <utility>
 
-namespace rcli::anthropic::translate {
+namespace wally::anthropic::translate {
 namespace {
 
 /// A string field, or empty when it is absent or is something else.
@@ -293,7 +293,7 @@ Json ResponseToAnthropic(const Json& openai, const std::string& model) {
 
     Json out;
     const std::string reply_id = Field(openai, "id");
-    out["id"] = reply_id.empty() ? std::string("msg_rcli") : reply_id;
+    out["id"] = reply_id.empty() ? std::string("msg_wally") : reply_id;
     out["type"] = "message";
     out["role"] = "assistant";
     out["model"] = model;
@@ -366,7 +366,7 @@ std::string StreamChunkToAnthropic(const Json& chunk, StreamState* state) {
         // of null is exactly what some servers send.
         state->message_id = chunk.contains("id") && chunk["id"].is_string()
                                 ? chunk["id"].get<std::string>()
-                                : std::string("msg_rcli");
+                                : std::string("msg_wally");
         Json start;
         start["type"] = "message_start";
         start["message"] = Json{{"id", state->message_id},
@@ -566,4 +566,4 @@ std::string ErrorBody(const std::string& type, const std::string& message) {
     return Json{{"type", "error"}, {"error", Json{{"type", type}, {"message", message}}}}.dump();
 }
 
-}  // namespace rcli::anthropic::translate
+}  // namespace wally::anthropic::translate

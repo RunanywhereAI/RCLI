@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Assert `rcli backends` lists the given engine names.
+# Assert `wally backends` lists the given engine names.
 #
-#   scripts/assert-backends.sh <path-to-rcli> <name> [<name>...]
+#   scripts/assert-backends.sh <path-to-wally> <name> [<name>...]
 set -euo pipefail
 
-RCLI="${1:?usage: assert-backends.sh <rcli> <name>...}"
+WALLY="${1:?usage: assert-backends.sh <wally> <name>...}"
 shift
 if [[ $# -eq 0 ]]; then
-    echo "usage: assert-backends.sh <rcli> <name>..." >&2
+    echo "usage: assert-backends.sh <wally> <name>..." >&2
     exit 2
 fi
-if [[ ! -e "${RCLI}" ]]; then
-    echo "not found: ${RCLI}" >&2
+if [[ ! -e "${WALLY}" ]]; then
+    echo "not found: ${WALLY}" >&2
     exit 1
 fi
 
 out="$(mktemp)"
 trap 'rm -f "${out}"' EXIT
 json=""
-if "${RCLI}" --json backends >"${out}" 2>/dev/null; then
+if "${WALLY}" --json backends >"${out}" 2>/dev/null; then
     json="$(cat "${out}")"
-elif "${RCLI}" backends --json >"${out}" 2>/dev/null; then
+elif "${WALLY}" backends --json >"${out}" 2>/dev/null; then
     json="$(cat "${out}")"
 else
-    json="$("${RCLI}" backends 2>/dev/null || true)"
+    json="$("${WALLY}" backends 2>/dev/null || true)"
 fi
 
 if [[ -z "${json}" ]]; then

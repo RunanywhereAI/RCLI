@@ -2,16 +2,16 @@
 # Engine-agnostic modality e2e. Invoked from scripts/e2e.sh.
 #
 # Tests are keyed by primitive (llm, stt, tts, vlm, embed, image, vad, rerank,
-# segment), not by engine name. rcli routes via catalog framework / local path
-# / plugin priority. --engine is never required; set RCLI_E2E_ENGINE only to
+# segment), not by engine name. wally routes via catalog framework / local path
+# / plugin priority. --engine is never required; set WALLY_E2E_ENGINE only to
 # force an overlay backend.
 #
 # Discovery (first hit wins per modality):
-#   1. RCLI_E2E_<MOD> — catalog id or on-disk path
-#   2. Legacy RCLI_E2E_{MODEL,MLX_MODEL,NEURT_MODEL,QHEXRT_MODEL}
-#   3. Scan RCLI_E2E_MODEL_ROOTS + well-known dirs for *_HNPU / CoreML trees
-#   4. `rcli models list --json` downloaded rows whose modality matches
-#   5. If RCLI_E2E_AUTO=1, small OSS catalog defaults the binary can run
+#   1. WALLY_E2E_<MOD> — catalog id or on-disk path
+#   2. Legacy WALLY_E2E_{MODEL,MLX_MODEL,NEURT_MODEL,QHEXRT_MODEL}
+#   3. Scan WALLY_E2E_MODEL_ROOTS + well-known dirs for *_HNPU / CoreML trees
+#   4. `wally models list --json` downloaded rows whose modality matches
+#   5. If WALLY_E2E_AUTO=1, small OSS catalog defaults the binary can run
 #
 # Skip = no model. Fail = a model was selected and the command failed.
 # Public CI leaves every knob unset and stays green.
@@ -20,7 +20,7 @@
 # under pipefail — SIGPIPE makes the whole script fail.
 set -euo pipefail
 
-RCLI="${1:?usage: e2e-modalities.sh <path-to-rcli>}"
+WALLY="${1:?usage: e2e-modalities.sh <path-to-wally>}"
 
 pass=0
 fail=0
@@ -79,11 +79,11 @@ set_mod() {
 }
 
 engine_args=()
-if [[ -n "${RCLI_E2E_ENGINE:-}" ]]; then
-  engine_args=(--engine "${RCLI_E2E_ENGINE}")
+if [[ -n "${WALLY_E2E_ENGINE:-}" ]]; then
+  engine_args=(--engine "${WALLY_E2E_ENGINE}")
 fi
 
-workdir="$(mktemp -d "${TMPDIR:-/tmp}/rcli-e2e-mod.XXXXXX")"
+workdir="$(mktemp -d "${TMPDIR:-/tmp}/wally-e2e-mod.XXXXXX")"
 cleanup() { rm -rf "${workdir}"; }
 trap cleanup EXIT
 
@@ -163,7 +163,7 @@ write_wav
 write_ppm
 write_png || true
 
-backend_json="$("${RCLI}" --json backends 2>/dev/null || true)"
+backend_json="$("${WALLY}" --json backends 2>/dev/null || true)"
 has_backend() {
   local name="$1"
   printf '%s' "${backend_json}" | grep -F "\"${name}\"" >/dev/null 2>&1 || return 1
@@ -188,26 +188,26 @@ guess_mod() {
 }
 
 # 1. explicit per-modality env
-set_mod llm     "${RCLI_E2E_LLM:-${RCLI_E2E_MODEL:-}}"
-set_mod stt     "${RCLI_E2E_STT:-}"
-set_mod tts     "${RCLI_E2E_TTS:-}"
-set_mod vlm     "${RCLI_E2E_VLM:-}"
-set_mod embed   "${RCLI_E2E_EMBED:-}"
-set_mod image   "${RCLI_E2E_IMAGE:-}"
-set_mod vad     "${RCLI_E2E_VAD:-}"
-set_mod rerank  "${RCLI_E2E_RERANK:-}"
-set_mod segment "${RCLI_E2E_SEGMENT:-}"
-set_mod diarize "${RCLI_E2E_DIARIZE:-}"
+set_mod llm     "${WALLY_E2E_LLM:-${WALLY_E2E_MODEL:-}}"
+set_mod stt     "${WALLY_E2E_STT:-}"
+set_mod tts     "${WALLY_E2E_TTS:-}"
+set_mod vlm     "${WALLY_E2E_VLM:-}"
+set_mod embed   "${WALLY_E2E_EMBED:-}"
+set_mod image   "${WALLY_E2E_IMAGE:-}"
+set_mod vad     "${WALLY_E2E_VAD:-}"
+set_mod rerank  "${WALLY_E2E_RERANK:-}"
+set_mod segment "${WALLY_E2E_SEGMENT:-}"
+set_mod diarize "${WALLY_E2E_DIARIZE:-}"
 
 # 2. legacy engine knobs (still accepted; tests stay modality-keyed)
-if [[ -n "${RCLI_E2E_MLX_MODEL:-}" ]]; then
-  set_mod "$(guess_mod "${RCLI_E2E_MLX_MODEL}")" "${RCLI_E2E_MLX_MODEL}"
+if [[ -n "${WALLY_E2E_MLX_MODEL:-}" ]]; then
+  set_mod "$(guess_mod "${WALLY_E2E_MLX_MODEL}")" "${WALLY_E2E_MLX_MODEL}"
 fi
-if [[ -n "${RCLI_E2E_NEURT_MODEL:-}" ]]; then
-  set_mod "$(guess_mod "${RCLI_E2E_NEURT_MODEL}")" "${RCLI_E2E_NEURT_MODEL}"
+if [[ -n "${WALLY_E2E_NEURT_MODEL:-}" ]]; then
+  set_mod "$(guess_mod "${WALLY_E2E_NEURT_MODEL}")" "${WALLY_E2E_NEURT_MODEL}"
 fi
-if [[ -n "${RCLI_E2E_QHEXRT_MODEL:-}" ]]; then
-  set_mod "$(guess_mod "${RCLI_E2E_QHEXRT_MODEL}")" "${RCLI_E2E_QHEXRT_MODEL}"
+if [[ -n "${WALLY_E2E_QHEXRT_MODEL:-}" ]]; then
+  set_mod "$(guess_mod "${WALLY_E2E_QHEXRT_MODEL}")" "${WALLY_E2E_QHEXRT_MODEL}"
 fi
 
 # 3. scan well-known roots
@@ -225,11 +225,11 @@ append_root() {
   fi
 }
 
-if [[ -n "${RCLI_E2E_MODEL_ROOTS:-}" ]]; then
+if [[ -n "${WALLY_E2E_MODEL_ROOTS:-}" ]]; then
   old_ifs="${IFS}"
   IFS=':;'
   # shellcheck disable=SC2086
-  for r in ${RCLI_E2E_MODEL_ROOTS}; do
+  for r in ${WALLY_E2E_MODEL_ROOTS}; do
     append_root "${r}"
   done
   IFS="${old_ifs}"
@@ -286,7 +286,7 @@ IFS="${old_ifs}"
 
 # 4. downloaded catalog rows
 list_json_file="${workdir}/models.json"
-if "${RCLI}" --json models list >"${list_json_file}" 2>/dev/null; then
+if "${WALLY}" --json models list >"${list_json_file}" 2>/dev/null; then
   if [[ -s "${list_json_file}" && -n "${python_bin}" ]]; then
     while IFS=$'\t' read -r mod ref; do
       [[ -n "${mod}" && -n "${ref}" ]] || continue
@@ -320,7 +320,7 @@ PY
 fi
 
 # 5. AUTO: small OSS catalog ids the registered backends can serve.
-if [[ "${RCLI_E2E_AUTO:-0}" == "1" ]]; then
+if [[ "${WALLY_E2E_AUTO:-0}" == "1" ]]; then
   if has_backend llamacpp; then
     set_mod llm smollm2
     set_mod vlm smolvlm2
@@ -345,9 +345,9 @@ if [[ "${RCLI_E2E_AUTO:-0}" == "1" ]]; then
   fi
 fi
 
-echo "e2e (modalities, engine-agnostic): ${RCLI}"
-if [[ -n "${RCLI_E2E_ENGINE:-}" ]]; then
-  echo "  note  RCLI_E2E_ENGINE=${RCLI_E2E_ENGINE} (override only)"
+echo "e2e (modalities, engine-agnostic): ${WALLY}"
+if [[ -n "${WALLY_E2E_ENGINE:-}" ]]; then
+  echo "  note  WALLY_E2E_ENGINE=${WALLY_E2E_ENGINE} (override only)"
 fi
 for mod in llm stt tts vlm embed image vad rerank segment diarize; do
   ref="$(get_mod "${mod}")"
@@ -375,21 +375,21 @@ run_cmd() {
   bad "${label}${err:+ (${err})}"
 }
 
-# --- runners (no --engine unless RCLI_E2E_ENGINE is set) --------------------
+# --- runners (no --engine unless WALLY_E2E_ENGINE is set) --------------------
 if [[ -n "${MOD_LLM}" ]]; then
   run_cmd "llm ${MOD_LLM}" \
-    "${RCLI}" llm generate -m "${MOD_LLM}" ${engine_args[@]+"${engine_args[@]}"} \
+    "${WALLY}" llm generate -m "${MOD_LLM}" ${engine_args[@]+"${engine_args[@]}"} \
     "Reply with exactly: ok" --max-output-tokens 16
 else
-  skipm "llm (set RCLI_E2E_LLM or place a model under RCLI_E2E_MODEL_ROOTS)"
+  skipm "llm (set WALLY_E2E_LLM or place a model under WALLY_E2E_MODEL_ROOTS)"
 fi
 
 if [[ -n "${MOD_TTS}" ]]; then
   run_cmd "tts ${MOD_TTS}" \
-    "${RCLI}" tts synthesize "hello from rcli" --output "${tts_wav}" \
+    "${WALLY}" tts synthesize "hello from wally" --output "${tts_wav}" \
     -m "${MOD_TTS}"
 else
-  skipm "tts (set RCLI_E2E_TTS)"
+  skipm "tts (set WALLY_E2E_TTS)"
 fi
 
 if [[ -n "${MOD_STT}" ]]; then
@@ -398,61 +398,61 @@ if [[ -n "${MOD_STT}" ]]; then
     stt_in="${tts_wav}"
   fi
   run_cmd "stt ${MOD_STT}" \
-    "${RCLI}" stt transcribe -m "${MOD_STT}" "${stt_in}"
+    "${WALLY}" stt transcribe -m "${MOD_STT}" "${stt_in}"
 else
-  skipm "stt (set RCLI_E2E_STT)"
+  skipm "stt (set WALLY_E2E_STT)"
 fi
 
 if [[ -n "${MOD_VLM}" && -s "${png}" ]]; then
   run_cmd "vlm ${MOD_VLM}" \
-    "${RCLI}" vlm generate -m "${MOD_VLM}" ${engine_args[@]+"${engine_args[@]}"} \
+    "${WALLY}" vlm generate -m "${MOD_VLM}" ${engine_args[@]+"${engine_args[@]}"} \
     --image "${png}" "What color is this?" --max-output-tokens 16
 else
-  skipm "vlm (set RCLI_E2E_VLM)"
+  skipm "vlm (set WALLY_E2E_VLM)"
 fi
 
 if [[ -n "${MOD_EMBED}" ]]; then
   run_cmd "embed ${MOD_EMBED}" \
-    "${RCLI}" embed -m "${MOD_EMBED}" ${engine_args[@]+"${engine_args[@]}"} "hello"
+    "${WALLY}" embed -m "${MOD_EMBED}" ${engine_args[@]+"${engine_args[@]}"} "hello"
 else
-  skipm "embed (set RCLI_E2E_EMBED)"
+  skipm "embed (set WALLY_E2E_EMBED)"
 fi
 
 if [[ -n "${MOD_IMAGE}" ]]; then
   run_cmd "image ${MOD_IMAGE}" \
-    "${RCLI}" image generate --model "${MOD_IMAGE}" \
+    "${WALLY}" image generate --model "${MOD_IMAGE}" \
     --prompt "a red square" --out "${img_out}" --steps 4
 else
-  skipm "image (set RCLI_E2E_IMAGE to a compiled CoreML / HNPU diffusion tree)"
+  skipm "image (set WALLY_E2E_IMAGE to a compiled CoreML / HNPU diffusion tree)"
 fi
 
 if [[ -n "${MOD_VAD}" ]]; then
   run_cmd "vad ${MOD_VAD}" \
-    "${RCLI}" vad detect -m "${MOD_VAD}" "${wav}"
+    "${WALLY}" vad detect -m "${MOD_VAD}" "${wav}"
 else
-  skipm "vad (set RCLI_E2E_VAD)"
+  skipm "vad (set WALLY_E2E_VAD)"
 fi
 
 if [[ -n "${MOD_RERANK}" ]]; then
   run_cmd "rerank ${MOD_RERANK}" \
-    "${RCLI}" rerank -m "${MOD_RERANK}" "fruit" \
+    "${WALLY}" rerank -m "${MOD_RERANK}" "fruit" \
     --doc "bananas are yellow" --doc "steel is a metal"
 else
-  skipm "rerank (set RCLI_E2E_RERANK)"
+  skipm "rerank (set WALLY_E2E_RERANK)"
 fi
 
 if [[ -n "${MOD_SEGMENT}" ]]; then
   run_cmd "segment ${MOD_SEGMENT}" \
-    "${RCLI}" segment -m "${MOD_SEGMENT}" "${ppm}"
+    "${WALLY}" segment -m "${MOD_SEGMENT}" "${ppm}"
 else
-  skipm "segment (set RCLI_E2E_SEGMENT; input is binary P6 PPM)"
+  skipm "segment (set WALLY_E2E_SEGMENT; input is binary P6 PPM)"
 fi
 
 if [[ -n "${MOD_DIARIZE}" ]]; then
   run_cmd "diarize ${MOD_DIARIZE}" \
-    "${RCLI}" diarize -m "${MOD_DIARIZE}" "${wav}"
+    "${WALLY}" diarize -m "${MOD_DIARIZE}" "${wav}"
 else
-  skipm "diarize (set RCLI_E2E_DIARIZE)"
+  skipm "diarize (set WALLY_E2E_DIARIZE)"
 fi
 
 echo "modalities: ${pass} passed, ${fail} failed, ${skip} skipped"

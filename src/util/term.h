@@ -3,10 +3,10 @@
  * @brief Terminal capabilities: TTY detection, width, color policy.
  */
 
-#ifndef RCLI_UTIL_TERM_H
-#define RCLI_UTIL_TERM_H
+#ifndef WALLY_UTIL_TERM_H
+#define WALLY_UTIL_TERM_H
 
-namespace rcli::term {
+namespace wally::term {
 
 /** True when stdout is an interactive terminal. */
 bool stdout_is_tty();
@@ -23,6 +23,6 @@ int terminal_width();
 /** ANSI color allowed on stderr: TTY and NO_COLOR unset. */
 bool color_enabled();
 
-}  // namespace rcli::term
+}  // namespace wally::term
 
-#endif  // RCLI_UTIL_TERM_H
+#endif  // WALLY_UTIL_TERM_H

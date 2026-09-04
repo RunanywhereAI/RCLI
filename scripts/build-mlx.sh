@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Apple shipping binary: CMake `rcli-cxx` objects + Swift MLX host → build/rcli.
+# Apple shipping binary: CMake `wally-cxx` objects + Swift MLX host → build/wally.
 #
 #   scripts/build-mlx.sh [build-dir]
 #
 # Requires:
-#   - cmake already built the rcli target (rcli-cxx + link.txt)
-#   - a kit prefix on CMAKE_PREFIX_PATH / RCLI_SDK_KIT (public headers)
+#   - cmake already built the wally target (wally-cxx + link.txt)
+#   - a kit prefix on CMAKE_PREFIX_PATH / WALLY_SDK_KIT (public headers)
 #   - Xcode (xcodebuild compiles MLX Metal shaders; `swift build` cannot)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="${1:-${ROOT}/build}"
 
-KIT="${RCLI_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
+KIT="${WALLY_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
 KIT="${KIT%%:*}"
 if [[ -z "${KIT}" || ! -d "${KIT}/include" ]]; then
-    echo "error: set RCLI_SDK_KIT to a staged C++ desktop kit prefix (include/rac)" >&2
+    echo "error: set WALLY_SDK_KIT to a staged C++ desktop kit prefix (include/rac)" >&2
     exit 1
 fi
 
@@ -25,20 +25,20 @@ flags=()
 while IFS= read -r entry; do
     [[ -n "${entry}" ]] || continue
     flags+=("${entry}")
-done < "${BUILD}/rcli-link-flags.txt"
+done < "${BUILD}/wally-link-flags.txt"
 
 # The published runanywhere-swift tarball does not export RunAnywhereMLXRuntime
-# (Swift MLX without a second commons archive). Apple rcli therefore needs the
-# SDK source tree: nested monorepo, or RCLI_SDK_SWIFT_PATH in CI.
-if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" && -f "${ROOT}/../../Package.swift" ]]; then
+# (Swift MLX without a second commons archive). Apple wally therefore needs the
+# SDK source tree: nested monorepo, or WALLY_SDK_SWIFT_PATH in CI.
+if [[ -z "${WALLY_SDK_SWIFT_PATH:-}" && -f "${ROOT}/../../Package.swift" ]]; then
     # Canonicalize: SwiftPM's local package identity is the last path
     # component, so a trailing `/../..` would register the package as `..`.
-    export RCLI_SDK_SWIFT_PATH="$(cd "${ROOT}/../.." && pwd)"
+    export WALLY_SDK_SWIFT_PATH="$(cd "${ROOT}/../.." && pwd)"
 fi
-if [[ -z "${RCLI_SDK_SWIFT_PATH:-}" || ! -f "${RCLI_SDK_SWIFT_PATH}/Package.swift" ]]; then
-    echo "error: Apple rcli needs the SDK Swift tree (RunAnywhereMLXRuntime)." >&2
-    echo "  export RCLI_SDK_SWIFT_PATH=/path/to/runanywhere-sdks" >&2
-    echo "  or build from EXTERNAL/RCLI inside that monorepo." >&2
+if [[ -z "${WALLY_SDK_SWIFT_PATH:-}" || ! -f "${WALLY_SDK_SWIFT_PATH}/Package.swift" ]]; then
+    echo "error: Apple wally needs the SDK Swift tree (RunAnywhereMLXRuntime)." >&2
+    echo "  export WALLY_SDK_SWIFT_PATH=/path/to/runanywhere-sdks" >&2
+    echo "  or build from EXTERNAL/WALLY inside that monorepo." >&2
     exit 1
 fi
 
@@ -50,18 +50,18 @@ xcode_log="${BUILD}/xcodebuild-mlx.log"
 # is not pulled (it references cpp-httplib methods the kit never emitted).
 # Comments must not sit in a `\` continuation — they cut the command in half.
 plugin_ldflags=()
-if [[ -f "${BUILD}/librcli_plugins.a" ]]; then
-    plugin_ldflags+=("-Wl,-force_load,${BUILD}/librcli_plugins.a")
+if [[ -f "${BUILD}/libwally_plugins.a" ]]; then
+    plugin_ldflags+=("-Wl,-force_load,${BUILD}/libwally_plugins.a")
 fi
 set +e
 RUNANYWHERE_BUILD_MLX_DISTRIBUTION_FRAMEWORK=1 \
     xcodebuild build \
-    -scheme rcli-mlx \
+    -scheme wally-mlx \
     -destination "platform=macOS,arch=$(uname -m)" \
     -configuration Release \
     -derivedDataPath .build/xcode \
     HEADER_SEARCH_PATHS="\$(inherited) ${KIT}/include ${ROOT}/include" \
-    OTHER_LDFLAGS="${plugin_ldflags[*]} -L${BUILD} -lrcli_bundle -lc++ ${flags[*]}" \
+    OTHER_LDFLAGS="${plugin_ldflags[*]} -L${BUILD} -lwally_bundle -lc++ ${flags[*]}" \
     >"${xcode_log}" 2>&1
 xcodebuild_status=$?
 set -e
@@ -76,9 +76,9 @@ fi
 grep -E "error: |warning: .*[Mm]etal|BUILD SUCCEEDED" "${xcode_log}" || true
 
 PRODUCTS="${ROOT}/swift/.build/xcode/Build/Products/Release"
-[[ -x "${PRODUCTS}/RCLIMLX" ]] || { echo "the MLX build produced no binary" >&2; exit 1; }
+[[ -x "${PRODUCTS}/WallyMLX" ]] || { echo "the MLX build produced no binary" >&2; exit 1; }
 
-cp "${PRODUCTS}/RCLIMLX" "${BUILD}/rcli"
+cp "${PRODUCTS}/WallyMLX" "${BUILD}/wally"
 # Metal shader bundles must sit next to the executable. Copy every .bundle
 # xcodebuild laid down (mlx-swift_Cmlx.bundle, mlx-swift_Cmlx.bundle, …).
 shopt -s nullglob
@@ -88,4 +88,4 @@ for bundle in "${PRODUCTS}"/*.bundle; do
     cp -R "${bundle}" "${dest}"
 done
 shopt -u nullglob
-echo "built ${BUILD}/rcli"
+echo "built ${BUILD}/wally"

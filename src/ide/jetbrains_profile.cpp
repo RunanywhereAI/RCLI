@@ -16,7 +16,7 @@
 #include <Security/Security.h>
 #endif
 
-namespace rcli::ide {
+namespace wally::ide {
 namespace {
 
 namespace fs = std::filesystem;
@@ -87,7 +87,7 @@ std::string SettingsXML(const std::string& base_url) {
 
 /// Which model each of the IDE's three roles should use.
 ///
-/// One model answers all three because that is what rcli is serving. The id is
+/// One model answers all three because that is what wally is serving. The id is
 /// `<providerId>/<model>`, the separator being `ThirdPartyLLMProfileId.DELIM`.
 std::string ModelsXML(const std::string& model) {
     const std::string id = std::string(kProviderID) + "/" + model;
@@ -182,7 +182,7 @@ CFMutableDictionaryRef CopyQuery() {
 /// An access list naming the two programs allowed to read the item without
 /// asking: this one, which writes it, and the IDE, which reads it.
 ///
-/// Without this the item belongs to rcli alone, and the IDE's first read pops a
+/// Without this the item belongs to wally alone, and the IDE's first read pops a
 /// keychain dialog — the one manual step this command exists to remove. The
 /// legacy access APIs are what create such a list, and they are also what the
 /// platform's own `MacOSKeychainStorage` uses, so the item ends up the shape
@@ -372,4 +372,4 @@ bool RestoreProvider(const Product& product, std::string* error) {
     return true;
 }
 
-}  // namespace rcli::ide
+}  // namespace wally::ide

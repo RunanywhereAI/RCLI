@@ -1,6 +1,6 @@
 /**
  * @file cmd_rerank.cpp
- * @brief `rcli rerank <query> --doc … ` — cross-encoder relevance scoring.
+ * @brief `wally rerank <query> --doc … ` — cross-encoder relevance scoring.
  *
  * Same component sequence the other model-backed commands use:
  *   ensure_model_ready (resolve + auto-pull + resolve paths)
@@ -27,7 +27,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -176,4 +176,4 @@ void register_rerank(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

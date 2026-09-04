@@ -5,7 +5,7 @@
 
 #include "rac/core/rac_error.h"
 
-namespace rcli::out {
+namespace wally::out {
 
 std::string json_escape(const std::string& value) {
     std::string escaped;
@@ -218,4 +218,4 @@ void table(const std::vector<std::string>& header,
     }
 }
 
-}  // namespace rcli::out
+}  // namespace wally::out

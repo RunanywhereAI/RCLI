@@ -3,41 +3,41 @@
 # e2e-linux.sh
 #
 # Host-side port of runanywhere-sdks/core/tests/scripts/run-cli-e2e-linux.sh.
-# That original built rcli inside the SDK Docker image (RAC_BUILD_CLI=ON).
-# RCLI is a kit consumer, so this drives an already-built binary instead:
+# That original built wally inside the SDK Docker image (RAC_BUILD_CLI=ON).
+# WALLY is a kit consumer, so this drives an already-built binary instead:
 #
-#   scripts/e2e-linux.sh [path-to-rcli]
+#   scripts/e2e-linux.sh [path-to-wally]
 #
 # Always runs modelless contract checks. Inference + hermetic pull run when
-# RCLI_TEST_MODEL_DIR is set (same layout as SDK download-test-models.sh).
-# Set RCLI_E2E_REQUIRE_MODELS=1 to fail closed if that directory is missing.
+# WALLY_TEST_MODEL_DIR is set (same layout as SDK download-test-models.sh).
+# Set WALLY_E2E_REQUIRE_MODELS=1 to fail closed if that directory is missing.
 # =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="${1:-${RCLI_BIN:-}}"
+BIN="${1:-${WALLY_BIN:-}}"
 if [[ -z "$BIN" ]]; then
-  if [[ -x "$ROOT/build/rcli" ]]; then
-    BIN="$ROOT/build/rcli"
-  elif [[ -x "$ROOT/build/rcli-cxx" ]]; then
-    BIN="$ROOT/build/rcli-cxx"
-  elif [[ -x "$ROOT/build/rcli.exe" ]]; then
-    BIN="$ROOT/build/rcli.exe"
+  if [[ -x "$ROOT/build/wally" ]]; then
+    BIN="$ROOT/build/wally"
+  elif [[ -x "$ROOT/build/wally-cxx" ]]; then
+    BIN="$ROOT/build/wally-cxx"
+  elif [[ -x "$ROOT/build/wally.exe" ]]; then
+    BIN="$ROOT/build/wally.exe"
   fi
 fi
 if [[ -z "$BIN" || ! -e "$BIN" ]]; then
-  echo "usage: e2e-linux.sh <path-to-rcli>" >&2
+  echo "usage: e2e-linux.sh <path-to-wally>" >&2
   exit 1
 fi
 
-MODEL_DIR="${RCLI_TEST_MODEL_DIR:-${RAC_TEST_MODEL_DIR:-}}"
-LOG_DIR="${RCLI_TEST_LOG_DIR:-$ROOT/build/cli-e2e-logs}"
-HOME_DIR="${RUNANYWHERE_HOME:-$(mktemp -d "${TMPDIR:-/tmp}/rcli-e2e.XXXXXX")}"
-cleanup() { [[ -z "${RCLI_KEEP_HOME:-}" ]] && rm -rf "$HOME_DIR"; }
+MODEL_DIR="${WALLY_TEST_MODEL_DIR:-${RAC_TEST_MODEL_DIR:-}}"
+LOG_DIR="${WALLY_TEST_LOG_DIR:-$ROOT/build/cli-e2e-logs}"
+HOME_DIR="${RUNANYWHERE_HOME:-$(mktemp -d "${TMPDIR:-/tmp}/wally-e2e.XXXXXX")}"
+cleanup() { [[ -z "${WALLY_KEEP_HOME:-}" ]] && rm -rf "$HOME_DIR"; }
 trap cleanup EXIT
 mkdir -p "$LOG_DIR" "$HOME_DIR"
 
-rcli() { "$BIN" --home "$HOME_DIR" "$@"; }
+wally() { "$BIN" --home "$HOME_DIR" "$@"; }
 
 pass=0
 fail=0
@@ -56,25 +56,25 @@ check() {
   fi
 }
 
-smoke_version() { rcli version | grep -E 'rcli|[0-9]+\.[0-9]+'; }
+smoke_version() { wally version | grep -E 'wally|[0-9]+\.[0-9]+'; }
 
 smoke_backends() {
   local out
-  out="$(rcli backends)"
+  out="$(wally backends)"
   echo "$out"
   echo "$out" | grep -qiE "llamacpp|llama"
   echo "$out" | grep -qiE "sherpa|onnx"
 }
 
-smoke_list_all() { rcli list --all; }
+smoke_list_all() { wally list --all; }
 
 smoke_info_json() {
-  rcli --json info | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("rcli") or d.get("version")'
+  wally --json info | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("wally") or d.get("version")'
 }
 
 smoke_unknown() {
   set +e
-  rcli definitely-not-a-command
+  wally definitely-not-a-command
   local code=$?
   set -e
   test "$code" -ne 0
@@ -92,10 +92,10 @@ hermetic_pull_rm() {
     curl -sf http://127.0.0.1:8077/ >/dev/null 2>&1 && break
     sleep 1
   done
-  rcli --no-progress pull http://127.0.0.1:8077/silero_vad.onnx
-  rcli list | grep -q silero_vad
-  rcli rm silero_vad --force
-  ! rcli list | grep -q silero_vad
+  wally --no-progress pull http://127.0.0.1:8077/silero_vad.onnx
+  wally list | grep -q silero_vad
+  wally rm silero_vad --force
+  ! wally list | grep -q silero_vad
   pkill -f "http.server 8077" || true
   rm -rf "$stage"
 }
@@ -109,39 +109,39 @@ stage_canonical() {
 llm_one_shot() {
   stage_canonical
   local out
-  out="$(rcli run qwen3-0.6b 'Reply with exactly: OK' --no-think --max-tokens 32)"
+  out="$(wally run qwen3-0.6b 'Reply with exactly: OK' --no-think --max-tokens 32)"
   echo "LLM said: $out"
   test -n "$out"
 }
 
 tts_stt_roundtrip() {
-  rcli --no-progress pull piper || rcli --no-progress pull piper-en
-  rcli tts --text "RunAnywhere runs models on device." --output /tmp/rcli-e2e-tts.wav
-  test -s /tmp/rcli-e2e-tts.wav
-  rcli --no-progress pull whisper-tiny
+  wally --no-progress pull piper || wally --no-progress pull piper-en
+  wally tts --text "RunAnywhere runs models on device." --output /tmp/wally-e2e-tts.wav
+  test -s /tmp/wally-e2e-tts.wav
+  wally --no-progress pull whisper-tiny
   local transcript
-  transcript="$(rcli stt --input /tmp/rcli-e2e-tts.wav)"
+  transcript="$(wally stt --input /tmp/wally-e2e-tts.wav)"
   echo "Transcript: $transcript"
   echo "$transcript" | grep -iE "run|anywhere|models|device"
 }
 
 vad_segments() {
-  rcli --no-progress pull piper || rcli --no-progress pull piper-en
-  rcli tts --text "Testing voice activity detection." --output /tmp/rcli-e2e-vad.wav
-  rcli --json vad --input /tmp/rcli-e2e-vad.wav | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("segments") or d.get("speech") or isinstance(d, (dict, list))'
+  wally --no-progress pull piper || wally --no-progress pull piper-en
+  wally tts --text "Testing voice activity detection." --output /tmp/wally-e2e-vad.wav
+  wally --json vad --input /tmp/wally-e2e-vad.wav | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("segments") or d.get("speech") or isinstance(d, (dict, list))'
 }
 
 voice_turn() {
-  rcli --no-progress pull piper || rcli --no-progress pull piper-en
-  rcli --no-progress pull whisper-tiny
-  rcli tts --text "Hello there." --output /tmp/rcli-e2e-turn.wav
-  rcli --json voice --input /tmp/rcli-e2e-turn.wav --output /tmp/rcli-e2e-reply.wav | python3 -c 'import json,sys; json.load(sys.stdin)'
-  test -s /tmp/rcli-e2e-reply.wav
+  wally --no-progress pull piper || wally --no-progress pull piper-en
+  wally --no-progress pull whisper-tiny
+  wally tts --text "Hello there." --output /tmp/wally-e2e-turn.wav
+  wally --json voice --input /tmp/wally-e2e-turn.wav --output /tmp/wally-e2e-reply.wav | python3 -c 'import json,sys; json.load(sys.stdin)'
+  test -s /tmp/wally-e2e-reply.wav
 }
 
 serve_health() {
   stage_canonical
-  rcli serve qwen3-0.6b --port 8090 >/tmp/rcli-e2e-serve.log 2>&1 </dev/null &
+  wally serve qwen3-0.6b --port 8090 >/tmp/wally-e2e-serve.log 2>&1 </dev/null &
   local pid=$!
   local i
   for i in $(seq 1 30); do
@@ -163,9 +163,9 @@ serve_health() {
 }
 
 echo "=========================================="
-echo "  rcli e2e (host)"
+echo "  wally e2e (host)"
 echo "=========================================="
-echo "rcli:      $BIN"
+echo "wally:      $BIN"
 echo "home:      $HOME_DIR"
 echo "model dir: ${MODEL_DIR:-<unset>}"
 echo "logs:      $LOG_DIR"
@@ -179,12 +179,12 @@ check smoke_info_json
 check smoke_unknown
 
 if [[ -z "$MODEL_DIR" ]]; then
-  if [[ "${RCLI_E2E_REQUIRE_MODELS:-0}" == "1" ]]; then
-    echo "RCLI_TEST_MODEL_DIR is required (RCLI_E2E_REQUIRE_MODELS=1)" >&2
+  if [[ "${WALLY_E2E_REQUIRE_MODELS:-0}" == "1" ]]; then
+    echo "WALLY_TEST_MODEL_DIR is required (WALLY_E2E_REQUIRE_MODELS=1)" >&2
     exit 1
   fi
   echo
-  echo "  skip  inference (set RCLI_TEST_MODEL_DIR to enable)"
+  echo "  skip  inference (set WALLY_TEST_MODEL_DIR to enable)"
 else
   echo
   echo "==> Hermetic pull / rm (loopback HTTP, no WAN)"
@@ -205,5 +205,5 @@ if [[ "$fail" -gt 0 ]]; then
   echo "Logs: $LOG_DIR"
   exit 1
 fi
-echo "All rcli e2e cases passed"
+echo "All wally e2e cases passed"
 echo "Logs: $LOG_DIR"

@@ -4,7 +4,7 @@ $Repo = 'RunanywhereAI/RCLI'
 # There is no Homebrew here, so this installer does the whole job itself rather
 # than handing off to a package manager: download the release zip, check it,
 # unpack it, put it on PATH.
-$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\rcli'
+$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\wally'
 
 # Windows PowerShell picks the older protocols on some builds and api.github.com
 # refuses anything below TLS 1.2.
@@ -31,7 +31,7 @@ function Fail([string]$Message) {
     throw "Error: $Message"
 }
 
-Write-Info 'Checking latest RCLI release...'
+Write-Info 'Checking latest Wally release...'
 try {
     $Release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
 } catch {
@@ -45,16 +45,16 @@ Write-Info "Latest version: v$Version"
 # under WOW64 says x86 while ARCHITEW6432 names what is really underneath.
 $Arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 # Prism on Windows ARM64 runs the x64 zip. Native arm64 zips are preferred when present.
-$AssetName = "rcli-$Version-windows-x86_64.zip"
+$AssetName = "wally-$Version-windows-x86_64.zip"
 if ($Arch -eq 'ARM64') {
-    $ArmAsset = $Release.assets | Where-Object { $_.name -eq "rcli-$Version-windows-arm64.zip" } | Select-Object -First 1
+    $ArmAsset = $Release.assets | Where-Object { $_.name -eq "wally-$Version-windows-arm64.zip" } | Select-Object -First 1
     if ($ArmAsset) {
-        $AssetName = "rcli-$Version-windows-arm64.zip"
+        $AssetName = "wally-$Version-windows-arm64.zip"
     } else {
         Write-Warn "No native ARM64 zip; installing the x64 build (Windows on ARM can run it)."
     }
 } elseif ($Arch -ne 'AMD64') {
-    Fail "RCLI requires 64-bit Windows. Detected: $Arch"
+    Fail "Wally requires 64-bit Windows. Detected: $Arch"
 }
 $Asset = $Release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
 if (-not $Asset) {
@@ -65,7 +65,7 @@ if (-not $ShaAsset) {
     Fail "v$Version does not publish $AssetName.sha256. Refusing an unverified download."
 }
 
-$Temp = Join-Path ([IO.Path]::GetTempPath()) ('rcli-' + [Guid]::NewGuid().ToString('N'))
+$Temp = Join-Path ([IO.Path]::GetTempPath()) ('wally-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Temp -Force | Out-Null
 try {
     $Zip = Join-Path $Temp $AssetName
@@ -95,7 +95,7 @@ try {
     }
     Write-Ok 'Checksum verified'
 
-    Write-Info "Installing RCLI v$Version to $InstallDir..."
+    Write-Info "Installing Wally v$Version to $InstallDir..."
     Expand-Archive -LiteralPath $Zip -DestinationPath $Temp -Force
     $Stem = [IO.Path]::GetFileNameWithoutExtension($AssetName)
     $Unpacked = Join-Path $Temp "$Stem\bin"
@@ -104,21 +104,21 @@ try {
     }
 
     # Validate a complete candidate before replacing a working installation.
-    # rcli.exe and its DLLs stay together exactly as they are in archive bin/.
+    # wally.exe and its DLLs stay together exactly as they are in archive bin/.
     $Candidate = Join-Path $Temp 'install-candidate'
     New-Item -ItemType Directory -Path $Candidate -Force | Out-Null
     Copy-Item -Path (Join-Path $Unpacked '*') -Destination $Candidate -Recurse -Force
-    $CandidateExe = Join-Path $Candidate 'rcli.exe'
+    $CandidateExe = Join-Path $Candidate 'wally.exe'
     if (-not (Test-Path -LiteralPath $CandidateExe)) {
-        Fail "$AssetName is missing bin\rcli.exe."
+        Fail "$AssetName is missing bin\wally.exe."
     }
     $VersionOutput = @(& $CandidateExe --version 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        Fail 'The downloaded rcli.exe does not run; the existing installation was left unchanged.'
+        Fail 'The downloaded wally.exe does not run; the existing installation was left unchanged.'
     }
     $EscapedVersion = [Regex]::Escape($Version)
-    if (($VersionOutput -join "`n") -notmatch "(?m)^rcli\s+$EscapedVersion(?:\s|$)") {
-        Fail "The downloaded executable does not report RCLI v$Version; the existing installation was left unchanged."
+    if (($VersionOutput -join "`n") -notmatch "(?m)^wally\s+$EscapedVersion(?:\s|$)") {
+        Fail "The downloaded executable does not report Wally v$Version; the existing installation was left unchanged."
     }
 
     $InstallParent = Split-Path $InstallDir -Parent
@@ -141,10 +141,10 @@ try {
     Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$Exe = Join-Path $InstallDir 'rcli.exe'
-if (-not (Test-Path -LiteralPath $Exe)) { Fail "Installation failed. rcli.exe is not in $InstallDir." }
+$Exe = Join-Path $InstallDir 'wally.exe'
+if (-not (Test-Path -LiteralPath $Exe)) { Fail "Installation failed. wally.exe is not in $InstallDir." }
 & $Exe --version | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail "Installation failed. rcli.exe is installed but does not run." }
+if ($LASTEXITCODE -ne 0) { Fail "Installation failed. wally.exe is installed but does not run." }
 
 # The user's own PATH, never the machine's: this installs under LOCALAPPDATA for
 # one account and needs no administrator to do it.
@@ -158,14 +158,14 @@ if ($Entries -contains $InstallDir) {
     Write-Ok "Added $InstallDir to your PATH"
 }
 
-Write-Ok "RCLI v$Version installed successfully"
+Write-Ok "Wally v$Version installed successfully"
 Write-Host ''
-Write-Warn 'Open a new terminal before running rcli. This one was started with the old PATH.'
+Write-Warn 'Open a new terminal before running wally. This one was started with the old PATH.'
 Write-Host ''
 Write-Info 'Getting started:'
-Write-Host '    rcli list --all              every model in the catalog'
-Write-Host '    rcli pull qwen3-0.6b         download one'
-Write-Host '    rcli run qwen3-0.6b          talk to it, /? for commands'
-Write-Host '    rcli backends                which engines this build linked'
+Write-Host '    wally list --all              every model in the catalog'
+Write-Host '    wally pull qwen3-0.6b         download one'
+Write-Host '    wally run qwen3-0.6b          talk to it, /? for commands'
+Write-Host '    wally backends                which engines this build linked'
 Write-Host ''
 Write-Host '  Models download on demand into %LOCALAPPDATA%\RunAnywhere'

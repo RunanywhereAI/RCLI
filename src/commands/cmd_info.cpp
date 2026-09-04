@@ -1,6 +1,6 @@
 /**
  * @file cmd_info.cpp
- * @brief `rcli info` — environment summary (versions, paths, memory, plugins).
+ * @brief `wally info` — environment summary (versions, paths, memory, plugins).
  */
 
 #include "commands/commands.h"
@@ -14,11 +14,11 @@
 #include "config/cli_paths.h"
 #include "io/output.h"
 
-#ifndef RCLI_VERSION
-#define RCLI_VERSION "0.0.0-dev"
+#ifndef WALLY_VERSION
+#define WALLY_VERSION "0.0.0-dev"
 #endif
 
-namespace rcli::commands {
+namespace wally::commands {
 
 void register_info(CLI::App& app, GlobalOptions& options) {
     CLI::App* cmd = app.add_subcommand("info", "Report versions, paths, memory and backends");
@@ -52,7 +52,7 @@ void register_info(CLI::App& app, GlobalOptions& options) {
         if (options.json) {
             out::JsonWriter json;
             json.begin_object()
-                .field("rcli", RCLI_VERSION)
+                .field("wally", WALLY_VERSION)
                 .field("commons", commons_version)
                 .field("platform", platform)
                 .field("home", env.home)
@@ -69,7 +69,7 @@ void register_info(CLI::App& app, GlobalOptions& options) {
             return;
         }
 
-        out::result_line("rcli       " RCLI_VERSION);
+        out::result_line("wally       " WALLY_VERSION);
         out::result_line("commons    " + commons_version);
         out::result_line("platform   " + std::string(platform));
         out::result_line("home       " + env.home);
@@ -82,4 +82,4 @@ void register_info(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

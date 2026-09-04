@@ -15,15 +15,15 @@
  * lives in commons — the CLI never guesses.
  */
 
-#ifndef RCLI_CATALOG_MODEL_REF_H
-#define RCLI_CATALOG_MODEL_REF_H
+#ifndef WALLY_CATALOG_MODEL_REF_H
+#define WALLY_CATALOG_MODEL_REF_H
 
 #include <string>
 
 #include "model_types.pb.h"
 #include "rac/core/rac_types.h"
 
-namespace rcli::model_ref {
+namespace wally::model_ref {
 
 struct Resolved {
   std::string model_id; // registry id to operate on
@@ -48,6 +48,6 @@ struct ResolveOptions {
 rac_result_t resolve(const std::string &ref, Resolved *out, std::string *error,
                      const ResolveOptions *options = nullptr);
 
-} // namespace rcli::model_ref
+} // namespace wally::model_ref
 
-#endif // RCLI_CATALOG_MODEL_REF_H
+#endif // WALLY_CATALOG_MODEL_REF_H

@@ -1,5 +1,5 @@
-#ifndef RCLI_DESKTOP_CLAUDE_PROFILE_H
-#define RCLI_DESKTOP_CLAUDE_PROFILE_H
+#ifndef WALLY_DESKTOP_CLAUDE_PROFILE_H
+#define WALLY_DESKTOP_CLAUDE_PROFILE_H
 
 #include <string>
 
@@ -12,12 +12,12 @@
 /// ends. Neither is the mechanism.
 ///
 /// A gateway here speaks the Anthropic Messages API, which is exactly what
-/// `rcli::anthropic` already serves. So pointing Claude Desktop at a model we
+/// `wally::anthropic` already serves. So pointing Claude Desktop at a model we
 /// serve is a matter of writing the profile and restarting the app.
 ///
 /// Shape learned from ollama/ollama cmd/launch/claude_desktop.go, which drives
 /// the same feature.
-namespace rcli::desktop {
+namespace wally::desktop {
 
 /// Writes the gateway profile, marks it applied, and switches both config
 /// trees to third-party mode.
@@ -40,6 +40,6 @@ bool GatewayApplied();
 /// Where the app keeps its third-party profiles, for a message worth printing.
 std::string ProfileDirectory();
 
-}  // namespace rcli::desktop
+}  // namespace wally::desktop
 
-#endif  // RCLI_DESKTOP_CLAUDE_PROFILE_H
+#endif  // WALLY_DESKTOP_CLAUDE_PROFILE_H

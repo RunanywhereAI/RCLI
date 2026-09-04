@@ -1,6 +1,6 @@
 /**
  * @file cmd_rm.cpp
- * @brief `rcli models delete <model>` (alias `rcli rm`) — delete downloaded
+ * @brief `wally models delete <model>` (alias `wally rm`) — delete downloaded
  *        files + unregister.
  *
  * File deletion is CLI-owned (registry remove only unregisters, per the
@@ -26,7 +26,7 @@
 #include "io/proto.h"
 #include "util/term.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -185,4 +185,4 @@ void configure_models_delete(CLI::App *cmd, GlobalOptions &options) {
   });
 }
 
-} // namespace rcli::commands
+} // namespace wally::commands
