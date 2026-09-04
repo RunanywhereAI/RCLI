@@ -9,6 +9,8 @@
 #include "commands/commands.h"
 #include "io/output.h"
 
+#include "rac/core/rac_logger.h"
+
 #ifndef RCLI_VERSION
 #define RCLI_VERSION "0.0.0-dev"
 #endif
@@ -112,5 +114,20 @@ int run(int argc, char** argv) {
 }  // namespace rcli
 
 extern "C" int rcli_run_main(int argc, char** argv) {
+    // Here, not in main(). The shipped Apple binary is the Swift MLX host,
+    // which registers its callbacks and enters at this symbol; it never runs
+    // main.cpp, so the quieting that used to live there covered `rcli-cxx` and
+    // left the product binary noisy. Measured on `info`: `rcli` 4 RAC lines,
+    // `rcli-cxx` 2. Moving it here is what puts the product binary on the same
+    // footing; the 2 it should land on is inferred from rcli-cxx, not measured,
+    // because the Swift host does not build without the SDK Swift tree.
+    //
+    // Those 2 are backend registration WARNs emitted during static
+    // initialisation, which completes before any entry point runs. No call from
+    // inside the process can catch them; silencing them needs a pre-registration
+    // hook in the kit, and the kit owns backend registration.
+    //
+    // `--verbose` raises the level again in bootstrap().
+    rac_logger_set_min_level(RAC_LOG_ERROR);
     return rcli::run(argc, argv);
 }
