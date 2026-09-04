@@ -59,16 +59,26 @@ bool RefreshSession(const account::ConsoleClient& client, account::Credentials* 
     return account::Save(*credentials, error);
 }
 
-/// `GET /v1/cli/usage` takes `days` as an integer of at least 1, and its
-/// `timeline` groups by calendar date, so one day is the shortest window the
-/// console can total. `usage.Filter` on the console side already carries
-/// `since`/`until` and would answer an hour; the route is what does not offer
-/// it yet.
+/// The two rows, in the order they are printed, keyed by the label the console
+/// puts on the window it totalled.
+constexpr struct {
+    const char* id;
+    const char* label;
+} kRows[] = {{"1h", "past 1h"}, {"24h", "past 24h"}};
+
+/// The window the console labelled `id`, or nullptr when it sent none.
 ///
-/// The recent-request page is not a substitute. Rolling it up here would
-/// describe the last N requests while claiming to describe an hour, and the two
-/// part company exactly when somebody is busy enough to be looking.
-constexpr bool kConsoleAnswersHours = false;
+/// A console deployed before windowed totals sends no `windows` at all. Nothing
+/// substitutes for a missing one: `totals` covers `days`, so showing it under
+/// an hour's heading would be a month's spend wearing an hour's label.
+const account::UsageWindow* Window(const account::Usage& usage, const char* id) {
+    for (const account::UsageWindow& window : usage.windows) {
+        if (window.window == id) {
+            return &window;
+        }
+    }
+    return nullptr;
+}
 
 void PrintJson(const account::Usage& usage) {
     out::JsonWriter json;
@@ -78,18 +88,19 @@ void PrintJson(const account::Usage& usage) {
     json.field("spent_micros", static_cast<int64_t>(usage.credit.spent_micros));
 
     json.begin_array("windows");
-    json.begin_array_object();
-    json.field("window", "1h");
-    json.field("available", kConsoleAnswersHours);
-    json.end_object();
-    json.begin_array_object();
-    json.field("window", "24h");
-    json.field("available", true);
-    json.field("input_tokens", static_cast<int64_t>(usage.totals.prompt_tokens));
-    json.field("output_tokens", static_cast<int64_t>(usage.totals.completion_tokens));
-    json.field("cached_tokens", static_cast<int64_t>(usage.totals.cached_tokens));
-    json.field("cost_micros", static_cast<int64_t>(usage.totals.cost_micros));
-    json.end_object();
+    for (const auto& row : kRows) {
+        const account::UsageWindow* window = Window(usage, row.id);
+        json.begin_array_object();
+        json.field("window", row.id);
+        json.field("available", window != nullptr);
+        if (window != nullptr) {
+            json.field("input_tokens", static_cast<int64_t>(window->totals.prompt_tokens));
+            json.field("output_tokens", static_cast<int64_t>(window->totals.completion_tokens));
+            json.field("cached_tokens", static_cast<int64_t>(window->totals.cached_tokens));
+            json.field("cost_micros", static_cast<int64_t>(window->totals.cost_micros));
+        }
+        json.end_object();
+    }
     json.end_array();
 
     json.end_object();
@@ -108,21 +119,28 @@ void PrintReport(const account::Usage& usage) {
                   "cache", "spend");
     out::result_line(line);
 
-    // An hour is not a number this console can produce, so the row says so
-    // rather than quietly showing a day's figures under an hour's heading.
-    std::snprintf(line, sizeof(line), "%-10s %11s %11s %11s %11s", "past 1h", "-", "-", "-", "-");
-    out::result_line(line);
+    bool missing = false;
+    for (const auto& row : kRows) {
+        const account::UsageWindow* window = Window(usage, row.id);
+        if (window == nullptr) {
+            missing = true;
+            std::snprintf(line, sizeof(line), "%-10s %11s %11s %11s %11s", row.label, "-", "-", "-",
+                          "-");
+        } else {
+            const account::UsageTotals& totals = window->totals;
+            std::snprintf(line, sizeof(line), "%-10s %11s %11s %11s %11s", row.label,
+                          Grouped(totals.prompt_tokens).c_str(),
+                          Grouped(totals.completion_tokens).c_str(),
+                          Grouped(totals.cached_tokens).c_str(),
+                          Money(totals.cost_micros).c_str());
+        }
+        out::result_line(line);
+    }
 
-    const account::UsageTotals& totals = usage.totals;
-    std::snprintf(line, sizeof(line), "%-10s %11s %11s %11s %11s", "past 24h",
-                  Grouped(totals.prompt_tokens).c_str(), Grouped(totals.completion_tokens).c_str(),
-                  Grouped(totals.cached_tokens).c_str(), Money(totals.cost_micros).c_str());
-    out::result_line(line);
-
-    if (!kConsoleAnswersHours) {
+    if (missing) {
         out::result_line("");
-        out::status_line("the console totals whole days only; the 1h row needs a sub-day window "
-                         "on /v1/cli/usage");
+        out::status_line("this console does not total by window yet; a dash is a number it did "
+                         "not send, not a zero");
     }
 }
 

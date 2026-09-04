@@ -790,6 +790,30 @@ IdentityResult ConsoleClient::FetchUsage(const std::string& console_url,
         usage->totals.cost_micros = Number(*totals, "cost_micros");
     }
 
+    // Absent on every console deployed before windowed totals shipped. Left
+    // empty rather than filled from `totals`, which covers `days` and would
+    // read as an hour's spend while describing a month's.
+    const auto windows = object.find("windows");
+    if (windows != object.end() && windows->is_array()) {
+        for (const Json& entry : *windows) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            UsageWindow window;
+            window.window = DisplaySafe(OptionalString(entry, "window"), 16);
+            window.seconds = Number(entry, "seconds");
+            const auto window_totals = entry.find("totals");
+            if (window_totals != entry.end() && window_totals->is_object()) {
+                window.totals.requests = Number(*window_totals, "requests");
+                window.totals.prompt_tokens = Number(*window_totals, "prompt_tokens");
+                window.totals.completion_tokens = Number(*window_totals, "completion_tokens");
+                window.totals.cached_tokens = Number(*window_totals, "cached_tokens");
+                window.totals.cost_micros = Number(*window_totals, "cost_micros");
+            }
+            usage->windows.push_back(window);
+        }
+    }
+
     const auto timeline = object.find("timeline");
     if (timeline != object.end() && timeline->is_array()) {
         for (const Json& point : *timeline) {
