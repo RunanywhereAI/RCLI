@@ -1,6 +1,8 @@
 #ifndef RCLI_ACCOUNT_CONSOLE_H
 #define RCLI_ACCOUNT_CONSOLE_H
 
+#include <cstdint>
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -25,26 +27,26 @@ struct Identity {
     std::string email;
     // Kept for the existing editor/proxy integrations from the parent PR.
     std::string plan;
-    long tokens_this_month = 0;
-    long monthly_token_limit = 0;
+    std::int64_t tokens_this_month = 0;
+    std::int64_t monthly_token_limit = 0;
 };
 
 /// What the console meters. Money is integer micro-dollars everywhere: one
 /// dollar is 1,000,000, and a single request routinely costs a few hundred.
 struct UsageTotals {
-    long requests = 0;
-    long prompt_tokens = 0;
-    long completion_tokens = 0;
-    long cached_tokens = 0;
-    long cost_micros = 0;
+    std::int64_t requests = 0;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cached_tokens = 0;
+    std::int64_t cost_micros = 0;
 };
 
 struct UsageDay {
     std::string date;
-    long requests = 0;
-    long prompt_tokens = 0;
-    long completion_tokens = 0;
-    long cost_micros = 0;
+    std::int64_t requests = 0;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cost_micros = 0;
 };
 
 struct UsageEvent {
@@ -53,27 +55,27 @@ struct UsageEvent {
     std::string harness;
     std::string started_at;
     std::string error_code;
-    long prompt_tokens = 0;
-    long completion_tokens = 0;
-    long cached_tokens = 0;
-    long cost_micros = 0;
-    long ttft_ms = 0;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cached_tokens = 0;
+    std::int64_t cost_micros = 0;
+    std::int64_t ttft_ms = 0;
     int status_code = 0;
 };
 
 struct UsageModel {
     std::string model;
-    long requests = 0;
-    long prompt_tokens = 0;
-    long completion_tokens = 0;
-    long cached_tokens = 0;
-    long cost_micros = 0;
+    std::int64_t requests = 0;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cached_tokens = 0;
+    std::int64_t cost_micros = 0;
 };
 
 struct Credits {
-    long balance_micros = 0;
-    long granted_micros = 0;
-    long spent_micros = 0;
+    std::int64_t balance_micros = 0;
+    std::int64_t granted_micros = 0;
+    std::int64_t spent_micros = 0;
 };
 
 /// Spend over a window ending now, totalled by the console.
@@ -86,7 +88,7 @@ struct UsageWindow {
     /// "1h" or "24h" as the console labels it.
     std::string window;
     /// The span. Carried so nothing here has to parse `window`.
-    long seconds = 0;
+    std::int64_t seconds = 0;
     UsageTotals totals;
 };
 

@@ -1,6 +1,7 @@
 #include "test_common.h"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -635,6 +636,62 @@ TestResult test_the_trusted_browser_origin_is_never_empty() {
     return result;
 }
 
+// Usage counters are 64-bit all the way through. `long` is 32 bits on MSVC, so
+// the values below round-tripped as garbage on Windows: cost_micros passes 2^31
+// at about $2,147 of spend, which is a number a real customer reaches.
+TestResult test_usage_counters_survive_beyond_thirty_two_bits() {
+    TestResult result;
+    result.test_name = "usage_counters_survive_beyond_thirty_two_bits";
+    TempDirectory temporary;
+    EnvVar profile("RCLI_PROFILE_DIR", temporary.path().string().c_str());
+
+    constexpr std::int64_t kCost = 9'000'000'000;     // $9,000, well past 2^31
+    constexpr std::int64_t kPrompt = 5'000'000'000;   // more than INT32_MAX
+    constexpr std::int64_t kBalance = 4'000'000'000;
+
+    rcli::account::ConsoleClient console(
+        [&](const rcli::account::HttpRequest& request, rcli::account::HttpResponse* response,
+            std::string*) {
+            if (request.url.find("/v1/cli/usage") == std::string::npos) {
+                return false;
+            }
+            response->status = 200;
+            response->body =
+                Json{{"credit", {{"balance_micros", kBalance}}},
+                     {"totals",
+                      {{"prompt_tokens", kPrompt}, {"cost_micros", kCost}, {"cached_tokens", 0}}},
+                     {"windows",
+                      Json::array({Json{{"window", "1h"},
+                                        {"seconds", 3600},
+                                        {"totals", {{"prompt_tokens", kPrompt},
+                                                    {"cost_micros", kCost}}}}})}}
+                    .dump();
+            return true;
+        });
+
+    rcli::account::Usage usage;
+    std::string error;
+    const rcli::account::IdentityResult status = console.FetchUsage(
+        "https://console.example.test", "a-token", rcli::account::UsageQuery{}, &usage, &error);
+    if (status != rcli::account::IdentityResult::Ok) {
+        result.details = error.empty() ? "usage request failed" : error;
+        return result;
+    }
+    if (usage.totals.cost_micros != kCost || usage.totals.prompt_tokens != kPrompt ||
+        usage.credit.balance_micros != kBalance) {
+        result.details = "a usage counter above 2^31 was truncated";
+        result.expected = std::to_string(kCost);
+        result.actual = std::to_string(usage.totals.cost_micros);
+        return result;
+    }
+    if (usage.windows.size() != 1 || usage.windows[0].totals.cost_micros != kCost) {
+        result.details = "a window counter above 2^31 was truncated";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -659,5 +716,7 @@ int main(int argc, char** argv) {
               test_the_api_host_and_the_browser_host_stay_apart);
     suite.add("the_trusted_browser_origin_is_never_empty",
               test_the_trusted_browser_origin_is_never_empty);
+    suite.add("usage_counters_survive_beyond_thirty_two_bits",
+              test_usage_counters_survive_beyond_thirty_two_bits);
     return suite.run(argc, argv);
 }

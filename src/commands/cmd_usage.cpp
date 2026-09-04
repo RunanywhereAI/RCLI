@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -23,14 +24,14 @@ long long EpochSeconds() {
 }
 
 /// Money is integer micro-dollars: one dollar is 1,000,000.
-std::string Money(long micros) {
+std::string Money(std::int64_t micros) {
     const int places = micros != 0 && micros < 1'000'000 ? 4 : 2;
     char text[48];
     std::snprintf(text, sizeof(text), "$%.*f", places, static_cast<double>(micros) / 1'000'000.0);
     return text;
 }
 
-std::string Grouped(long value) {
+std::string Grouped(std::int64_t value) {
     std::string digits = std::to_string(value < 0 ? -value : value);
     for (std::size_t at = digits.size(); at > 3;) {
         at -= 3;
@@ -205,12 +206,14 @@ int Usage(bool as_json) {
 }  // namespace
 
 void register_usage(CLI::App& app, GlobalOptions& options) {
-    static_cast<void>(options);
     auto as_json = std::make_shared<bool>(false);
 
     auto* usage = app.add_subcommand("usage", "credit left, and what the last day cost");
     usage->add_flag("--json", *as_json, "machine-readable output");
-    usage->callback([as_json] { fail(Usage(*as_json)); });
+    // `rcli --json usage` and `rcli usage --json` mean the same thing. The root
+    // parser accepts the first, so reading only the command-local flag printed a
+    // human table to something asking for one JSON document.
+    usage->callback([as_json, &options] { fail(Usage(*as_json || options.json)); });
 }
 
 }  // namespace rcli::commands
