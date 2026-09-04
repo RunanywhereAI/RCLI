@@ -285,6 +285,7 @@ page is HTML, not a bundle.
 | `rcli info` | versions and paths |
 | `--engine` | force mlx / llamacpp / sherpa / onnx / neurt / qhexrt |
 | `rcli login` / `logout` / `whoami` | sign in to the console that serves upstream models |
+| `rcli usage` | credit left, then tokens and spend over the last hour and day |
 | `rcli claude-code` / `claude-desktop` | open Claude against a model |
 | `rcli clion` / `rustrover` | point a JetBrains IDE at a model |
 | `rcli opencode` | open a coding session against a model |
@@ -330,7 +331,7 @@ which is what lets an agent on the far side run the tools it was given rather
 than describe them. The JetBrains IDEs need no translator, because AI Assistant
 speaks OpenAI already.
 
-## Signing in
+## Hosted models
 
 A model you have not downloaded can still answer, if the console serves it:
 
@@ -341,9 +342,19 @@ rcli run models/gemma-4-31b-it "why is the sky blue"
 ```
 
 `rcli login` opens the console in a browser and waits for you to approve the
-machine. Credentials land in `~/.config/rcli/credentials.json`. `rcli logout`
-deletes them. `RCLI_CONSOLE_URL` points at a console other than the default and
-`RCLI_PROFILE_DIR` moves where the credentials are kept.
+machine. `rcli logout` deletes the session.
+
+Where the credential is kept depends on the platform, and `RCLI_PROFILE_DIR`
+moves it anywhere:
+
+| | Path |
+|---|---|
+| macOS, Linux | `$XDG_CONFIG_HOME/rcli/credentials.json`, or `~/.config/rcli` when unset |
+| Windows | `%LOCALAPPDATA%\RunAnywhere\RCLI\credentials.dat`, encrypted with DPAPI |
+
+`RCLI_CONSOLE_URL` points the CLI at a console API other than the default, and
+`RCLI_CONSOLE_WEB_URL` at the page that approves the sign-in. Those are two
+different hosts; see AGENTS.md.
 
 This is separate from `rcli auth login`, which signs the device in to the
 control plane with an API key. The two are being unified; see the auth work in
