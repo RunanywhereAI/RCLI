@@ -102,24 +102,16 @@ std::string BundlePath(const Editor& editor) {
     return {};
 }
 
-/// "Claude" from "/Applications/Claude.app".
-std::string BundleName(const std::string& bundle_path) {
-    const size_t slash = bundle_path.rfind('/');
-    const std::string leaf =
-        slash == std::string::npos ? bundle_path : bundle_path.substr(slash + 1);
-    const size_t dot = leaf.rfind(".app");
-    return dot == std::string::npos ? leaf : leaf.substr(0, dot);
-}
-
-/// `open -W -a <bundle>`, which waits for the app to quit.
+/// `open -n -W -a <bundle>`: a new instance, waited on until it quits.
 ///
 /// Waiting is the point: the translator has to outlive the app exactly, and no
-/// longer. No environment is passed — Claude Desktop ignores those for
-/// authentication and says so in its own UI. The gateway profile is what
-/// redirects it.
+/// longer. `-n` is what makes the wait mean that. open(1) without it "waits
+/// until the applications it opens **or that were already open** have exited",
+/// so a copy the reader already had running would both miss the wiring and hold
+/// the translator open behind it.
 std::vector<std::string> OpenArgs(const std::string& bundle, const anthropic::Shim& shim,
                                   const std::vector<std::string>& passthrough) {
-    std::vector<std::string> args{"-W"};
+    std::vector<std::string> args{"-n", "-W"};
     if (shim.running) {
         // `open --env` is what carries them across; launchd would otherwise
         // start the app with the reader's login environment instead of ours.
@@ -156,41 +148,6 @@ void AwaitProcess(const std::string& name, bool running, int timeout) {
         }
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
-}
-
-/// Refuses to quit a bundle that is actually running unless the reader asked
-/// for it. Quitting someone's live editor loses whatever it had open — unsaved
-/// buffers, a debug session, terminal state — and that should never be an
-/// implied side effect of pointing rcli at a model; it needs `--restart`.
-///
-/// True when there is nothing to quit (not installed as a bundle, or not
-/// running) or the reader passed `--restart`; false — having already
-/// explained why — otherwise.
-bool ConfirmQuit(const Editor& editor, const std::string& bundle, bool restart) {
-    const std::string name = BundleName(bundle);
-    if (name.empty() || !ProcessRunning(name)) {
-        return true;
-    }
-    if (!restart) {
-        out::error_line(name + " is currently running.");
-        out::status_line("pass --restart to quit it and relaunch it against " +
-                         std::string(editor.id));
-        return false;
-    }
-    return true;
-}
-
-/// Quits the app if it is running. A profile change is read at launch, so a
-/// running instance would keep the old one and look like the change failed.
-void QuitBundle(const std::string& bundle) {
-    const std::string name = BundleName(bundle);
-    if (name.empty()) {
-        return;
-    }
-    harness::Launch("osascript", {}, {"-e", "tell application \"" + name + "\" to quit"});
-    // Relaunching into a process that is still shutting down gets the old
-    // profile back, so give it a moment to actually go.
-    std::this_thread::sleep_for(std::chrono::seconds(3));
 }
 
 /// Sets `name` for the child, remembering what was there so it can be undone.
@@ -282,7 +239,7 @@ int Restore(const Editor& editor) {
 }
 
 int Run(const Editor& editor, const std::string& model,
-        const std::vector<std::string>& args, bool verbose, bool restart) {
+        const std::vector<std::string>& args, bool verbose) {
     const bool is_bundle = editor.bundle[0] != '\0';
     std::string bundle;
     if (is_bundle) {
@@ -337,17 +294,16 @@ int Run(const Editor& editor, const std::string& model,
             return 1;
         }
         out::status_line(std::string(editor.id) + " will talk to " + model + " through " + reachable);
-        if (!ConfirmQuit(editor, bundle, restart)) {
-            ide::StopProxy(&proxy);
-            harness::Release(endpoint);
-            return 1;
-        }
-        QuitBundle(bundle);
-        // `open -W` is wrong here. Quitting the running instance first means the
-        // wait can attach to the one on its way out and return while the new one
-        // is still starting, which pulls the endpoint out from under it.
-        AwaitProcess(editor.jetbrains->launcher, false, 30);
-        std::vector<std::string> open_args{"-a", bundle};
+        // A second instance, never the running one: whatever the reader has open
+        // in it — unsaved buffers, a debug session, terminal state — is not ours
+        // to close because they named a model.
+        //
+        // Not `-W` here, unlike the Anthropic paths. The IDE reads the provider
+        // settings at startup, so a second instance can still be handed off to
+        // the copy already running by the IntelliJ platform's own single-instance
+        // logic; `-W` would then return at once and pull the endpoint out from
+        // under a live IDE. Waiting on the launcher process covers both.
+        std::vector<std::string> open_args{"-n", "-a", bundle};
         if (!args.empty()) {
             open_args.push_back("--args");
             open_args.insert(open_args.end(), args.begin(), args.end());
@@ -397,26 +353,18 @@ int Run(const Editor& editor, const std::string& model,
             harness::Release(endpoint);
             return 1;
         }
-        if (!ConfirmQuit(editor, bundle, restart)) {
-            anthropic::Stop(&shim);
-            harness::Release(endpoint);
-            return 1;
-        }
-        QuitBundle(bundle);
+        // A new instance reads the gateway profile at startup. The one already
+        // running keeps the profile it started with, and keeps whatever the
+        // reader has open in it, which is the trade we want.
         status = harness::Launch("open", {}, OpenArgs(bundle, shim, args));
         if (!desktop::RestoreGateway(&failure)) {
             out::error_line(failure);
         }
     } else if (is_bundle) {
         // An app that reads the variables itself, or spawns something that
-        // does. Quit first: a running instance keeps the environment it was
-        // started with, so the agent inside it would talk to the old endpoint.
-        if (!ConfirmQuit(editor, bundle, restart)) {
-            anthropic::Stop(&shim);
-            harness::Release(endpoint);
-            return 1;
-        }
-        QuitBundle(bundle);
+        // does. A process only ever gets the environment it was started with,
+        // so the wiring reaches a new instance and not the running one — which
+        // is the whole reason `OpenArgs` passes `-n`.
         status = harness::Launch("open", {}, OpenArgs(bundle, shim, args));
     } else {
         // Scoped so the reader's own environment is back before we report
@@ -440,7 +388,6 @@ void register_editors(CLI::App& app, GlobalOptions& options) {
     for (const Editor& editor : kEditors) {
         auto model = std::make_shared<std::string>();
         auto restore = std::make_shared<bool>(false);
-        auto restart = std::make_shared<bool>(false);
         auto rest = std::make_shared<std::vector<std::string>>();
         auto serve = std::make_shared<bool>(false);
         auto* command = app.add_subcommand(editor.id, editor.summary);
@@ -453,23 +400,15 @@ void register_editors(CLI::App& app, GlobalOptions& options) {
             command->add_flag("--restore", *restore,
                               "undo what we configured and launch nothing");
         }
-        if (editor.bundle[0] != '\0') {
-            // Quitting a running app is destructive — open buffers, a debug
-            // session, terminal state — so it has to be asked for, never
-            // implied by naming a model.
-            command->add_flag(
-                "--restart", *restart,
-                std::string("quit ") + editor.id + " if it is running, to relaunch it against this model");
-        }
         command->add_option("args", *rest, "passed through")->allow_extra_args();
         command->prefix_command();
-        command->callback([&options, &editor, model, rest, serve, restore, restart] {
+        command->callback([&options, &editor, model, rest, serve, restore] {
             if (*restore) {
                 fail(Restore(editor));
                 return;
             }
             fail(*serve ? Serve(*model, options.verbose)
-                        : Run(editor, *model, *rest, options.verbose, *restart));
+                        : Run(editor, *model, *rest, options.verbose));
         });
     }
 }
