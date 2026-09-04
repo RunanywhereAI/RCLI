@@ -208,8 +208,12 @@ TestResult test_credentials_missing_console_url_falls_back() {
         result.details = error.empty() ? "load failed on a document missing console_url" : error;
         return result;
     }
-    if (credentials.console_url != "https://console.runanywhere.ai") {
-        result.expected = "https://console.runanywhere.ai";
+    // Against DefaultConsoleUrl(), not a literal. What this test is about is
+    // that the fallback happens at all; which host it lands on is pinned by
+    // the_api_host_and_the_browser_host_stay_apart, and duplicating the string
+    // here only bought two failures for one change.
+    if (credentials.console_url != rcli::account::DefaultConsoleUrl()) {
+        result.expected = rcli::account::DefaultConsoleUrl();
         result.actual = credentials.console_url;
         result.details = "a missing console_url must fall back to the default, not error";
         return result;
@@ -470,6 +474,98 @@ TestResult test_console_rejects_header_injection() {
     return result;
 }
 
+// The API host and the browser approval host are two deployments. Collapsing
+// them, or pointing the API at the console's Railway host, is the regression
+// this pins: measured 2026-09-04, console.runanywhere.ai answers
+// /auth/cli/start and /v1/me with 404 and its own SPA HTML, while
+// inference.runanywhere.ai answers 422 and 405 — the endpoints rejecting a bad
+// body and a wrong verb, which is how you know they exist.
+TestResult test_the_api_host_and_the_browser_host_stay_apart() {
+    TestResult result;
+    result.test_name = "the_api_host_and_the_browser_host_stay_apart";
+    EnvVar console("RCLI_CONSOLE_URL", nullptr);
+    EnvVar web("RCLI_CONSOLE_WEB_URL", nullptr);
+
+    const std::string api = rcli::account::DefaultConsoleUrl();
+    const std::vector<std::string> browser = rcli::account::TrustedBrowserOrigins(api);
+
+    if (api == "https://console.runanywhere.ai") {
+        result.details = "the API default is the web console, which serves no /auth/cli or /v1 route";
+        result.actual = api;
+        return result;
+    }
+    if (api != "https://inference.runanywhere.ai") {
+        result.details = "the API default moved; confirm the new host serves /auth/cli/* and /v1/me";
+        result.actual = api;
+        return result;
+    }
+    for (const std::string& origin : browser) {
+        if (origin == api) {
+            result.details = "one host cannot be both the control plane and the approval page";
+            return result;
+        }
+    }
+    // The origin the control plane actually puts in verification_url today. Drop
+    // this once that config names the custom domain; until then, removing it
+    // refuses every production sign-in.
+    if (!rcli::account::BrowserUrlIsTrusted(
+            "https://runanywhere-frontend-production.up.railway.app/cloud/cli?code=abc", browser)) {
+        result.details = "production's own approval URL must pass the origin check";
+        return result;
+    }
+    if (!rcli::account::BrowserUrlIsTrusted("https://console.runanywhere.ai/cloud/cli?code=abc",
+                                            browser)) {
+        result.details = "the console's custom domain must pass the origin check";
+        return result;
+    }
+    if (rcli::account::BrowserUrlIsTrusted("https://console.runanywhere.ai.evil.test/cloud/cli",
+                                           browser)) {
+        result.details = "a lookalike host must not pass on a prefix match";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+// The pinning only does something if it is on by default. Before this, the
+// trusted origin came from RCLI_CONSOLE_WEB_URL alone — unset in every shipped
+// install — so the check ran against an empty string and took whatever origin
+// the server put in verification_url.
+TestResult test_the_trusted_browser_origin_is_never_empty() {
+    TestResult result;
+    result.test_name = "the_trusted_browser_origin_is_never_empty";
+    EnvVar web("RCLI_CONSOLE_WEB_URL", nullptr);
+
+    // An unknown console is trusted at its own origin and nowhere else, so a
+    // dev or loopback console keeps working without widening what we accept.
+    const std::vector<std::string> loopback =
+        rcli::account::TrustedBrowserOrigins("http://127.0.0.1:8080");
+    if (loopback.size() != 1 || loopback[0] != "http://127.0.0.1:8080") {
+        result.details = "an unknown console must be trusted only at its own origin";
+        return result;
+    }
+    if (rcli::account::TrustedBrowserOrigins("https://dev.example.test").empty()) {
+        result.details = "an empty trusted origin list pins nothing";
+        return result;
+    }
+    if (rcli::account::BrowserUrlIsTrusted("https://console.runanywhere.ai/cloud/cli", loopback)) {
+        result.details = "the production console must not be trusted for a dev API";
+        return result;
+    }
+
+    // A declared origin still wins, and replaces the pair rather than adding
+    // to it, which is what points sign-in at a console served somewhere else.
+    EnvVar declared("RCLI_CONSOLE_WEB_URL", "https://console.dev.example.test");
+    const std::vector<std::string> overridden =
+        rcli::account::TrustedBrowserOrigins("https://inference.runanywhere.ai");
+    if (overridden.size() != 1 || overridden[0] != "https://console.dev.example.test") {
+        result.details = "a declared RCLI_CONSOLE_WEB_URL must outrank and replace the defaults";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -485,5 +581,9 @@ int main(int argc, char** argv) {
     suite.add("console_client_contract", test_console_client_contract);
     suite.add("console_errors_do_not_echo_secrets", test_console_errors_do_not_echo_secrets);
     suite.add("console_rejects_header_injection", test_console_rejects_header_injection);
+    suite.add("the_api_host_and_the_browser_host_stay_apart",
+              test_the_api_host_and_the_browser_host_stay_apart);
+    suite.add("the_trusted_browser_origin_is_never_empty",
+              test_the_trusted_browser_origin_is_never_empty);
     return suite.run(argc, argv);
 }
