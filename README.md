@@ -9,6 +9,48 @@ rcli run qwen3
 
 Chat, vision, speech, and embeddings — all local. Nothing leaves the device.
 
+## Signing in
+
+Models you have pulled run on this machine and need no account. To use a hosted
+model instead, sign in to a RunAnywhere console:
+
+```bash
+rcli login          # opens a browser; approve it there
+rcli whoami         # who you are, and what you have used this month
+rcli logout
+```
+
+The terminal never asks for a password. It shows a code, you approve it in the
+browser, and it collects an API key with your credit behind it. That key appears
+on the console's Cloud keys page and can be revoked there at any time.
+
+Against a console running on your own machine:
+
+```bash
+export RCLI_CONSOLE_URL=http://localhost:8002
+rcli login
+```
+
+Then hand a hosted model to a coding session:
+
+```bash
+rcli opencode -m gemma-4
+```
+
+For the Open Frontier hosted path, make the choice explicit and pass any
+OpenCode arguments after `--`:
+
+```bash
+rcli opencode --cloud --model <console-model-id> -- --agent build
+```
+
+`--cloud` never falls back to a local model. The existing `rcli opencode -m`
+form remains available for the parent PR's local-or-upstream harness flow.
+
+If the model is on this machine, rcli serves it locally. If it is not, the
+request goes to the console you are signed in to, is checked against your
+balance before it runs, and is metered.
+
 ## Install
 
 ### macOS (Apple Silicon)
@@ -23,6 +65,31 @@ or
 curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | sh
 ```
 
+### From source
+
+Needs a built SDK kit, not SDK source:
+
+```bash
+cmake -B build -DRCLI_SDK_KIT=<sdks>/dist/cpp-desktop-macos-arm64
+export RCLI_SDK_SWIFT_PATH=<sdks>          # for the MLX backend on Apple
+cmake --build build -j8
+```
+
+`build/rcli` is the full binary. `build/rcli-cxx` is the same CLI without MLX,
+and is what you get if `RCLI_SDK_SWIFT_PATH` is unset.
+
+MLX loads its Metal shaders from `mlx-swift_Cmlx.bundle` next to the executable,
+so install the pair together:
+
+```bash
+mkdir -p ~/.local/lib/rcli
+cp -R build/mlx-swift_Cmlx.bundle build/rcli ~/.local/lib/rcli/
+printf '#!/bin/sh\nexec "$HOME/.local/lib/rcli/rcli" "$@"\n' > ~/.local/bin/rcli
+chmod +x ~/.local/bin/rcli
+```
+
+Copy the binary on its own and MLX will not register.
+
 ### Windows (x64)
 
 ```powershell
@@ -31,9 +98,9 @@ irm https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.ps1 | iex
 
 ### Linux (x86_64)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | sh
-```
+No Linux release asset is currently published. Use the source build below;
+`install.sh` intentionally fails instead of claiming that an unavailable bottle
+was installed.
 
 ## Get started
 
@@ -79,10 +146,10 @@ rcli image generate --engine neurt --prompt "a red cube" --out out.png
 
 | Backend | macOS Apple Silicon | Windows x64 | Windows ARM64 | Linux x64 |
 |---|---|---|---|---|
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | public bottle | public bottle | — | public bottle |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | public bottle | public bottle | — | source build only |
 | [MLX](https://github.com/ml-explore/mlx) (Apple GPU) | public bottle (product `rcli`, not `rcli-cxx`) | — | — | — |
-| [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | public bottle | public bottle | — | public bottle |
-| [ONNX Runtime](https://onnxruntime.ai) | public bottle | public bottle | — | public bottle |
+| [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | public bottle | public bottle | — | source build only |
+| [ONNX Runtime](https://onnxruntime.ai) | public bottle | public bottle | — | source build only |
 | NeuRT (Apple Neural Engine; Core ML is the format) | **overlay** rebuild | — | — | — |
 | QHexRT (Qualcomm Hexagon NPU) | — | — | **overlay** rebuild | — |
 
@@ -217,8 +284,70 @@ page is HTML, not a bundle.
 | `rcli backends` | registered engines |
 | `rcli info` | versions and paths |
 | `--engine` | force mlx / llamacpp / sherpa / onnx / neurt / qhexrt |
+| `rcli login` / `logout` / `whoami` | sign in to the console that serves upstream models |
+| `rcli claude-code` / `claude-desktop` | open Claude against a model |
+| `rcli clion` / `rustrover` | point a JetBrains IDE at a model |
+| `rcli opencode` | open a coding session against a model |
 
 `rcli --help` and `rcli <command> --help` cover the rest.
+
+## Editors and coding agents
+
+One command points a tool at a model and starts it. There is nothing to
+configure by hand:
+
+```bash
+rcli claude-code -m qwen3-0.6b
+rcli clion -m models/gemma-4-31b-it
+rcli claude-desktop -m models/gemma-4-31b-it
+```
+
+The model can be one on this machine or one the console serves. Without `-m` the
+tool starts the way you already have it configured, and rcli wires nothing.
+
+| Tool | How it is wired |
+| --- | --- |
+| `claude-code`, `opencode` | `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in the process |
+| `claude-desktop` | a gateway profile in Claude Desktop's third party mode, covering the chat and Cowork tabs |
+| `clion`, `rustrover` | AI Assistant's OpenAI-compatible provider, which works without a JetBrains AI subscription |
+
+Two flags go with `-m`. `--serve` holds the endpoint open and prints it instead
+of launching anything, which is how a tool nobody has taught rcli about gets
+wired up. `--restore` puts Claude Desktop or a JetBrains IDE back the way it was
+and starts nothing; a normal run already undoes its own configuration when the
+app quits, so this is for the run that was interrupted before it could.
+
+The first `rcli clion` on a machine takes a while, because it installs the AI
+Assistant plugin headlessly before starting the IDE. Later runs are quick. That
+endpoint sits on a fixed port rather than whatever happened to be free, because
+the IDE reads the address once at startup out of a file rcli writes beforehand,
+and a port that moved would leave that file naming something dead.
+
+Claude Code and Claude Desktop speak Anthropic's Messages API, while the models
+rcli serves speak OpenAI's, so a translator sits between them. It carries tool
+definitions out, tool calls back, and the results of those calls out again,
+which is what lets an agent on the far side run the tools it was given rather
+than describe them. The JetBrains IDEs need no translator, because AI Assistant
+speaks OpenAI already.
+
+## Signing in
+
+A model you have not downloaded can still answer, if the console serves it:
+
+```bash
+rcli login
+rcli whoami
+rcli run models/gemma-4-31b-it "why is the sky blue"
+```
+
+`rcli login` opens the console in a browser and waits for you to approve the
+machine. Credentials land in `~/.config/rcli/credentials.json`. `rcli logout`
+deletes them. `RCLI_CONSOLE_URL` points at a console other than the default and
+`RCLI_PROFILE_DIR` moves where the credentials are kept.
+
+This is separate from `rcli auth login`, which signs the device in to the
+control plane with an API key. The two are being unified; see the auth work in
+flight.
 
 ## Build from source
 

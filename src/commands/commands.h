@@ -58,6 +58,13 @@ void register_backends(CLI::App& app, GlobalOptions& options);
 void register_serve(CLI::App& app, GlobalOptions& options);
 void register_bench(CLI::App& app, GlobalOptions& options);
 void register_auth(CLI::App& app, GlobalOptions& options);
+
+// Sign-in against the console that serves upstream models, and the editors and
+// coding agents pointed at one. Separate from register_auth, which signs the
+// device in to the control plane; the two are being unified.
+void register_account(CLI::App& app, GlobalOptions& options);
+void register_editors(CLI::App& app, GlobalOptions& options);
+void register_harness(CLI::App& app, GlobalOptions& options);
 void register_telemetry(CLI::App& app, GlobalOptions& options);
 
 /**

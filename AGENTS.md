@@ -63,6 +63,44 @@ aliases (`run`, `pull`, `stt`). One `configure_*` wires both. See
 Do not reintroduce FetchContent of the SDK, a second inference backend tree,
 or a retired MetalRT / hardcoded catalog.
 
+## Signing in to a console
+
+`rcli login` is a device flow, the same shape `gh auth login` uses. The terminal
+asks for a code, a browser the person already trusts approves it, and the
+terminal collects a key. No password ever reaches the CLI.
+
+The four endpoints it calls are **not ours to rename**: an installed binary
+talks to whatever the console deploys, so a field or path change breaks every
+copy in the wild. They are `POST /auth/cli/start`, `/auth/cli/poll`,
+`/auth/cli/refresh`, and `GET /v1/me`. The console side has a test that reads
+`src/account/console.cpp` directly and fails if the two drift.
+
+Two secrets do different jobs. `request_code` is public and names the attempt;
+`poll_secret` proves the process collecting the grant is the one that started
+it. The console stores only a hash of the second.
+
+`RCLI_CONSOLE_URL` points at the console; it defaults to `http://localhost:8080`,
+which is nothing, so a local run needs it set. `RCLI_PROFILE_DIR` moves the
+credential file, which is what lets several accounts share one machine.
+
+The credential is a normal API key with the customer's credit behind it. Treat
+it as one: it goes in the profile file at `0600` and nowhere else, and it is
+never logged.
+
+## Building against the SDK
+
+`RCLI_SDK_KIT` points at a built kit, not at SDK source. `cmake/sdk-pin.cmake`
+pins the IDL version and its hash; a mismatch is a hard error and the fix is to
+consume a matching kit or bump the pin, **never to run protoc**.
+
+Two binaries come out of a build. `rcli-cxx` is the CLI. `rcli` is the same
+thing plus the MLX backend, and it only builds when `RCLI_SDK_SWIFT_PATH` names
+an SDK checkout with the Swift tree. Ship `rcli`.
+
+MLX resolves its Metal shaders from `mlx-swift_Cmlx.bundle` beside the
+executable. Copy the binary somewhere on its own and MLX silently fails to
+register, so an install puts both together and points a wrapper at them.
+
 ## Configuration and secrets
 
 - Read environment in one place (`GlobalOptions` / `bootstrap()`).

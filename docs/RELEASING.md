@@ -45,52 +45,62 @@ llm           ok        HTTP 200    1           1         0
 - `auth login` runs the authenticated handshake (`/api/v1/auth/sdk/authenticate` → `/api/v1/devices/register` → model assignments). Production only.
 - `telemetry emit|blast` drive the real commons telemetry pipeline to `/api/v2/sdk/telemetry/{modality}`. Development is keyless (no JWT). Production logs in first. Modalities: `llm stt tts vlm rag imagegen embeddings vad voice lora model system`. Exit is non-zero when any POST fails or any tracked event never reached the backend.
 
-## macOS distribution signing
+## Published asset contract
 
-`release.yml` builds the combined Swift/C++ host from the same Apple artifacts as the SDK release, imports a Developer ID Application certificate into an ephemeral keychain, signs the executable and compatibility libraries with the hardened runtime and secure timestamp, notarizes a DMG, staples and validates its ticket, then deletes the temporary keychain and credential files.
+The current `release.yml` publishes two archives and matching SHA-256
+sidecars. It does not build or advertise a Linux release:
 
-The repository stores no signing material. Configure the Developer ID secrets and one complete notarization credential set before creating a release tag:
+| Platform | Asset | Required archive root |
+|---|---|---|
+| macOS Apple Silicon | `rcli-X.Y.Z-macos-arm64.tar.gz` | `rcli-macos-arm64/` |
+| Windows x86_64 | `rcli-X.Y.Z-windows-x86_64.zip` | `rcli-windows-x86_64/` |
 
-- `RCLI_DEVELOPER_ID_CERT_P12_BASE64`
-- `RCLI_DEVELOPER_ID_CERT_PASSWORD`
+Each root contains a non-empty `README.md` and `bin/rcli` or `bin/rcli.exe`.
+Windows DLLs stay beside `bin/rcli.exe`. The macOS archive contains the Swift
+MLX host and its resource bundles. `scripts/verify-release-assets.py` verifies
+the sidecar digest, filename, single-root layout, required files, executable
+mode, duplicate paths, traversal, links, and expansion limits. Packaging jobs
+and the publish job all run it before a release is created.
 
-Preferred App Store Connect API-key notarization:
+## Signing reality and production gates
 
-- `RCLI_NOTARY_API_KEY_P8_BASE64`
-- `RCLI_NOTARY_KEY_ID`
-- `RCLI_NOTARY_ISSUER_ID`
+Credential-free macOS packaging is ad-hoc signed. `scripts/package-rcli.sh`
+checks that signature and can sign with an already-installed Developer ID
+identity via `RCLI_CODESIGN_IDENTITY` and optional `RCLI_CODESIGN_KEYCHAIN`.
+Set `RCLI_REQUIRE_DEVELOPER_ID=1` to make ad-hoc signing an error. The GitHub
+workflow does **not** currently import an identity, notarize an archive, create
+a DMG, or staple a ticket.
 
-Apple ID fallback notarization:
+The Windows workflow currently packages an unsigned executable. It does not
+import a PFX, Authenticode-sign, or validate a certificate chain.
 
-- `RCLI_NOTARY_APPLE_ID`
-- `RCLI_NOTARY_APP_SPECIFIC_PASSWORD`
-- `RCLI_NOTARY_TEAM_ID`
+Therefore these are launch gates, not completed workflow features:
 
-When both notarization sets are complete, the workflow uses the App Store Connect API key. The Apple ID fallback stores its run-scoped notarytool profile only in the same ephemeral keychain as the imported Developer ID identity, passes that keychain explicitly during submission, and deletes it after the package step.
+- import a Developer ID Application identity into an ephemeral keychain, sign
+  nested code and the host with hardened runtime/timestamp, notarize the exact
+  distributed artifact, and validate Gatekeeper acceptance;
+- Authenticode-sign `rcli.exe` and DLLs as required, then validate signatures on
+  a clean Windows host;
+- provide the signing/notarization credentials through protected release
+  environments and keep pull-request jobs credential-free.
 
-For a local or external release runner, `scripts/package-rcli.sh` accepts an already-available identity through `RCLI_CODESIGN_IDENTITY` (and optionally `RCLI_CODESIGN_KEYCHAIN`). Set `RCLI_MACOS_NOTARIZE=1` and authenticate notarytool either with `RCLI_NOTARYTOOL_PROFILE` (plus `RCLI_NOTARYTOOL_KEYCHAIN` for a profile in a non-default keychain) or the API-key path, key ID, and issuer ID variables documented at the top of that script. The normal credential-free packaging path remains ad-hoc signed for pull-request smoke.
-
-## Windows distribution signing
-
-The release workflow Authenticode-signs `rcli.exe`, validates the resulting signature, and only then creates the Windows ZIP. Configure these repository secrets before creating a release tag:
-
-- `RCLI_WINDOWS_CODESIGN_PFX_BASE64`
-- `RCLI_WINDOWS_CODESIGN_PFX_PASSWORD`
-
-Pull-request builds remain credential-free and validate the same unsigned binary/package layout before the protected release job performs signing.
+Do not describe an asset as notarized or Authenticode-signed until the workflow
+and the downloaded release prove it. Useful post-download checks are
+`codesign -dv --verbose=4`, `codesign --verify --strict`, and `spctl --assess`
+on macOS, and `Get-AuthenticodeSignature` on Windows.
 
 ## CI and release workflow
 
-- `pr-build.yml` builds macOS, Linux, and Windows rcli targets and runs unit, backend-registration, relocatable-package, and modelless smoke checks.
-- `release.yml` requires all three rcli packages before publishing the GitHub Release.
-- macOS GitHub Release assets include a Developer ID signed, notarized, and stapled disk image alongside the tarball.
+- `ci.yml` builds and tests macOS and Windows. Its distribution job also tests
+  archive verification, shell syntax, formula syntax, and stamping code.
+- `release.yml` builds macOS and Windows, runs product e2e, packages, verifies
+  each archive twice, then publishes the two archives and sidecars.
+- The publish job generates a `rcli-homebrew-formula` workflow artifact from
+  the verified macOS checksum. It does not pretend that an ephemeral checkout
+  updated a default branch.
 
-Published release assets are platform-specific:
-
-| Platform | Asset | Included engines |
-|---|---|---|
-| macOS Apple Silicon | `rcli-macos-arm64-vX.Y.Z.tar.gz` and signed/notarized DMG | llama.cpp + MLX + Sherpa-ONNX + ONNX Runtime + CoreML |
-| Linux x86_64 | `rcli-linux-x86_64-vX.Y.Z.tar.gz` | llama.cpp + Sherpa-ONNX + ONNX Runtime |
-| Windows x86_64 | `rcli-windows-x86_64-vX.Y.Z.zip` | llama.cpp + Sherpa-ONNX + ONNX Runtime |
-
-The tagged macOS release packages the `RunAnywhereMLXCLI` product as `bin/rcli` together with `mlx.metallib`, its SwiftPM resource bundles, and any deployment-target Swift compatibility libraries. The CMake `rcli` binary remains the fast, credential-free pull-request smoke target; it registers llama.cpp and exposes the dual catalog but cannot execute MLX without the Swift callbacks.
+Homebrew still needs one ownership decision: `install.sh` taps the RCLI repo as
+`runanywhereai/rcli`, while the historical update script targeted a separate
+`homebrew-tap` repo. Until one is declared canonical, pass `RCLI_TAP_REPO`
+explicitly to `scripts/update-tap.sh` and apply the generated formula to the
+same tap users install from.

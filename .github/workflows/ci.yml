@@ -17,6 +17,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  distribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate distribution tooling
+        run: |
+          set -euo pipefail
+          python3 tests/test_release_assets.py
+          python3 -m py_compile scripts/verify-release-assets.py scripts/stamp-formula.py
+          bash -n install.sh scripts/package-rcli.sh scripts/update-tap.sh
+          ruby -c Formula/rcli.rb
+
   macos:
     # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is
     # Xcode 16.4 / Swift 6.1; macos-14 is Xcode 15 / Swift 5.10.
@@ -64,6 +77,47 @@ jobs:
         env:
           RCLI_SDK_KIT: ${{ github.workspace }}/kit
         run: bash scripts/e2e.sh ./build/rcli
+
+  windows-arm64:
+    # Native ARM64 runner, free for public repos. Cross-compiling from the x64
+    # host would build but never execute, and Windows-on-ARM is exactly where
+    # the emulated x64 build needs a native alternative.
+    runs-on: windows-11-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - uses: seanmiddleditch/gha-setup-ninja@master
+      - name: Download C++ desktop kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kit="${GITHUB_WORKSPACE}/kit"
+          bash scripts/fetch-kit.sh windows-arm64 "$kit"
+          test -f "$kit/include/runanywhere/proto/model_types.pb.h"
+      - name: Configure
+        shell: bash
+        run: |
+          prefix="${GITHUB_WORKSPACE}/kit"
+          if command -v cygpath >/dev/null 2>&1; then
+            prefix="$(cygpath -m "$prefix")"
+          fi
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure -C Release
+      - name: Smoke
+        shell: bash
+        env:
+          RCLI_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/rcli.exe
 
   windows:
     runs-on: windows-2022

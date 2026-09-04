@@ -47,6 +47,19 @@ set(RCLI_SOURCES
     src/commands/cmd_voice.cpp
     src/commands/cmd_rag.cpp
     src/commands/cmd_bench.cpp
+    src/commands/cmd_editors.cpp
+    src/commands/cmd_harness.cpp
+    src/commands/cmd_account.cpp
+    src/account/console.cpp
+    src/account/credentials.cpp
+    src/anthropic/messages.cpp
+    src/anthropic/translate.cpp
+    src/desktop/claude_profile.cpp
+    src/harness/harness.cpp
+    src/harness/opencode.cpp
+    src/harness/local_models.cpp
+    src/ide/jetbrains_profile.cpp
+    src/ide/openai_proxy.cpp
     src/commands/engine_options.cpp
     src/commands/model_setup.cpp
     src/config/cli_paths.cpp
@@ -79,12 +92,43 @@ endif()
 target_include_directories(rcli_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CLI11"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/linenoise"
 )
 
+# The Anthropic translator and the JetBrains proxy need an HTTP client and a
+# JSON reader. Both used to arrive from the SDK's own source build; a kit
+# consumer never configures that build, so they are fetched here.
+#
+# Fetched rather than vendored on purpose. Checking cpp-httplib in would drop
+# thirty thousand lines of somebody else's code into this repo, where the
+# security scanner reads it as ours and flags the http:// URLs an HTTP client
+# is obliged to construct.
+include(FetchContent)
+set(HTTPLIB_REQUIRE_OPENSSL OFF CACHE BOOL "" FORCE)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(cpp_httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.46.1
+    GIT_SHALLOW TRUE)
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(cpp_httplib nlohmann_json)
+
 find_package(Threads REQUIRED)
 target_link_libraries(rcli_core PUBLIC rac_commons Threads::Threads)
+target_link_libraries(rcli_core PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+if(WIN32)
+    # The console client uses the Windows system HTTP stack so source builds and
+    # release archives do not need curl/OpenSSL DLLs beside rcli.exe.
+    target_link_libraries(rcli_core PRIVATE winhttp)
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(rcli_core PRIVATE CURL::libcurl)
+endif()
 target_compile_definitions(rcli_core PUBLIC
     RCLI_VERSION="${PROJECT_VERSION}"
     RCLI_PINNED_SDK_VERSION="${RCLI_PINNED_SDK_VERSION}"
@@ -112,6 +156,8 @@ endif()
 # Include path + google=runanywhere_internal come from RunAnywhere::commons.
 
 if(APPLE)
+    # SecItem, for the credential a JetBrains IDE reads its provider key from.
+    target_link_libraries(rcli_core PRIVATE "-framework Security" "-framework CoreFoundation")
     target_link_libraries(rcli_core PUBLIC "-framework IOKit" "-framework CoreFoundation")
 endif()
 

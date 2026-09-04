@@ -70,6 +70,9 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     commands::register_info(app, options);
     commands::register_version(app, options);
     commands::register_auth(app, options);
+    commands::register_account(app, options);
+    commands::register_editors(app, options);
+    commands::register_harness(app, options);
     commands::register_telemetry(app, options);
 }
 

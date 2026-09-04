@@ -23,7 +23,19 @@ fi
 
 kit_cfg=""
 kit_root="${RCLI_SDK_KIT:-${CMAKE_PREFIX_PATH-}}"
-kit_root="${kit_root%%:*}"
+# CMAKE_PREFIX_PATH may be a list: ':' separated on POSIX, ';' on Windows. Take
+# the first entry, but never split a Windows path at its drive-letter colon --
+# doing that turned "D:/a/RCLI/kit" into "D", the kit Config was then never
+# found, and the backend check silently fell back to expecting llamacpp + onnx
+# + sherpa. On x64 that default happens to be correct so the bug stayed hidden;
+# on ARM64, whose kit ships none of them, it failed the job.
+case "${kit_root}" in
+    *\;*) kit_root="${kit_root%%;*}" ;;
+esac
+case "${kit_root}" in
+    ?:[/\\]*) ;;                       # C:/... or C:\... — leave the drive alone
+    *) kit_root="${kit_root%%:*}" ;;
+esac
 if [[ -n "${kit_root}" ]] && command -v cygpath >/dev/null 2>&1; then
     kit_root="$(cygpath -u "${kit_root}")"
 fi

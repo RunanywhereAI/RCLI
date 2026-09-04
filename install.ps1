@@ -61,6 +61,9 @@ if (-not $Asset) {
     Fail "v$Version does not publish $AssetName. Open an issue at https://github.com/$Repo/issues"
 }
 $ShaAsset = $Release.assets | Where-Object { $_.name -eq "$AssetName.sha256" } | Select-Object -First 1
+if (-not $ShaAsset) {
+    Fail "v$Version does not publish $AssetName.sha256. Refusing an unverified download."
+}
 
 $Temp = Join-Path ([IO.Path]::GetTempPath()) ('rcli-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Temp -Force | Out-Null
@@ -73,40 +76,67 @@ try {
         Fail "Could not download $($Asset.browser_download_url)"
     }
 
-    if ($ShaAsset) {
-        # Through a file rather than straight into a variable: the asset is
-        # served as octet-stream and the web cmdlets hand back bytes for that,
-        # not the line of text this needs.
-        $ShaFile = Join-Path $Temp $ShaAsset.name
-        Invoke-WebRequest -Uri $ShaAsset.browser_download_url -OutFile $ShaFile
-        # Both lowercased rather than relying on -ne being case-insensitive:
-        # Get-FileHash returns uppercase and the sidecar is written lowercase,
-        # so the comparison only looks wrong until you know that rule.
-        $Expected = ((Get-Content -Raw -LiteralPath $ShaFile) -split '\s+')[0].ToLowerInvariant()
-        $Actual = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($Actual -ne $Expected) {
-            Fail "Checksum mismatch on $AssetName. Expected $Expected, got $Actual. Do not use this download."
-        }
-        Write-Ok 'Checksum verified'
-    } else {
-        Write-Warn "The release publishes no $AssetName.sha256, so the download could not be verified."
+    # Through a file rather than straight into a variable: the asset is served
+    # as octet-stream and the web cmdlets hand back bytes rather than text.
+    $ShaFile = Join-Path $Temp $ShaAsset.name
+    Invoke-WebRequest -Uri $ShaAsset.browser_download_url -OutFile $ShaFile
+    $ShaLine = (Get-Content -Raw -LiteralPath $ShaFile).Trim()
+    if ($ShaLine -notmatch '^([0-9A-Fa-f]{64})\s+\*?([^\r\n]+)$') {
+        Fail "$($ShaAsset.name) is not a valid SHA-256 sidecar."
     }
+    $Expected = $Matches[1].ToLowerInvariant()
+    $ListedAsset = $Matches[2].Trim()
+    if ($ListedAsset -ne $AssetName) {
+        Fail "$($ShaAsset.name) names $ListedAsset instead of $AssetName."
+    }
+    $Actual = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($Actual -ne $Expected) {
+        Fail "Checksum mismatch on $AssetName. Expected $Expected, got $Actual. Do not use this download."
+    }
+    Write-Ok 'Checksum verified'
 
     Write-Info "Installing RCLI v$Version to $InstallDir..."
     Expand-Archive -LiteralPath $Zip -DestinationPath $Temp -Force
     $Stem = [IO.Path]::GetFileNameWithoutExtension($AssetName)
-    $Unpacked = Join-Path $Temp "$Stem\libexec"
+    $Unpacked = Join-Path $Temp "$Stem\bin"
     if (-not (Test-Path -LiteralPath $Unpacked)) {
         Fail "$AssetName does not have the layout this installer expects. Open an issue at https://github.com/$Repo/issues"
     }
 
-    # libexec is the package's own layout, the one the Homebrew formula installs
-    # and symlinks a bin/rcli at. Nothing to symlink here, so its contents land
-    # directly in the install directory and that directory goes on PATH: rcli.exe
-    # finds its DLLs by being in the same folder as them.
-    Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $Unpacked '*') -Destination $InstallDir -Recurse -Force
+    # Validate a complete candidate before replacing a working installation.
+    # rcli.exe and its DLLs stay together exactly as they are in archive bin/.
+    $Candidate = Join-Path $Temp 'install-candidate'
+    New-Item -ItemType Directory -Path $Candidate -Force | Out-Null
+    Copy-Item -Path (Join-Path $Unpacked '*') -Destination $Candidate -Recurse -Force
+    $CandidateExe = Join-Path $Candidate 'rcli.exe'
+    if (-not (Test-Path -LiteralPath $CandidateExe)) {
+        Fail "$AssetName is missing bin\rcli.exe."
+    }
+    $VersionOutput = @(& $CandidateExe --version 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        Fail 'The downloaded rcli.exe does not run; the existing installation was left unchanged.'
+    }
+    $EscapedVersion = [Regex]::Escape($Version)
+    if (($VersionOutput -join "`n") -notmatch "(?m)^rcli\s+$EscapedVersion(?:\s|$)") {
+        Fail "The downloaded executable does not report RCLI v$Version; the existing installation was left unchanged."
+    }
+
+    $InstallParent = Split-Path $InstallDir -Parent
+    New-Item -ItemType Directory -Path $InstallParent -Force | Out-Null
+    $Backup = "$InstallDir.previous"
+    Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $InstallDir) {
+        Move-Item -LiteralPath $InstallDir -Destination $Backup
+    }
+    try {
+        Move-Item -LiteralPath $Candidate -Destination $InstallDir
+    } catch {
+        if (Test-Path -LiteralPath $Backup) {
+            Move-Item -LiteralPath $Backup -Destination $InstallDir
+        }
+        throw
+    }
+    Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction SilentlyContinue
 } finally {
     Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction SilentlyContinue
 }

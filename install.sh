@@ -24,11 +24,10 @@ os=$(uname -s)
 arch=$(uname -m)
 case "${os}/${arch}" in
     # MLX is Metal and NeuRT is the Apple Neural Engine, so an Intel Mac would
-    # get neither and there is no build for it. Linux is x86-64 only for now.
+    # get neither and there is no build for it. No Linux release is published.
     Darwin/arm64)  ;;
-    Linux/x86_64)  ;;
     Darwin/*)      fail "RCLI needs an Apple Silicon Mac. Detected: ${arch}" ;;
-    Linux/*)       fail "RCLI on Linux is x86-64 only. Detected: ${arch}" ;;
+    Linux/*)       fail "RCLI does not currently publish a Linux binary. Build from source: https://github.com/${REPO}#build-from-source" ;;
     *)             fail "RCLI has no build for ${os}. On Windows, use install.ps1." ;;
 esac
 
@@ -75,6 +74,13 @@ fi
 
 if ! command -v rcli &>/dev/null; then
     fail "Installation failed. rcli not found in PATH."
+fi
+
+installed_version="$(rcli --version 2>/dev/null \
+    | sed -nE 's/^rcli ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+    | head -1)"
+if [[ "${installed_version}" != "${VERSION}" ]]; then
+    fail "Homebrew installed RCLI v${installed_version:-unknown}, but GitHub's latest release is v${VERSION}. The tap formula must be updated before this installer can claim success."
 fi
 
 ok "RCLI v${VERSION} installed successfully"

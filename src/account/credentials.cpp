@@ -1,0 +1,647 @@
+#include "account/credentials.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cerrno>
+#include <charconv>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <limits>
+#include <nlohmann/json.hpp>
+#include <string>
+#include <system_error>
+#include <vector>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <wincrypt.h>
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <pwd.h>
+#include <unistd.h>
+
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
+
+namespace rcli::account {
+namespace {
+
+namespace fs = std::filesystem;
+using Json = nlohmann::json;
+
+constexpr const char* kProductionConsole = "https://console.runanywhere.ai";
+constexpr std::uintmax_t kMaximumCredentialBytes = 1024 * 1024;
+#if defined(_WIN32)
+constexpr const char* kFileName = "credentials.dat";
+#else
+constexpr const char* kFileName = "credentials.json";
+#endif
+
+std::string Env(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::string(value) : std::string();
+}
+
+std::string Lower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool HasUnsafeCharacter(const std::string& text) {
+    return std::any_of(text.begin(), text.end(),
+                       [](unsigned char c) { return c <= 0x20 || c == 0x7f || c == '\\'; });
+}
+
+struct ParsedUrl {
+    std::string scheme;
+    std::string host;
+    std::string port;
+    std::string suffix;
+    bool bracketed = false;
+};
+
+bool ValidPort(const std::string& port) {
+    if (port.empty()) {
+        return true;
+    }
+    unsigned value = 0;
+    const auto result = std::from_chars(port.data(), port.data() + port.size(), value);
+    return result.ec == std::errc{} && result.ptr == port.data() + port.size() && value > 0 &&
+           value <= 65535;
+}
+
+bool ValidHost(const std::string& host, bool bracketed) {
+    if (host.empty() || host.front() == '.' || host.back() == '.') {
+        return false;
+    }
+    if (bracketed) {
+        return std::all_of(host.begin(), host.end(), [](unsigned char c) {
+            return std::isxdigit(c) != 0 || c == ':' || c == '.';
+        });
+    }
+    return std::all_of(host.begin(), host.end(), [](unsigned char c) {
+        return std::isalnum(c) != 0 || c == '-' || c == '.';
+    });
+}
+
+bool ParseUrl(const std::string& input, bool allow_suffix, ParsedUrl* parsed) {
+    if (parsed == nullptr || input.empty() || HasUnsafeCharacter(input)) {
+        return false;
+    }
+    const std::size_t scheme_end = input.find("://");
+    if (scheme_end == std::string::npos) {
+        return false;
+    }
+    ParsedUrl value;
+    value.scheme = Lower(input.substr(0, scheme_end));
+    if (value.scheme != "https" && value.scheme != "http") {
+        return false;
+    }
+
+    const std::size_t authority_start = scheme_end + 3;
+    const std::size_t authority_end = input.find_first_of("/?#", authority_start);
+    const std::string authority = input.substr(
+        authority_start,
+        authority_end == std::string::npos ? std::string::npos : authority_end - authority_start);
+    value.suffix = authority_end == std::string::npos ? std::string() : input.substr(authority_end);
+    if (authority.empty() || authority.find('@') != std::string::npos ||
+        (!allow_suffix && !value.suffix.empty() && value.suffix != "/")) {
+        return false;
+    }
+
+    if (authority.front() == '[') {
+        const std::size_t close = authority.find(']');
+        if (close == std::string::npos) {
+            return false;
+        }
+        value.bracketed = true;
+        value.host = Lower(authority.substr(1, close - 1));
+        const std::string remainder = authority.substr(close + 1);
+        if (!remainder.empty()) {
+            if (remainder.front() != ':' || remainder.size() == 1) {
+                return false;
+            }
+            value.port = remainder.substr(1);
+        }
+    } else {
+        if (std::count(authority.begin(), authority.end(), ':') > 1) {
+            return false;
+        }
+        const std::size_t colon = authority.rfind(':');
+        value.host = Lower(authority.substr(0, colon));
+        if (colon != std::string::npos) {
+            value.port = authority.substr(colon + 1);
+            if (value.port.empty()) {
+                return false;
+            }
+        }
+    }
+    if (!ValidHost(value.host, value.bracketed) || !ValidPort(value.port)) {
+        return false;
+    }
+
+    const bool loopback = value.host == "localhost" || value.host == "127.0.0.1" ||
+                          (value.bracketed && value.host == "::1");
+    if (value.scheme == "http" && !loopback) {
+        return false;
+    }
+    *parsed = std::move(value);
+    return true;
+}
+
+std::string RenderOrigin(const ParsedUrl& url) {
+    std::string rendered = url.scheme + "://";
+    rendered += url.bracketed ? "[" + url.host + "]" : url.host;
+    if (!url.port.empty()) {
+        rendered += ":" + url.port;
+    }
+    return rendered;
+}
+
+std::string HomeDirectory() {
+#if defined(_WIN32)
+    const std::string local = Env("LOCALAPPDATA");
+    if (!local.empty()) {
+        return local;
+    }
+    return Env("USERPROFILE");
+#else
+    const std::string home = Env("HOME");
+    if (!home.empty()) {
+        return home;
+    }
+    const passwd* entry = getpwuid(getuid());
+    return entry != nullptr && entry->pw_dir != nullptr ? entry->pw_dir : std::string();
+#endif
+}
+
+bool EnsureSecureDirectory(const std::string& directory, std::string* error) {
+    std::error_code code;
+    const fs::file_status before = fs::symlink_status(directory, code);
+    if (!code && fs::is_symlink(before)) {
+        if (error != nullptr) {
+            *error = "credential directory may not be a symbolic link";
+        }
+        return false;
+    }
+    code.clear();
+    fs::create_directories(directory, code);
+    if (code) {
+        if (error != nullptr) {
+            *error = "could not create the credential directory";
+        }
+        return false;
+    }
+    const bool is_directory = fs::is_directory(directory, code);
+    if (code || !is_directory) {
+        if (error != nullptr) {
+            *error = "could not create the credential directory";
+        }
+        return false;
+    }
+#if !defined(_WIN32)
+    if (::chmod(directory.c_str(), S_IRWXU) != 0) {
+        if (error != nullptr) {
+            *error = "could not restrict the credential directory";
+        }
+        return false;
+    }
+    struct stat metadata{};
+    if (::lstat(directory.c_str(), &metadata) != 0 || !S_ISDIR(metadata.st_mode) ||
+        metadata.st_uid != geteuid()) {
+        if (error != nullptr) {
+            *error = "credential directory has unsafe ownership";
+        }
+        return false;
+    }
+#endif
+    return true;
+}
+
+#if defined(_WIN32)
+
+bool Protect(const std::string& plaintext, std::vector<unsigned char>* protected_bytes,
+             std::string* error) {
+    if (plaintext.size() > std::numeric_limits<DWORD>::max()) {
+        if (error != nullptr) {
+            *error = "credential document is too large";
+        }
+        return false;
+    }
+    DATA_BLOB input{static_cast<DWORD>(plaintext.size()),
+                    reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data()))};
+    DATA_BLOB output{};
+    if (!CryptProtectData(&input, L"RunAnywhere RCLI cloud session", nullptr, nullptr, nullptr,
+                          CRYPTPROTECT_UI_FORBIDDEN, &output)) {
+        if (error != nullptr) {
+            *error = "Windows could not protect the cloud session";
+        }
+        return false;
+    }
+    protected_bytes->assign(output.pbData, output.pbData + output.cbData);
+    LocalFree(output.pbData);
+    return true;
+}
+
+bool Unprotect(const std::vector<unsigned char>& protected_bytes, std::string* plaintext,
+               std::string* error) {
+    if (protected_bytes.size() > std::numeric_limits<DWORD>::max()) {
+        if (error != nullptr) {
+            *error = "credential document is too large";
+        }
+        return false;
+    }
+    DATA_BLOB input{static_cast<DWORD>(protected_bytes.size()),
+                    const_cast<BYTE*>(protected_bytes.data())};
+    DATA_BLOB output{};
+    if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN,
+                            &output)) {
+        if (error != nullptr) {
+            *error = "Windows could not unlock the cloud session";
+        }
+        return false;
+    }
+    plaintext->assign(reinterpret_cast<const char*>(output.pbData), output.cbData);
+    SecureZeroMemory(output.pbData, output.cbData);
+    LocalFree(output.pbData);
+    return true;
+}
+
+bool ReadDocument(const std::string& path, std::string* document, bool* exists,
+                  std::string* error) {
+    std::error_code size_error;
+    const std::uintmax_t size = fs::file_size(path, size_error);
+    if (!size_error && size > kMaximumCredentialBytes) {
+        *exists = true;
+        if (error != nullptr) {
+            *error = "protected cloud session exceeds the safety limit";
+        }
+        return false;
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        std::error_code code;
+        *exists = fs::exists(path, code);
+        if (!*exists) {
+            return true;
+        }
+        if (error != nullptr) {
+            *error = "could not read the cloud session";
+        }
+        return false;
+    }
+    *exists = true;
+    // Named iterators on purpose: passing the two temporaries directly is a most
+    // vexing parse, which MSVC resolves as a function declaration and then fails
+    // to convert at the call below. Clang and GCC accept the same line, so this
+    // only ever broke on Windows.
+    std::istreambuf_iterator<char> first(file);
+    const std::istreambuf_iterator<char> last;
+    const std::vector<unsigned char> protected_bytes(first, last);
+    return Unprotect(protected_bytes, document, error);
+}
+
+bool WriteDocument(const std::string& path, const std::string& document, std::string* error) {
+    std::vector<unsigned char> protected_bytes;
+    if (!Protect(document, &protected_bytes, error)) {
+        return false;
+    }
+    const std::string temporary = path + ".tmp." + std::to_string(GetCurrentProcessId()) + "." +
+                                  std::to_string(GetTickCount64());
+    HANDLE file = CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        if (error != nullptr) {
+            *error = "could not create the protected cloud session";
+        }
+        return false;
+    }
+    DWORD written = 0;
+    const bool wrote =
+        WriteFile(file, protected_bytes.data(), static_cast<DWORD>(protected_bytes.size()),
+                  &written, nullptr) != 0 &&
+        written == protected_bytes.size() && FlushFileBuffers(file) != 0;
+    CloseHandle(file);
+    if (!wrote || !MoveFileExA(temporary.c_str(), path.c_str(),
+                               MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileA(temporary.c_str());
+        if (error != nullptr) {
+            *error = "could not store the protected cloud session";
+        }
+        return false;
+    }
+    return true;
+}
+
+#else
+
+bool ReadDocument(const std::string& path, std::string* document, bool* exists,
+                  std::string* error) {
+    int flags = O_RDONLY;
+#if defined(O_CLOEXEC)
+    flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+    flags |= O_NOFOLLOW;
+#endif
+    const int fd = ::open(path.c_str(), flags);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            *exists = false;
+            return true;
+        }
+        if (error != nullptr) {
+            *error = "could not securely read the cloud session";
+        }
+        return false;
+    }
+    *exists = true;
+    struct stat metadata{};
+    if (::fstat(fd, &metadata) != 0 || !S_ISREG(metadata.st_mode) || metadata.st_uid != geteuid() ||
+        metadata.st_nlink != 1 || metadata.st_size < 0 ||
+        static_cast<std::uintmax_t>(metadata.st_size) > kMaximumCredentialBytes ||
+        ::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        ::close(fd);
+        if (error != nullptr) {
+            *error = "cloud session has unsafe file metadata";
+        }
+        return false;
+    }
+    std::string body;
+    char buffer[4096];
+    while (true) {
+        const ssize_t count = ::read(fd, buffer, sizeof(buffer));
+        if (count == 0) {
+            break;
+        }
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ::close(fd);
+            if (error != nullptr) {
+                *error = "could not read the cloud session";
+            }
+            return false;
+        }
+        body.append(buffer, static_cast<std::size_t>(count));
+        if (body.size() > kMaximumCredentialBytes) {
+            ::close(fd);
+            if (error != nullptr) {
+                *error = "cloud session exceeds the safety limit";
+            }
+            return false;
+        }
+    }
+    if (::close(fd) != 0) {
+        if (error != nullptr) {
+            *error = "could not finish reading the cloud session";
+        }
+        return false;
+    }
+    *document = std::move(body);
+    return true;
+}
+
+bool WriteDocument(const std::string& path, const std::string& document, std::string* error) {
+    std::string pattern = path + ".tmp.XXXXXX";
+    std::vector<char> temporary(pattern.begin(), pattern.end());
+    temporary.push_back('\0');
+    const int fd = ::mkstemp(temporary.data());
+    if (fd < 0) {
+        if (error != nullptr) {
+            *error = "could not create a temporary cloud session";
+        }
+        return false;
+    }
+    const std::string temporary_path(temporary.data());
+    bool ok = ::fchmod(fd, S_IRUSR | S_IWUSR) == 0;
+    std::size_t offset = 0;
+    while (ok && offset < document.size()) {
+        const ssize_t count = ::write(fd, document.data() + offset, document.size() - offset);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            ok = false;
+            break;
+        }
+        offset += static_cast<std::size_t>(count);
+    }
+    ok = ok && ::fsync(fd) == 0;
+    ok = ::close(fd) == 0 && ok;
+    if (ok) {
+        ok = ::rename(temporary_path.c_str(), path.c_str()) == 0;
+    }
+    if (!ok) {
+        ::unlink(temporary_path.c_str());
+        if (error != nullptr) {
+            *error = "could not atomically store the cloud session";
+        }
+        return false;
+    }
+    return true;
+}
+
+#endif
+
+}  // namespace
+
+std::string DefaultConsoleUrl() {
+    const std::string configured = Env("RCLI_CONSOLE_URL");
+    return configured.empty() ? kProductionConsole : configured;
+}
+
+bool NormalizeConsoleUrl(const std::string& input, std::string* normalized, std::string* error) {
+    ParsedUrl parsed;
+    if (!ParseUrl(input, false, &parsed)) {
+        if (error != nullptr) {
+            *error = "console URL must be an HTTPS origin, or HTTP on exact loopback";
+        }
+        return false;
+    }
+    if (normalized != nullptr) {
+        *normalized = RenderOrigin(parsed);
+    }
+    return true;
+}
+
+bool BrowserUrlIsSafe(const std::string& url) {
+    ParsedUrl parsed;
+    return ParseUrl(url, true, &parsed);
+}
+
+bool BrowserUrlMatchesConsole(const std::string& url, const std::string& console_url) {
+    ParsedUrl browser;
+    ParsedUrl console;
+    return ParseUrl(url, true, &browser) && ParseUrl(console_url, false, &console) &&
+           RenderOrigin(browser) == RenderOrigin(console);
+}
+
+bool SessionTokenIsSafe(const std::string& token) {
+    return !token.empty() && token.size() <= 8192 &&
+           std::all_of(token.begin(), token.end(), [](unsigned char c) {
+               const bool ascii_alphanumeric =
+                   (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+               return ascii_alphanumeric || c == '-' || c == '.' || c == '_' || c == '~' ||
+                      c == '+' || c == '/' || c == '=';
+           });
+}
+
+std::string ProfileDirectory() {
+    const std::string override_dir = Env("RCLI_PROFILE_DIR");
+    if (!override_dir.empty()) {
+        return override_dir;
+    }
+#if defined(_WIN32)
+    const std::string home = HomeDirectory();
+    return home.empty() ? std::string() : home + "/RunAnywhere/RCLI";
+#else
+    const std::string xdg = Env("XDG_CONFIG_HOME");
+    if (!xdg.empty()) {
+        return xdg + "/rcli";
+    }
+    const std::string home = HomeDirectory();
+    return home.empty() ? std::string() : home + "/.config/rcli";
+#endif
+}
+
+std::string CredentialsPath() {
+    const std::string directory = ProfileDirectory();
+    return directory.empty() ? std::string() : (fs::path(directory) / kFileName).string();
+}
+
+bool Load(Credentials* out, std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "internal credential load error";
+        }
+        return false;
+    }
+    Credentials credentials;
+    std::string normalized;
+    if (!NormalizeConsoleUrl(DefaultConsoleUrl(), &normalized, error)) {
+        return false;
+    }
+    credentials.console_url = normalized;
+
+    const std::string path = CredentialsPath();
+    if (path.empty()) {
+        if (error != nullptr) {
+            *error = "no user profile directory is available";
+        }
+        return false;
+    }
+    if (!EnsureSecureDirectory(ProfileDirectory(), error)) {
+        return false;
+    }
+    bool exists = false;
+    std::string document;
+    if (!ReadDocument(path, &document, &exists, error)) {
+        return false;
+    }
+    if (!exists) {
+        *out = std::move(credentials);
+        return true;
+    }
+    try {
+        const Json object = Json::parse(document);
+        if (!object.is_object()) {
+            if (error != nullptr) {
+                *error = "cloud session file is not a JSON object";
+            }
+            return false;
+        }
+        const std::string stored_url = object.value("console_url", std::string());
+        if (!NormalizeConsoleUrl(stored_url, &credentials.console_url, error)) {
+            return false;
+        }
+        credentials.email = object.value("email", std::string());
+        const std::string access_token = object.value("access_token", std::string());
+        const std::string refresh_token = object.value("refresh_token", std::string());
+        if ((!access_token.empty() && !SessionTokenIsSafe(access_token)) ||
+            (!refresh_token.empty() && !SessionTokenIsSafe(refresh_token))) {
+            if (error != nullptr) {
+                *error = "cloud session contains an invalid token encoding";
+            }
+            return false;
+        }
+        credentials.access_token = access_token;
+        credentials.refresh_token = refresh_token;
+        credentials.expires_at = object.value("expires_at", 0LL);
+    } catch (const Json::exception&) {
+        if (error != nullptr) {
+            *error = "cloud session file is not valid JSON";
+        }
+        return false;
+    }
+    *out = std::move(credentials);
+    return true;
+}
+
+Credentials Load() {
+    Credentials credentials;
+    std::string error;
+    if (!Load(&credentials, &error)) {
+        return {};
+    }
+    return credentials;
+}
+
+bool Save(const Credentials& credentials, std::string* error) {
+    std::string normalized;
+    if (!NormalizeConsoleUrl(credentials.console_url, &normalized, error)) {
+        return false;
+    }
+    const std::string directory = ProfileDirectory();
+    const std::string path = CredentialsPath();
+    if (directory.empty() || path.empty()) {
+        if (error != nullptr) {
+            *error = "no user profile directory is available";
+        }
+        return false;
+    }
+    if (!EnsureSecureDirectory(directory, error)) {
+        return false;
+    }
+    if ((!credentials.access_token.empty() && !SessionTokenIsSafe(credentials.access_token)) ||
+        (!credentials.refresh_token.empty() && !SessionTokenIsSafe(credentials.refresh_token))) {
+        if (error != nullptr) {
+            *error = "refusing to store an invalid cloud session token";
+        }
+        return false;
+    }
+    const Json document = {{"console_url", normalized},
+                           {"email", credentials.email},
+                           {"access_token", credentials.access_token},
+                           {"refresh_token", credentials.refresh_token},
+                           {"expires_at", credentials.expires_at}};
+    return WriteDocument(path, document.dump(2) + "\n", error);
+}
+
+bool Clear(std::string* error) {
+    const std::string path = CredentialsPath();
+    if (path.empty()) {
+        return true;
+    }
+    if (!EnsureSecureDirectory(ProfileDirectory(), error)) {
+        return false;
+    }
+    std::error_code code;
+    fs::remove(path, code);
+    if (code) {
+        if (error != nullptr) {
+            *error = "could not remove the local cloud session";
+        }
+        return false;
+    }
+    return true;
+}
+
+}  // namespace rcli::account

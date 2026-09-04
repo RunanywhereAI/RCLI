@@ -8,7 +8,7 @@
 #   ./scripts/update-tap.sh 0.5.0
 #
 # Environment:
-#   RCLI_TAP_REPO   Tap git remote (default git@github.com:RunanywhereAI/homebrew-tap.git)
+#   RCLI_TAP_REPO   Tap git remote to update (required unless DRY_RUN=1)
 #   RCLI_TAP_DIR    Existing tap checkout to reuse (default: fresh temp clone)
 #   DRY_RUN=1       Render + print, do not commit/push
 # =============================================================================
@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FORMULA="${CLI_ROOT}/Formula/rcli.rb"
 RELEASE_BASE="https://github.com/RunanywhereAI/RCLI/releases/download/v${VERSION}"
-TAP_REPO="${RCLI_TAP_REPO:-git@github.com:RunanywhereAI/homebrew-tap.git}"
+TAP_REPO="${RCLI_TAP_REPO:-}"
 
 fetch_sha() {
     local asset="$1"
@@ -53,6 +53,11 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
     exit 0
 fi
 
+if [[ -z "${TAP_REPO}" ]]; then
+    echo "ERROR: set RCLI_TAP_REPO explicitly; the canonical RCLI vs homebrew-tap repository has not been decided." >&2
+    exit 1
+fi
+
 TAP_DIR="${RCLI_TAP_DIR:-}"
 if [[ -z "${TAP_DIR}" ]]; then
     TAP_DIR="$(mktemp -d)/homebrew-tap"
@@ -65,4 +70,4 @@ git -C "${TAP_DIR}" add Formula/rcli.rb
 git -C "${TAP_DIR}" commit -m "rcli ${VERSION}"
 git -C "${TAP_DIR}" push
 
-echo "Tap updated: brew install runanywhereai/tap/rcli"
+echo "Tap formula updated in ${TAP_REPO}"
