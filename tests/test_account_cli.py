@@ -218,6 +218,20 @@ def main():
                 if banned in usage:
                     raise AssertionError(f"usage still prints {banned!r}:\n{usage}")
 
+            # The root flag and the command flag mean the same thing. The root
+            # parser accepts `rcli --json usage`, and reading only the local
+            # flag printed a human table to something asking for one document.
+            for argv in (["usage", "--json"], ["--json", "usage"]):
+                combined = run(binary, argv, environment)
+                # run() concatenates stderr, where status lines and SDK logs go.
+                # The document is the one line that is a JSON object.
+                line = next((l for l in combined.splitlines() if l.startswith("{")), "")
+                if not line:
+                    raise AssertionError(f"{argv} printed no JSON document:\n{combined}")
+                document = json.loads(line)
+                if document["windows"][0]["input_tokens"] != 18_450:
+                    raise AssertionError(f"{argv} did not report the 1h window: {document}")
+
             # A console that has not shipped windowed totals yet — which is
             # every deployed one right now. Both rows must read as absent, and
             # neither may be filled in from the month-wide `totals` next to it.
@@ -246,6 +260,8 @@ def main():
             # One read per invocation. The windows are totalled server-side, so
             # `days` and `limit` are held at the minimum the route accepts —
             # nothing below the balance renders `totals`, `timeline` or `recent`.
+            ("GET", "/v1/cli/usage?days=1&limit=1", f"Bearer {ACCESS_TOKEN}"),
+            ("GET", "/v1/cli/usage?days=1&limit=1", f"Bearer {ACCESS_TOKEN}"),
             ("GET", "/v1/cli/usage?days=1&limit=1", f"Bearer {ACCESS_TOKEN}"),
             ("GET", "/v1/cli/usage?days=1&limit=1", f"Bearer {ACCESS_TOKEN}"),
             ("POST", "/auth/cli/revoke", f"Bearer {ACCESS_TOKEN}"),
