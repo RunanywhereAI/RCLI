@@ -493,6 +493,7 @@ std::string StreamCloseToAnthropic(StreamState* state) {
         out += Event("content_block_stop", Json{{"type", "content_block_stop"}, {"index", 0}});
         index = 1;
     }
+    bool emitted_tool_block = false;
     for (const auto& entry : state->tool_calls) {
         const StreamState::ToolCall& call = entry.second;
         // A call nobody ever named cannot be run, and a block naming nothing is
@@ -500,6 +501,7 @@ std::string StreamCloseToAnthropic(StreamState* state) {
         if (call.name.empty()) {
             continue;
         }
+        emitted_tool_block = true;
         // The client matches a result back to its call by this id, so a call
         // the endpoint never named still needs one it can quote.
         const std::string id =
@@ -522,9 +524,12 @@ std::string StreamCloseToAnthropic(StreamState* state) {
                      Json{{"type", "content_block_stop"}, {"index", index}});
         ++index;
     }
+    // What was actually written, not what was pending. Every call being unnamed
+    // leaves tool_calls non-empty with no tool_use block in the content, and
+    // `tool_use` there parks the client waiting for a call that never arrives.
     const std::string stop = StopWithTools(
         state->stop_reason.empty() ? std::string("end_turn") : state->stop_reason,
-        !state->tool_calls.empty());
+        emitted_tool_block);
     out += Event("message_delta",
                  Json{{"type", "message_delta"},
                       {"delta", Json{{"stop_reason", stop}, {"stop_sequence", nullptr}}},
