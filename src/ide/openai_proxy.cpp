@@ -10,6 +10,11 @@
 #include <cctype>
 #include <fstream>
 
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 #include "account/console.h"
 #include "account/credentials.h"
 #include "io/output.h"
@@ -46,7 +51,7 @@ struct Runtime {
 
 std::unique_ptr<Runtime> g_runtime;
 
-void Trace(const Runtime& runtime, const std::string& note);
+void Trace(bool verbose, const std::string& note);
 
 /// Whether a refusal is about the credential rather than the request.
 ///
@@ -80,7 +85,7 @@ bool RenewToken(Runtime& runtime) {
     account::Grant grant;
     std::string error;
     if (!account::Refresh(credentials.console_url, credentials.refresh_token, &grant, &error)) {
-        Trace(runtime, "REFRESH-FAILED " + error);
+        Trace(runtime.verbose, "REFRESH-FAILED " + error);
         return false;
     }
     credentials.access_token = grant.access_token;
@@ -90,7 +95,7 @@ bool RenewToken(Runtime& runtime) {
     std::string ignored;
     account::Save(credentials, &ignored);
     runtime.api_key = grant.access_token;
-    Trace(runtime, "REFRESHED");
+    Trace(runtime.verbose, "REFRESHED");
     return true;
 }
 
@@ -103,11 +108,46 @@ httplib::Client Upstream(const Runtime& runtime) {
     return client;
 }
 
-/// Records what crossed the proxy, for when the editor and a hand-made request
-/// disagree about what the model was asked.
-void Trace(const Runtime&, const std::string& note) {
-    std::ofstream log("/tmp/rcli-proxy.log", std::ios::app);
+/// Where the proxy writes its trace, when one was asked for.
+///
+/// Not `/tmp`. That directory is world-writable, so any other local account can
+/// pre-create the path as a symlink and `std::ofstream` follows it; and the
+/// mode comes from the umask, which on a normal machine means world-readable.
+/// The profile directory is the credential store's, already created 0700.
+std::string TracePath() {
+    const std::string directory = account::ProfileDirectory();
+    return directory.empty() ? std::string() : directory + "/proxy-trace.log";
+}
+
+/// Appends one line, and only when the reader asked for tracing.
+///
+/// Never the request body. That carries the developer's prompt and whatever
+/// source their editor attached to it, and this file outlives the session.
+void Trace(bool verbose, const std::string& note) {
+    if (!verbose) {
+        return;
+    }
+    const std::string path = TracePath();
+    if (path.empty()) {
+        return;
+    }
+#if defined(_WIN32)
+    // %LOCALAPPDATA% is per-user and there is no O_NOFOLLOW to reach for here.
+    std::ofstream log(path, std::ios::app);
     log << note << "\n";
+#else
+    // O_NOFOLLOW so a symlink planted at the path is an error rather than a
+    // redirect, and 0600 so the mode does not depend on the caller's umask.
+    const int fd =
+        ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return;
+    }
+    const std::string line = note + "\n";
+    const ssize_t written = ::write(fd, line.data(), line.size());
+    static_cast<void>(written);
+    ::close(fd);
+#endif
 }
 
 using Json = nlohmann::json;
@@ -171,7 +211,7 @@ bool NumberToolCalls(Json& chunk) {
 /// that frame surfaces as a deserialiser complaint and the actual message —
 /// which is the thing worth reading — never reaches anybody. Turning it into an
 /// ordinary chunk puts it in the chat instead.
-std::string Normalise(const std::string& frame) {
+std::string Normalise(const std::string& frame, bool verbose) {
     const size_t field = frame.find("data:");
     if (field == std::string::npos) {
         return frame + "\n\n";
@@ -198,10 +238,7 @@ std::string Normalise(const std::string& frame) {
                                   error["message"].is_string()
                               ? error["message"].get<std::string>()
                               : error.dump();
-    {
-        std::ofstream log("/tmp/rcli-proxy.log", std::ios::app);
-        log << "UPSTREAM-ERROR-FRAME " << message << "\n";
-    }
+    Trace(verbose, "UPSTREAM-ERROR-FRAME " + message);
     return ChunkSaying(message);
 }
 
@@ -221,7 +258,11 @@ std::string Retarget(const Runtime& runtime, const std::string& body) {
 
 void Fail(httplib::Response& response, int status, const std::string& message) {
     response.status = status;
-    response.set_content("{\"error\":{\"message\":\"" + message + "\"}}", "application/json");
+    // Built with Json, not concatenated. `message` is upstream text or an
+    // exception's what(), and one quote or backslash in it produced a body the
+    // editor could not parse, so the reader saw a parse failure instead of the
+    // cause.
+    response.set_content(Json{{"error", {{"message", message}}}}.dump(), "application/json");
 }
 
 /// Forwards a streaming completion, byte for byte.
@@ -236,7 +277,8 @@ void Stream(Runtime& runtime, const std::string& body, httplib::Response& respon
 
     auto verbose = std::make_shared<bool>(runtime.verbose);
     Runtime* owner = &runtime;
-    Trace(runtime, "REQUEST " + body);
+    // Size only. The body is the developer's prompt and their source.
+    Trace(runtime.verbose, "REQUEST " + std::to_string(body.size()) + " bytes");
 
     response.set_chunked_content_provider(
         "text/event-stream",
@@ -270,12 +312,12 @@ void Stream(Runtime& runtime, const std::string& body, httplib::Response& respon
             // Whole events only: a chunk can split one in half, and half an
             // event cannot be judged.
             std::string pending;
-            const auto forward = [&sink, &pending]() {
+            const auto forward = [&sink, &pending, verbose]() {
                 size_t split = 0;
                 while ((split = pending.find("\n\n")) != std::string::npos) {
                     const std::string frame = pending.substr(0, split);
                     pending.erase(0, split + 2);
-                    const std::string out = Normalise(frame);
+                    const std::string out = Normalise(frame, *verbose);
                     if (!sink.write(out.data(), out.size())) {
                         return false;
                     }
@@ -326,10 +368,7 @@ void Stream(Runtime& runtime, const std::string& body, httplib::Response& respon
             {
                 const std::string detail =
                     !reply ? std::string("the model endpoint did not answer") : head;
-                {
-                    std::ofstream log("/tmp/rcli-proxy.log", std::ios::app);
-                    log << "UPSTREAM-REFUSED " << detail << "\n";
-                }
+                Trace(*verbose, "UPSTREAM-REFUSED " + detail);
                 // Carried as an ordinary chunk, not as an `error` object. The
                 // editor deserialises every frame into one fixed shape and
                 // rejects anything without its required fields, so an error
