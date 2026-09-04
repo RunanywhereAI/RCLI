@@ -171,13 +171,14 @@ int Login(const std::string& requested_console, bool open_browser) {
     //
     // "Must match the API's own origin" was the wrong test: the control plane
     // runs on Cloud Run and the console it hands you runs on Railway, so the two
-    // are never equal and the check refused every real sign-in. The origin we
-    // trust is the console origin the operator declared; with none declared we
-    // fall back to the old behaviour and demand the API's own.
-    const std::string trusted = ConsoleWebOrigin();
+    // are never equal and the check refused every real sign-in. Which origin to
+    // trust is `TrustedBrowserOrigin`'s answer, and it is never empty — the
+    // version of this that fell back to an empty string pinned nothing at all
+    // in the shipped configuration, because the environment variable it read is
+    // unset unless an operator sets it.
+    const std::vector<std::string> trusted = account::TrustedBrowserOrigins(console_url);
     const std::string approval_url = RebaseApprovalUrl(authorization.verification_url);
-    if (!account::BrowserUrlMatchesConsole(approval_url,
-                                           trusted.empty() ? console_url : trusted)) {
+    if (!account::BrowserUrlIsTrusted(approval_url, trusted)) {
         out::error_line("console returned an approval URL outside its origin");
         return 1;
     }
