@@ -102,14 +102,30 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
         {"claude-desktop", "Editors & agents"}, {"clion", "Editors & agents"},
         {"rustrover", "Editors & agents"},
     };
+    // configure_app() runs ahead of run()'s own try/catch (and tests call it
+    // directly with none at all), so a typo here must never propagate as an
+    // uncaught exception -- that crashed the Windows CI binaries outright
+    // (0xC0000409, no diagnostic) the one time a name here didn't match.
+    // Report it and keep going with the default flat listing rather than
+    // taking the whole CLI down over a --help cosmetic.
     for (const auto& [name, group] : help_groups) {
-        app.get_subcommand(name)->group(group);
+        try {
+            app.get_subcommand(name)->group(group);
+        } catch (const CLI::OptionNotFound&) {
+            out::error_line(std::string("internal: --help grouping named an unknown "
+                                        "subcommand '") +
+                            name + "', skipping it");
+        }
     }
     // Internal debug tool, not a command a user reaches for. An empty group
     // string drops a subcommand out of the default listing entirely
     // (Formatter::make_subcommands) while it stays fully callable —
     // `wally telemetry --help` still works.
-    app.get_subcommand("telemetry")->group("");
+    try {
+        app.get_subcommand("telemetry")->group("");
+    } catch (const CLI::OptionNotFound&) {
+        // Nothing to hide if it isn't there.
+    }
 }
 
 int run(int argc, char** argv) {
