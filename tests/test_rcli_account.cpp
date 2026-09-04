@@ -185,9 +185,50 @@ TestResult test_credential_roundtrip_and_permissions() {
     return result;
 }
 
+// No stored session at all still yields a usable console origin. Portable, and
+// the only form of the fallback that exists on every platform.
+TestResult test_credentials_default_console_url_without_a_file() {
+    TestResult result;
+    result.test_name = "credentials_default_console_url_without_a_file";
+    TempDirectory temporary;
+    EnvVar profile("RCLI_PROFILE_DIR", temporary.path().string().c_str());
+    EnvVar console("RCLI_CONSOLE_URL", nullptr);
+
+    rcli::account::Credentials credentials;
+    std::string error;
+    if (!rcli::account::Load(&credentials, &error)) {
+        result.details = error.empty() ? "load failed with no session file present" : error;
+        return result;
+    }
+    // Against DefaultConsoleUrl(), not a literal. What this test is about is
+    // that the fallback happens at all; which host it lands on is pinned by
+    // the_api_host_and_the_browser_host_stay_apart, and duplicating the string
+    // here only bought two failures for one change.
+    if (credentials.console_url != rcli::account::DefaultConsoleUrl()) {
+        result.expected = rcli::account::DefaultConsoleUrl();
+        result.actual = credentials.console_url;
+        result.details = "no session file must still give the default console origin";
+        return result;
+    }
+    if (credentials.signed_in()) {
+        result.details = "no session file must not read as signed in";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+#if !defined(_WIN32)
 // A document that simply omits console_url is not a malformed one: it must
 // fall back to DefaultConsoleUrl() cleanly rather than failing with "console
 // URL must be HTTPS" on a value that was never actually set.
+//
+// POSIX only, and not by preference. The fixture is a hand-written document,
+// and the scenario it stands for is a hand-edited or partially-written file.
+// On Windows the store is `credentials.dat`, DPAPI ciphertext, so neither the
+// fixture nor the scenario can exist: plaintext there fails to decrypt long
+// before any of this parsing runs, which is what
+// credentials_reject_a_document_they_cannot_unlock covers instead.
 TestResult test_credentials_missing_console_url_falls_back() {
     TestResult result;
     result.test_name = "credentials_missing_console_url_falls_back";
@@ -198,9 +239,7 @@ TestResult test_credentials_missing_console_url_falls_back() {
     std::ofstream raw(rcli::account::CredentialsPath());
     raw << Json{{"email", "dev@example.test"}, {"access_token", "a-token"}}.dump();
     raw.close();
-#if !defined(_WIN32)
     ::chmod(rcli::account::CredentialsPath().c_str(), 0600);
-#endif
 
     rcli::account::Credentials credentials;
     std::string error;
@@ -208,10 +247,6 @@ TestResult test_credentials_missing_console_url_falls_back() {
         result.details = error.empty() ? "load failed on a document missing console_url" : error;
         return result;
     }
-    // Against DefaultConsoleUrl(), not a literal. What this test is about is
-    // that the fallback happens at all; which host it lands on is pinned by
-    // the_api_host_and_the_browser_host_stay_apart, and duplicating the string
-    // here only bought two failures for one change.
     if (credentials.console_url != rcli::account::DefaultConsoleUrl()) {
         result.expected = rcli::account::DefaultConsoleUrl();
         result.actual = credentials.console_url;
@@ -221,6 +256,40 @@ TestResult test_credentials_missing_console_url_falls_back() {
     result.passed = true;
     return result;
 }
+#else
+// The Windows half of the contract above. A session file that will not decrypt
+// has to be reported, not skipped past as if there were no session and not
+// crashed on. DPAPI keys are per-user, so this is what a credentials.dat copied
+// from another machine or account actually looks like.
+TestResult test_credentials_reject_a_document_they_cannot_unlock() {
+    TestResult result;
+    result.test_name = "credentials_reject_a_document_they_cannot_unlock";
+    TempDirectory temporary;
+    EnvVar profile("RCLI_PROFILE_DIR", temporary.path().string().c_str());
+    EnvVar console("RCLI_CONSOLE_URL", nullptr);
+
+    std::ofstream raw(rcli::account::CredentialsPath(), std::ios::binary);
+    raw << Json{{"email", "dev@example.test"}, {"access_token", "a-token"}}.dump();
+    raw.close();
+
+    rcli::account::Credentials credentials;
+    std::string error;
+    if (rcli::account::Load(&credentials, &error)) {
+        result.details = "a session file that does not decrypt must not load";
+        return result;
+    }
+    if (error.empty()) {
+        result.details = "failing to unlock the session must say so";
+        return result;
+    }
+    if (credentials.signed_in()) {
+        result.details = "a failed load must not leave a usable session behind";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+#endif
 
 #if !defined(_WIN32)
 // A group/world-readable credentials.json is tightened to 0600 silently
@@ -572,11 +641,16 @@ int main(int argc, char** argv) {
     TestSuite suite("rcli_account");
     suite.add("console_url_validation", test_console_url_validation);
     suite.add("credential_roundtrip_and_permissions", test_credential_roundtrip_and_permissions);
+    suite.add("credentials_default_console_url_without_a_file",
+              test_credentials_default_console_url_without_a_file);
+#if !defined(_WIN32)
     suite.add("credentials_missing_console_url_falls_back",
               test_credentials_missing_console_url_falls_back);
-#if !defined(_WIN32)
     suite.add("credentials_warns_on_exposed_permissions",
               test_credentials_warns_on_exposed_permissions);
+#else
+    suite.add("credentials_reject_a_document_they_cannot_unlock",
+              test_credentials_reject_a_document_they_cannot_unlock);
 #endif
     suite.add("console_client_contract", test_console_client_contract);
     suite.add("console_errors_do_not_echo_secrets", test_console_errors_do_not_echo_secrets);
