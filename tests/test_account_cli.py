@@ -16,6 +16,34 @@ ACCESS_TOKEN = "account-e2e-access-secret"
 REFRESH_TOKEN = "account-e2e-refresh-secret"
 EMAIL = "developer@example.test"
 
+# The shape InferenceInfra's CliUsageResponse actually returns. `cached_tokens`
+# is 0 on purpose: SGLang does not report cached tokens for glm-5.3, so zero is
+# what a real console sends today and the row has to survive it honestly rather
+# than disappear. `timeline`, `models` and `recent` are present because the
+# console sends them; `rcli usage` is expected to ignore all three.
+USAGE_BODY = {
+    "credit": {
+        "balance_micros": 18_420_000,
+        "granted_micros": 25_000_000,
+        "spent_micros": 6_580_000,
+    },
+    "totals": {
+        "requests": 214,
+        "prompt_tokens": 412_900,
+        "completion_tokens": 31_204,
+        "cached_tokens": 0,
+        "cost_micros": 1_830_000,
+    },
+    "timeline": [{"date": "2026-09-04", "requests": 214, "prompt_tokens": 412_900,
+                  "completion_tokens": 31_204, "cost_micros": 1_830_000}],
+    "models": [{"model": "glm-5.3", "requests": 214, "prompt_tokens": 412_900,
+                "completion_tokens": 31_204, "cached_tokens": 0, "cost_micros": 1_830_000}],
+    "recent": [{"request_id": "req-1", "model": "glm-5.3", "harness": "opencode",
+                "started_at": "2026-09-04T02:10:00Z", "prompt_tokens": 1_900,
+                "completion_tokens": 140, "cached_tokens": 0, "cost_micros": 8_600,
+                "ttft_ms": 240, "status_code": 200, "error_code": ""}],
+}
+
 
 class ConsoleHandler(BaseHTTPRequestHandler):
     requests = []
@@ -70,6 +98,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         self.requests.append(("GET", self.path, self.headers.get("Authorization"), None))
         if self.path == "/v1/me":
             self.reply(200, {"email": EMAIL})
+        elif self.path.startswith("/v1/cli/usage"):
+            self.reply(200, USAGE_BODY)
         else:
             self.reply(404, {"error": "unknown path"})
 
@@ -135,6 +165,24 @@ def main():
             if "plan" in whoami or "tokens" in whoami or "quota" in whoami:
                 raise AssertionError("whoami exposed launch-out-of-scope billing fields")
 
+            usage = run(binary, ["usage"], environment)
+            # What San asked for and nothing else: the balance, then input,
+            # output, cache and money over two windows.
+            for fragment in ("$18.42", "$25.00", "412,900", "31,204", "$1.83",
+                             "input", "output", "cache", "spend",
+                             "past 1h", "past 24h"):
+                if fragment not in usage:
+                    raise AssertionError(f"usage did not report {fragment!r}:\n{usage}")
+            # A zero cache column is the truth for glm-5.3, not a reason to drop
+            # the row. The 24h row must carry a literal 0, not a blank.
+            day = next(l for l in usage.splitlines() if l.startswith("past 24h"))
+            if day.split() != ["past", "24h", "412,900", "31,204", "0", "$1.83"]:
+                raise AssertionError(f"unexpected 24h row: {day!r}")
+            # Everything the old report printed and San told us to delete.
+            for banned in ("by day", "by model", "ttft", "req ", "#", "request_id"):
+                if banned in usage:
+                    raise AssertionError(f"usage still prints {banned!r}:\n{usage}")
+
             run(binary, ["logout"], environment)
             if list(pathlib.Path(profile).iterdir()):
                 raise AssertionError("logout did not remove the local session")
@@ -143,17 +191,23 @@ def main():
             ("POST", "/auth/cli/start", None),
             ("POST", "/auth/cli/poll", None),
             ("GET", "/v1/me", f"Bearer {ACCESS_TOKEN}"),
+            # One read, one day back, and the smallest recent page the route
+            # accepts — nothing below renders those rows.
+            ("GET", "/v1/cli/usage?days=1&limit=1", f"Bearer {ACCESS_TOKEN}"),
             ("POST", "/auth/cli/revoke", f"Bearer {ACCESS_TOKEN}"),
         ]
         actual = [(method, path, authorization) for method, path, authorization, _ in ConsoleHandler.requests]
         if actual != expected:
             raise AssertionError(f"unexpected console request sequence: {actual!r}")
-        if ConsoleHandler.requests[1][3] != {
+        # Looked up by path, not by index: a new call anywhere in the flow
+        # renumbers the list and would otherwise silently assert the wrong body.
+        bodies = {path: body for _, path, _, body in ConsoleHandler.requests}
+        if bodies["/auth/cli/poll"] != {
             "request_code": "ABCD-EFGH",
             "poll_secret": "poll-secret",
         }:
             raise AssertionError("poll request did not use the server-issued secret")
-        if ConsoleHandler.requests[3][3] != {"refresh_token": REFRESH_TOKEN}:
+        if bodies["/auth/cli/revoke"] != {"refresh_token": REFRESH_TOKEN}:
             raise AssertionError("logout did not request refresh-token revocation")
     finally:
         server.shutdown()

@@ -1,8 +1,6 @@
-#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <string>
-#include <vector>
 
 #include "account/console.h"
 #include "account/credentials.h"
@@ -24,19 +22,12 @@ long long EpochSeconds() {
         .count();
 }
 
-/// Money is integer micro-dollars: one dollar is 1,000,000. A single request
-/// costs a few hundred of them, so a total and a unit price cannot share a
-/// precision — printing a per-request cost to two places renders it free.
-std::string Dollars(long micros, int places) {
+/// Money is integer micro-dollars: one dollar is 1,000,000.
+std::string Money(long micros) {
+    const int places = micros != 0 && micros < 1'000'000 ? 4 : 2;
     char text[48];
     std::snprintf(text, sizeof(text), "$%.*f", places, static_cast<double>(micros) / 1'000'000.0);
     return text;
-}
-
-/// Under a dollar, four places. Two would round a column of per-request costs
-/// to $0.00 and a day's spend to $0.02 side by side, which reads as noise.
-std::string Money(long micros) {
-    return Dollars(micros, micros != 0 && micros < 1'000'000 ? 4 : 2);
 }
 
 std::string Grouped(long value) {
@@ -46,36 +37,6 @@ std::string Grouped(long value) {
         digits.insert(at, ",");
     }
     return value < 0 ? "-" + digits : digits;
-}
-
-/// "2026-09-02T18:40:10.123Z" -> "09-02 18:40". Whatever the console sends that
-/// is not that shape is printed as-is rather than guessed at.
-std::string ShortTime(const std::string& iso) {
-    if (iso.size() < 16 || iso[10] != 'T') {
-        return iso;
-    }
-    return iso.substr(5, 5) + " " + iso.substr(11, 5);
-}
-
-std::string Bar(long value, long peak, int width) {
-    if (peak <= 0) {
-        return std::string();
-    }
-    const int filled = static_cast<int>((static_cast<double>(value) / peak) * width + 0.5);
-    std::string bar;
-    for (int i = 0; i < width; ++i) {
-        bar += i < filled ? "#" : ".";
-    }
-    return bar;
-}
-
-bool LoadCredentials(account::Credentials* credentials) {
-    std::string failure;
-    if (!account::Load(credentials, &failure)) {
-        out::error_line(failure);
-        return false;
-    }
-    return true;
 }
 
 bool RefreshSession(const account::ConsoleClient& client, account::Credentials* credentials,
@@ -98,149 +59,78 @@ bool RefreshSession(const account::ConsoleClient& client, account::Credentials* 
     return account::Save(*credentials, error);
 }
 
+/// `GET /v1/cli/usage` takes `days` as an integer of at least 1, and its
+/// `timeline` groups by calendar date, so one day is the shortest window the
+/// console can total. `usage.Filter` on the console side already carries
+/// `since`/`until` and would answer an hour; the route is what does not offer
+/// it yet.
+///
+/// The recent-request page is not a substitute. Rolling it up here would
+/// describe the last N requests while claiming to describe an hour, and the two
+/// part company exactly when somebody is busy enough to be looking.
+constexpr bool kConsoleAnswersHours = false;
+
 void PrintJson(const account::Usage& usage) {
-    // Flat by necessity: the writer has no nested-object-under-a-key form, and
-    // adding one for this is not worth a JSON dependency.
     out::JsonWriter json;
     json.begin_object();
     json.field("balance_micros", static_cast<int64_t>(usage.credit.balance_micros));
     json.field("granted_micros", static_cast<int64_t>(usage.credit.granted_micros));
     json.field("spent_micros", static_cast<int64_t>(usage.credit.spent_micros));
-    json.field("requests", static_cast<int64_t>(usage.totals.requests));
-    json.field("prompt_tokens", static_cast<int64_t>(usage.totals.prompt_tokens));
-    json.field("completion_tokens", static_cast<int64_t>(usage.totals.completion_tokens));
+
+    json.begin_array("windows");
+    json.begin_array_object();
+    json.field("window", "1h");
+    json.field("available", kConsoleAnswersHours);
+    json.end_object();
+    json.begin_array_object();
+    json.field("window", "24h");
+    json.field("available", true);
+    json.field("input_tokens", static_cast<int64_t>(usage.totals.prompt_tokens));
+    json.field("output_tokens", static_cast<int64_t>(usage.totals.completion_tokens));
     json.field("cached_tokens", static_cast<int64_t>(usage.totals.cached_tokens));
     json.field("cost_micros", static_cast<int64_t>(usage.totals.cost_micros));
-
-    json.begin_array("timeline");
-    for (const account::UsageDay& day : usage.timeline) {
-        json.begin_array_object();
-        json.field("date", day.date);
-        json.field("requests", static_cast<int64_t>(day.requests));
-        json.field("prompt_tokens", static_cast<int64_t>(day.prompt_tokens));
-        json.field("completion_tokens", static_cast<int64_t>(day.completion_tokens));
-        json.field("cost_micros", static_cast<int64_t>(day.cost_micros));
-        json.end_object();
-    }
+    json.end_object();
     json.end_array();
 
-    json.begin_array("models");
-    for (const account::UsageModel& row : usage.models) {
-        json.begin_array_object();
-        json.field("model", row.model);
-        json.field("requests", static_cast<int64_t>(row.requests));
-        json.field("prompt_tokens", static_cast<int64_t>(row.prompt_tokens));
-        json.field("completion_tokens", static_cast<int64_t>(row.completion_tokens));
-        json.field("cached_tokens", static_cast<int64_t>(row.cached_tokens));
-        json.field("cost_micros", static_cast<int64_t>(row.cost_micros));
-        json.end_object();
-    }
-    json.end_array();
-
-    json.begin_array("events");
-    for (const account::UsageEvent& event : usage.events) {
-        json.begin_array_object();
-        json.field("request_id", event.request_id);
-        json.field("model", event.model);
-        json.field("harness", event.harness);
-        json.field("started_at", event.started_at);
-        json.field("prompt_tokens", static_cast<int64_t>(event.prompt_tokens));
-        json.field("completion_tokens", static_cast<int64_t>(event.completion_tokens));
-        json.field("cached_tokens", static_cast<int64_t>(event.cached_tokens));
-        json.field("cost_micros", static_cast<int64_t>(event.cost_micros));
-        json.field("ttft_ms", static_cast<int64_t>(event.ttft_ms));
-        json.field("status_code", static_cast<int64_t>(event.status_code));
-        json.field("error_code", event.error_code);
-        json.end_object();
-    }
-    json.end_array();
     json.end_object();
     out::result_line(json.str());
 }
 
-void PrintReport(const account::Usage& usage, int days, const std::string& model_filter) {
-    const account::UsageTotals& totals = usage.totals;
-
-    char line[240];
-    std::snprintf(line, sizeof(line), "%-10s %s left of %s granted", "credit",
+void PrintReport(const account::Usage& usage) {
+    char line[200];
+    std::snprintf(line, sizeof(line), "credit     %s left of %s granted",
                   Money(usage.credit.balance_micros).c_str(),
                   Money(usage.credit.granted_micros).c_str());
     out::result_line(line);
     out::result_line("");
 
-    const std::string window =
-        "last " + std::to_string(days) + (days == 1 ? " day" : " days") +
-        (model_filter.empty() ? std::string() : " · " + model_filter);
-    out::result_line(window);
-    std::snprintf(line, sizeof(line), "%-10s %s", "requests", Grouped(totals.requests).c_str());
+    std::snprintf(line, sizeof(line), "%-10s %11s %11s %11s %11s", "window", "input", "output",
+                  "cache", "spend");
     out::result_line(line);
-    std::snprintf(line, sizeof(line), "%-10s %s in · %s out · %s cached", "tokens",
+
+    // An hour is not a number this console can produce, so the row says so
+    // rather than quietly showing a day's figures under an hour's heading.
+    std::snprintf(line, sizeof(line), "%-10s %11s %11s %11s %11s", "past 1h", "-", "-", "-", "-");
+    out::result_line(line);
+
+    const account::UsageTotals& totals = usage.totals;
+    std::snprintf(line, sizeof(line), "%-10s %11s %11s %11s %11s", "past 24h",
                   Grouped(totals.prompt_tokens).c_str(), Grouped(totals.completion_tokens).c_str(),
-                  Grouped(totals.cached_tokens).c_str());
-    out::result_line(line);
-    if (totals.requests > 0) {
-        std::snprintf(line, sizeof(line), "%-10s %s (%s per request)", "spend",
-                      Money(totals.cost_micros).c_str(),
-                      Money(totals.cost_micros / totals.requests).c_str());
-    } else {
-        std::snprintf(line, sizeof(line), "%-10s %s", "spend", Money(totals.cost_micros).c_str());
-    }
+                  Grouped(totals.cached_tokens).c_str(), Money(totals.cost_micros).c_str());
     out::result_line(line);
 
-    if (totals.requests == 0) {
+    if (!kConsoleAnswersHours) {
         out::result_line("");
-        out::result_line("nothing served in this window");
-        return;
-    }
-
-    if (!usage.timeline.empty()) {
-        long peak = 0;
-        for (const account::UsageDay& day : usage.timeline) {
-            peak = std::max(peak, day.requests);
-        }
-        out::result_line("");
-        out::result_line("by day");
-        for (const account::UsageDay& day : usage.timeline) {
-            std::snprintf(line, sizeof(line), "  %-10s %-20s %6s req  %10s", day.date.c_str(),
-                          Bar(day.requests, peak, 20).c_str(), Grouped(day.requests).c_str(),
-                          Money(day.cost_micros).c_str());
-            out::result_line(line);
-        }
-    }
-
-    if (!usage.models.empty()) {
-        out::result_line("");
-        out::result_line("by model");
-        for (const account::UsageModel& row : usage.models) {
-            std::snprintf(line, sizeof(line), "  %-28s %5s req  %9s in  %9s out  %10s",
-                          row.model.c_str(), Grouped(row.requests).c_str(),
-                          Grouped(row.prompt_tokens).c_str(),
-                          Grouped(row.completion_tokens).c_str(), Money(row.cost_micros).c_str());
-            out::result_line(line);
-        }
-    }
-
-    if (!usage.events.empty()) {
-        out::result_line("");
-        std::vector<std::vector<std::string>> rows;
-        for (const account::UsageEvent& event : usage.events) {
-            const std::string state = event.status_code == 200
-                                          ? std::string("ok")
-                                          : (event.error_code.empty()
-                                                 ? std::to_string(event.status_code)
-                                                 : event.error_code);
-            rows.push_back({ShortTime(event.started_at), event.model,
-                            Grouped(event.prompt_tokens), Grouped(event.completion_tokens),
-                            event.ttft_ms > 0 ? std::to_string(event.ttft_ms) + "ms" : "-",
-                            Money(event.cost_micros), state});
-        }
-        out::table({"time", "model", "in", "out", "ttft", "cost", "status"}, rows);
+        out::status_line("the console totals whole days only; the 1h row needs a sub-day window "
+                         "on /v1/cli/usage");
     }
 }
 
-int Usage(int days, const std::string& model, int limit, bool as_json) {
+int Usage(bool as_json) {
     account::Credentials credentials;
-    if (!LoadCredentials(&credentials)) {
+    std::string failure;
+    if (!account::Load(&credentials, &failure)) {
+        out::error_line(failure);
         return 1;
     }
     if (!credentials.signed_in()) {
@@ -249,32 +139,32 @@ int Usage(int days, const std::string& model, int limit, bool as_json) {
     }
 
     account::ConsoleClient client;
-    std::string failure;
     if (credentials.access_token_expired(EpochSeconds()) &&
         !RefreshSession(client, &credentials, &failure)) {
         out::error_line(failure);
         return 1;
     }
 
+    // One day back, and the shortest recent-request page the route accepts:
+    // nothing here renders those, and `by_model`/`totals` group in SQL, so the
+    // page size cannot move the numbers above.
     account::UsageQuery query;
-    query.days = days;
-    query.model = model;
-    query.limit = limit;
+    query.days = 1;
+    query.limit = 1;
 
     account::Usage usage;
-    account::IdentityResult result =
-        client.FetchUsage(credentials.console_url, credentials.access_token, query, &usage,
-                          &failure);
+    account::IdentityResult result = client.FetchUsage(credentials.console_url,
+                                                       credentials.access_token, query, &usage,
+                                                       &failure);
     if (result == account::IdentityResult::Unauthorized) {
-        // failure currently holds the 401 detail ("console session expired");
-        // a failed refresh here would otherwise overwrite it with the
-        // refresh call's own error and the reader would never learn the
-        // usage request was unauthorized in the first place.
         std::string refresh_failure;
         if (!RefreshSession(client, &credentials, &refresh_failure)) {
-            out::error_line("not signed in — the cloud session expired and could not be "
-                            "refreshed (" +
-                            refresh_failure + "); run `rcli login`");
+            // Not "expired". The console answers unknown, revoked, expired and
+            // malformed with the same 401 on purpose, so which of the four this
+            // was is not something we know — and sending someone to re-login
+            // over a revoked key wastes the trip.
+            out::error_line("the console rejected this session (" + refresh_failure +
+                            "); run `rcli login`");
             return 1;
         }
         usage = account::Usage{};
@@ -289,7 +179,7 @@ int Usage(int days, const std::string& model, int limit, bool as_json) {
     if (as_json) {
         PrintJson(usage);
     } else {
-        PrintReport(usage, days, model);
+        PrintReport(usage);
     }
     return 0;
 }
@@ -298,19 +188,11 @@ int Usage(int days, const std::string& model, int limit, bool as_json) {
 
 void register_usage(CLI::App& app, GlobalOptions& options) {
     static_cast<void>(options);
-    auto days = std::make_shared<int>(30);
-    auto limit = std::make_shared<int>(20);
-    auto model = std::make_shared<std::string>();
     auto as_json = std::make_shared<bool>(false);
 
-    auto* usage = app.add_subcommand("usage", "show cloud spend, tokens and recent requests");
-    usage->add_option("--days", *days, "window in days (default: 30)")->check(CLI::Range(1, 365));
-    usage->add_option("--model", *model, "only this model");
-    usage->add_option("--limit", *limit, "recent requests to list (default: 20)")
-        ->check(CLI::Range(1, 200));
+    auto* usage = app.add_subcommand("usage", "credit left, and what the last day cost");
     usage->add_flag("--json", *as_json, "machine-readable output");
-    usage->callback(
-        [days, model, limit, as_json] { fail(Usage(*days, *model, *limit, *as_json)); });
+    usage->callback([as_json] { fail(Usage(*as_json)); });
 }
 
 }  // namespace rcli::commands
