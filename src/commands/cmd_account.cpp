@@ -310,7 +310,7 @@ void register_account(CLI::App& app, GlobalOptions& options) {
     login->add_flag("--no-browser", *no_browser, "print the URL instead of opening it");
     login
         ->add_option("--console-url", *console_url,
-                     "console origin (default: https://console.runanywhere.ai)")
+                     "console API origin (default: " + account::DefaultConsoleUrl() + ")")
         ->envname("RCLI_CONSOLE_URL");
     login->callback([no_browser, console_url] { fail(Login(*console_url, !*no_browser)); });
 

@@ -79,11 +79,23 @@ Two secrets do different jobs. `request_code` is public and names the attempt;
 `poll_secret` proves the process collecting the grant is the one that started
 it. The console stores only a hash of the second.
 
-`RCLI_CONSOLE_URL` points at the console; it defaults to the production console
-(`https://console.runanywhere.ai`), so pointing at a local dev console needs it
-set explicitly, e.g. `RCLI_CONSOLE_URL=http://localhost:8080`. `RCLI_PROFILE_DIR`
-moves the credential file, which is what lets several accounts share one
-machine.
+Two hosts, and they are not the same deployment. The API is the control plane
+and serves all four endpoints above plus `/v1/cli/*`; the web console is only
+the page a person approves the sign-in on.
+
+| | Default | Override |
+|---|---|---|
+| API | `https://inference.runanywhere.ai` | `RCLI_CONSOLE_URL` |
+| Approval page | `https://console.runanywhere.ai` | `RCLI_CONSOLE_WEB_URL` |
+
+Both defaults live together in `src/account/credentials.cpp` so they cannot
+drift apart, and `TrustedBrowserOrigins()` is what pairs them: with no override
+it trusts the deployed console, and for any other API origin it trusts only
+that origin. Pointing at a local dev console needs `RCLI_CONSOLE_URL` set
+explicitly, e.g. `RCLI_CONSOLE_URL=http://localhost:8080`.
+
+`RCLI_PROFILE_DIR` moves the credential file, which is what lets several
+accounts share one machine.
 
 The credential is a normal API key with the customer's credit behind it. Treat
 it as one: it goes in the profile file at `0600` and nowhere else, and it is
