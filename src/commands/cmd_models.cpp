@@ -410,8 +410,13 @@ void register_models(CLI::App& app, GlobalOptions& options) {
 }
 
 void register_models_aliases(CLI::App& app, GlobalOptions& options) {
-    CLI::App* list = app.add_subcommand("list", "List models (alias of `models list`)");
-    list->alias("ls");
+    // CLI11's help banner always names the subcommand's primary registered
+    // name, never the alias actually typed (App::get_display_name() ignores
+    // it) — so with "list" primary, `rcli ls --help` rendered "Usage: rcli
+    // list [OPTIONS]". Registering the shorter name as primary matches `rm`
+    // below, which already makes the same call for the same reason.
+    CLI::App* list = app.add_subcommand("ls", "List models (alias of `models list`)");
+    list->alias("list");
     configure_models_list(list, options);
 
     configure_models_get(app.add_subcommand("show", "Show model details (alias of `models get`)"),

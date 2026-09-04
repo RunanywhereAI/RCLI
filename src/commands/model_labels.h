@@ -81,4 +81,41 @@ inline const char* backend(v1::InferenceFramework framework) {
     }
 }
 
+inline const char* format(v1::ModelFormat format) {
+    switch (format) {
+        case v1::MODEL_FORMAT_GGUF:
+            return "GGUF";
+        case v1::MODEL_FORMAT_GGML:
+            return "GGML";
+        case v1::MODEL_FORMAT_ONNX:
+            return "ONNX";
+        case v1::MODEL_FORMAT_ORT:
+            return "ORT";
+        case v1::MODEL_FORMAT_BIN:
+            return "BIN";
+        case v1::MODEL_FORMAT_COREML:
+            return "Core ML";
+        case v1::MODEL_FORMAT_MLMODEL:
+            return "MLModel";
+        case v1::MODEL_FORMAT_MLPACKAGE:
+            return "MLPackage";
+        case v1::MODEL_FORMAT_TFLITE:
+            return "TFLite";
+        case v1::MODEL_FORMAT_SAFETENSORS:
+            return "SafeTensors";
+        case v1::MODEL_FORMAT_QNN_CONTEXT:
+            return "QNN Context";
+        case v1::MODEL_FORMAT_ZIP:
+            return "ZIP";
+        case v1::MODEL_FORMAT_FOLDER:
+            return "Folder";
+        case v1::MODEL_FORMAT_PROPRIETARY:
+            return "Proprietary";
+        case v1::MODEL_FORMAT_UNKNOWN:
+            return "Unknown";
+        default:
+            return "?";
+    }
+}
+
 }  // namespace rcli::commands::model_labels

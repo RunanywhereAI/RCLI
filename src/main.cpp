@@ -10,16 +10,8 @@
 
 #include "app.h"
 
-#include "rac/core/rac_logger.h"
-
 int main(int argc, char** argv) {
-    // Silence the SDK before anything can log.
-    //
-    // Backend plugins register during static initialisation and at the first
-    // rac_* call, both of which happen before bootstrap() reads --verbose. That
-    // left five lines of MLX registration noise on top of every command,
-    // including a WARN for a backend that then registers successfully a line
-    // later. `--verbose` raises this again in bootstrap.
-    rac_logger_set_min_level(RAC_LOG_ERROR);
-    return rcli::run(argc, argv);
+    // Nothing but dispatch. Quieting the SDK lives in rcli_run_main(), which is
+    // the entry both this binary and the Swift MLX host go through.
+    return rcli_run_main(argc, argv);
 }

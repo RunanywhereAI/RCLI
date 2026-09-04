@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -631,9 +632,9 @@ int run_bench(const GlobalOptions& options, const std::string& model_ref_arg, in
     if (bootstrap(options, &env) != RAC_SUCCESS) {
         return 1;
     }
-    if (trials < 1) {
-        trials = 1;
-    }
+    // `--trials,-n` is CLI::PositiveNumber-checked, so this is always >= 1 by
+    // the time it gets here; a caller running `-n -5` gets CLI11's own
+    // rejection before a model ever loads, not a silently clamped 2GB run.
 
     // Parsed once, up front: an explicit --engine both narrows ref resolution and
     // pins the framework every trial loads with, whether one model was named or
@@ -767,7 +768,12 @@ void register_bench(CLI::App& app, GlobalOptions& options) {
     cmd->add_option("--engine", *engine,
                     "Engine hint (neurt|coreml|ane, mlx, llamacpp, onnx, sherpa)");
     cmd->add_option("--trials,-n", *trials, "Measured trials per scenario (median reported)")
-        ->default_val(3);
+        ->default_val(3)
+        // Range, not PositiveNumber, for the message alone. PositiveNumber
+        // renders its bounds as doubles, so `-n -5` was rejected with "not in
+        // range [2.22507e-308 - 1.79769e+308]". The accepted set is unchanged:
+        // trials is an int, so anything above INT_MAX already failed to parse.
+        ->check(CLI::Range(1, std::numeric_limits<int>::max()));
     cmd->add_option("--vlm-image", *vlm_image, "Image file for VLM benchmarking");
     cmd->callback([&options, model, trials, vlm_image, engine]() {
         const int exit_code = run_bench(options, *model, *trials, *vlm_image, *engine);

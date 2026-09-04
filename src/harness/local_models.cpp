@@ -40,26 +40,55 @@ std::vector<LocalModel> LocalModels(const std::string& home) {
         return models;
     }
 
-    for (const auto& framework : fs::directory_iterator(root, ec)) {
-        if (!framework.is_directory()) {
+    // Every step of the walk takes an error_code, including the increments.
+    // Constructing the iterator with one and then advancing it with the
+    // range-for's throwing operator++ only looks safe: a directory removed or
+    // locked while this runs escapes as a filesystem_error out of what is a
+    // best-effort listing, and this is called from the launch path.
+    //
+    // `walk` guards iteration and stops that level when advancing fails.
+    // `probe` is for the status queries, whose false-on-error answer is already
+    // the one we want, so it is reset rather than checked.
+    constexpr auto kSkip = fs::directory_options::skip_permission_denied;
+    std::error_code walk;
+    std::error_code probe;
+
+    for (fs::directory_iterator framework(root, kSkip, walk), no_more_frameworks;
+         !walk && framework != no_more_frameworks; framework.increment(walk)) {
+        if (!framework->is_directory(probe)) {
+            probe.clear();
             continue;
         }
-        for (const auto& entry : fs::directory_iterator(framework.path(), ec)) {
-            if (!entry.is_directory()) {
+        std::error_code entries;
+        for (fs::directory_iterator entry(framework->path(), kSkip, entries), no_more_entries;
+             !entries && entry != no_more_entries; entry.increment(entries)) {
+            if (!entry->is_directory(probe)) {
+                probe.clear();
                 continue;
             }
             std::string weights;
             bool manifest = false;
             std::int64_t bytes = 0;
-            for (const auto& file : fs::recursive_directory_iterator(entry.path(), ec)) {
-                if (!file.is_regular_file()) {
+            std::error_code files;
+            for (fs::recursive_directory_iterator file(entry->path(), kSkip, files),
+                 no_more_files;
+                 !files && file != no_more_files; file.increment(files)) {
+                if (!file->is_regular_file(probe)) {
+                    probe.clear();
                     continue;
                 }
-                bytes += static_cast<std::int64_t>(file.file_size(ec));
-                if (file.path().filename() == kManifest) {
+                // A file that vanished between the listing and the stat reports
+                // an error and an unspecified size; adding that unchecked cast
+                // a -1 into a wildly wrong total.
+                const std::uintmax_t size = file->file_size(probe);
+                if (!probe) {
+                    bytes += static_cast<std::int64_t>(size);
+                }
+                probe.clear();
+                if (file->path().filename() == kManifest) {
                     manifest = true;
-                } else if (weights.empty() && IsWeightFile(file.path())) {
-                    weights = file.path().string();
+                } else if (weights.empty() && IsWeightFile(file->path())) {
+                    weights = file->path().string();
                 }
             }
             // A directory holding weights but no manifest was placed by hand.
@@ -67,9 +96,9 @@ std::vector<LocalModel> LocalModels(const std::string& home) {
             if (!manifest && weights.empty()) {
                 continue;
             }
-            models.push_back({entry.path().filename().string(),
-                              framework.path().filename().string(), entry.path().string(), weights,
-                              bytes});
+            models.push_back({entry->path().filename().string(),
+                              framework->path().filename().string(), entry->path().string(),
+                              weights, bytes});
         }
     }
 

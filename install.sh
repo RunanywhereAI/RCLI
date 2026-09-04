@@ -84,11 +84,50 @@ if [[ "${installed_version}" != "${VERSION}" ]]; then
 fi
 
 ok "RCLI v${VERSION} installed successfully"
+
+# The skill is what makes the next step self-explanatory in Claude Code: it
+# teaches the assistant the commands, the harnesses, and what to do when one is
+# missing. Installed unconditionally - it is a doc file, and it is the thing the
+# person was promised when they copied one line off the website.
+#
+# Pulled from the release tag, not from main. Claude Code follows this file's
+# instructions when the skill runs, so fetching it off a moving branch means a
+# push to main changes what an already-installed assistant does. The tag is the
+# same one the binary above came from, so the two cannot drift apart either.
+SKILL_DIR="${HOME}/.claude/skills/runanywhere"
+info "Installing the RunAnywhere skill for Claude Code..."
+if mkdir -p "$SKILL_DIR" 2>/dev/null &&
+   curl -fsSL "https://raw.githubusercontent.com/${REPO}/v${VERSION}/skills/runanywhere/SKILL.md" \
+        -o "${SKILL_DIR}/SKILL.md"; then
+    ok "Skill installed at ${SKILL_DIR}/SKILL.md"
+else
+    warn "Could not install the Claude skill. Everything else still works."
+fi
+
+# Signing in is the point of the whole flow, so it happens here rather than
+# being left as an instruction the person has to notice. Already signed in is a
+# no-op, and a failure is not fatal: the CLI is installed either way.
+echo ""
+if rcli whoami >/dev/null 2>&1; then
+    ok "Already signed in"
+elif [[ ! -t 0 || ! -t 1 ]]; then
+    # No terminal: piped into bash over SSH, or a CI step. The browser flow
+    # would try to open a browser that is not there and then block until the
+    # request expires, which reads as the installer hanging.
+    info "Not an interactive terminal, so sign-in is left to you."
+    echo "    rcli login              sign in from a machine with a browser"
+    echo "    rcli login --no-browser print the URL and approve it elsewhere"
+else
+    info "Opening the console to sign in..."
+    rcli login || warn "Sign-in did not finish. Run \`rcli login\` when you are ready."
+fi
+
 echo ""
 info "Getting started:"
-echo "    rcli list                    downloaded models"
-echo "    rcli pull qwen3-0.6b         download one"
-echo "    rcli run qwen3-0.6b          talk to it"
-echo "    rcli backends                which engines this build linked"
+echo "    rcli opencode --cloud -m glm-5.3   code against a hosted model"
+echo "    rcli usage                         credit left and what you spent"
+echo "    rcli pull qwen3-0.6b               download a model to this machine"
+echo "    rcli run qwen3-0.6b                talk to it, offline"
 echo ""
 echo "  Models download on demand into ~/.local/share/runanywhere"
+echo "  In Claude Code, ask: \"get me started with RunAnywhere\""

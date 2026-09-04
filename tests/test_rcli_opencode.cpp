@@ -89,9 +89,21 @@ TestResult test_ephemeral_config_and_passthrough() {
 
     bool spawned = false;
     const std::vector<std::string> arguments = {"run", "--agent", "build", "two words"};
-    const rcli::account::ConsoleClient console;
+    // The launch path verifies the session against the console before it starts
+    // anything, so the console has to be answered here. A default ConsoleClient
+    // would put a real request on the wire, which a unit test must never do.
+    const rcli::account::ConsoleClient console(
+        [](const rcli::account::HttpRequest& request, rcli::account::HttpResponse* response,
+           std::string*) {
+            if (!request.url.ends_with("/v1/me")) {
+                return false;
+            }
+            response->status = 200;
+            response->body = Json{{"email", "developer@example.test"}}.dump();
+            return true;
+        });
     const int status = rcli::harness::LaunchOpenCodeCloud(
-        "frontier/model", arguments, console,
+        "glm-5.3", arguments, console,
         [&](const std::string& executable, const std::vector<std::string>& received) {
             spawned = true;
             if (executable != "opencode" || received != arguments) {
@@ -103,11 +115,11 @@ TestResult test_ephemeral_config_and_passthrough() {
             }
             const Json config = Json::parse(raw);
             const Json& provider = config.at("provider").at("runanywhere");
-            if (config.at("model") != "runanywhere/frontier/model" ||
+            if (config.at("model") != "runanywhere/glm-5.3" ||
                 provider.at("npm") != "@ai-sdk/openai-compatible" ||
                 provider.at("options").at("baseURL") != "https://console.runanywhere.ai/v1" ||
                 provider.at("options").at("apiKey") != "old-access-token" ||
-                provider.at("models").at("frontier/model").at("name") != "frontier/model") {
+                provider.at("models").at("glm-5.3").at("name") != "glm-5.3") {
                 return 93;
             }
             return 0;
@@ -144,6 +156,11 @@ TestResult test_refreshes_expired_session_without_sdk_bootstrap() {
     bool refreshed = false;
     rcli::account::ConsoleClient console([&](const rcli::account::HttpRequest& request,
                                              rcli::account::HttpResponse* response, std::string*) {
+        if (request.url.ends_with("/v1/me")) {
+            response->status = 200;
+            response->body = Json{{"email", "developer@example.test"}}.dump();
+            return true;
+        }
         if (!request.url.ends_with("/auth/cli/refresh") || request.bearer_token.size() != 0 ||
             Json::parse(request.body).at("refresh_token") != "refresh-token") {
             return false;
@@ -195,7 +212,16 @@ TestResult test_restores_config_when_spawn_throws() {
 
     bool threw = false;
     try {
-        const rcli::account::ConsoleClient console;
+        const rcli::account::ConsoleClient console(
+            [](const rcli::account::HttpRequest& request, rcli::account::HttpResponse* response,
+               std::string*) {
+                if (!request.url.ends_with("/v1/me")) {
+                    return false;
+                }
+                response->status = 200;
+                response->body = Json{{"email", "developer@example.test"}}.dump();
+                return true;
+            });
         static_cast<void>(rcli::harness::LaunchOpenCodeCloud(
             "hosted-model", {}, console,
             [](const std::string&, const std::vector<std::string>&) -> int {

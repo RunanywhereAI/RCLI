@@ -1,8 +1,11 @@
 #ifndef RCLI_ACCOUNT_CONSOLE_H
 #define RCLI_ACCOUNT_CONSOLE_H
 
+#include <cstdint>
+
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace rcli::account {
 
@@ -24,8 +27,87 @@ struct Identity {
     std::string email;
     // Kept for the existing editor/proxy integrations from the parent PR.
     std::string plan;
-    long tokens_this_month = 0;
-    long monthly_token_limit = 0;
+    std::int64_t tokens_this_month = 0;
+    std::int64_t monthly_token_limit = 0;
+};
+
+/// What the console meters. Money is integer micro-dollars everywhere: one
+/// dollar is 1,000,000, and a single request routinely costs a few hundred.
+struct UsageTotals {
+    std::int64_t requests = 0;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cached_tokens = 0;
+    std::int64_t cost_micros = 0;
+};
+
+struct UsageDay {
+    std::string date;
+    std::int64_t requests = 0;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cost_micros = 0;
+};
+
+struct UsageEvent {
+    std::string request_id;
+    std::string model;
+    std::string harness;
+    std::string started_at;
+    std::string error_code;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cached_tokens = 0;
+    std::int64_t cost_micros = 0;
+    std::int64_t ttft_ms = 0;
+    int status_code = 0;
+};
+
+struct UsageModel {
+    std::string model;
+    std::int64_t requests = 0;
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t cached_tokens = 0;
+    std::int64_t cost_micros = 0;
+};
+
+struct Credits {
+    std::int64_t balance_micros = 0;
+    std::int64_t granted_micros = 0;
+    std::int64_t spent_micros = 0;
+};
+
+/// Spend over a window ending now, totalled by the console.
+///
+/// Not derivable here. `timeline` is grouped by calendar date, so its finest
+/// grain is a day, and summing the recent-request page instead would describe
+/// the last N requests while claiming to describe the window — the two part
+/// company the moment anyone is busy.
+struct UsageWindow {
+    /// "1h" or "24h" as the console labels it.
+    std::string window;
+    /// The span. Carried so nothing here has to parse `window`.
+    std::int64_t seconds = 0;
+    UsageTotals totals;
+};
+
+struct Usage {
+    Credits credit;
+    UsageTotals totals;
+    /// Empty against a console that predates windowed totals, which is every
+    /// deployed one until `/v1/cli/usage` ships. Callers render what is missing
+    /// as missing rather than substituting a wider window's numbers.
+    std::vector<UsageWindow> windows;
+    std::vector<UsageDay> timeline;
+    std::vector<UsageModel> models;
+    std::vector<UsageEvent> events;
+};
+
+struct UsageQuery {
+    int days = 30;
+    std::string model;
+    int limit = 20;
 };
 
 struct Authorization {
@@ -65,6 +147,8 @@ class ConsoleClient {
                           Identity* identity, std::string* error) const;
     bool Revoke(const std::string& console_url, const std::string& access_token,
                 const std::string& refresh_token, std::string* error) const;
+    IdentityResult FetchUsage(const std::string& console_url, const std::string& access_token,
+                              const UsageQuery& query, Usage* usage, std::string* error) const;
 
    private:
     Transport transport_;

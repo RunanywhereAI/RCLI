@@ -2,6 +2,7 @@
 #define RCLI_ACCOUNT_CREDENTIALS_H
 
 #include <string>
+#include <vector>
 
 namespace rcli::account {
 
@@ -18,8 +19,29 @@ struct Credentials {
     }
 };
 
-/// Production console used when neither a login flag nor RCLI_CONSOLE_URL is set.
+/// The console API used when neither a login flag nor RCLI_CONSOLE_URL is set.
+/// This is the control plane — `/auth/cli/*`, `/v1/me`, `/v1/cli/*` — and it is
+/// not the host a person approves a sign-in on. See `TrustedBrowserOrigin`.
 std::string DefaultConsoleUrl();
+
+/// The browser origins allowed to host the approval page for `console_url`.
+///
+/// Never empty, which is the point. The version this replaces read one
+/// environment variable and returned an empty string when it was unset — the
+/// shipped case — so the origin check ran against nothing and the approval URL
+/// the server sent was taken on trust.
+///
+/// Three answers, in order. `RCLI_CONSOLE_WEB_URL` alone when an operator
+/// declared one. The deployed console's origins when `console_url` is the
+/// deployed API, because those are different hosts from the API and demanding
+/// the API's own origin refuses every real sign-in. Otherwise `console_url`
+/// itself, so a console we know nothing about is trusted only at its own
+/// origin.
+std::vector<std::string> TrustedBrowserOrigins(const std::string& console_url);
+
+/// Whether `url` sits on any of `origins`. Same origin rule as
+/// `BrowserUrlMatchesConsole`, which is what it defers to.
+bool BrowserUrlIsTrusted(const std::string& url, const std::vector<std::string>& origins);
 
 /// Validate and canonicalize a console origin. HTTPS is required except for an
 /// exact loopback host. Origins may not contain credentials, paths or queries.

@@ -371,8 +371,11 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
         output->status = 0;
         output->body.clear();
         if (error != nullptr) {
+            // Names the origin actually contacted: with RCLI_CONSOLE_URL unset
+            // that is the production console, and a bare "could not reach the
+            // console" reads as a local dev server nobody pointed us at.
             *error = response.too_large ? "console response exceeded the safety limit"
-                                        : "could not reach the RunAnywhere console";
+                                        : "could not reach the RunAnywhere console at " + input.url;
         }
         return false;
     }
@@ -381,10 +384,13 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
 #endif
 }
 
-void HttpError(const char* operation, int status, std::string* error) {
+void HttpError(const char* operation, const std::string& origin, int status, std::string* error) {
     if (error != nullptr) {
-        *error =
-            std::string("console ") + operation + " failed with HTTP " + std::to_string(status);
+        // Names which console answered: with RCLI_CONSOLE_URL unset that is
+        // production, and a bare "failed with HTTP 404" reads as a bug rather
+        // than as the wrong console having been asked.
+        *error = std::string("console ") + operation + " (" + origin + ") failed with HTTP " +
+                std::to_string(status);
     }
 }
 
@@ -432,13 +438,15 @@ std::string OptionalString(const Json& object, const char* key) {
     return found != object.end() && found->is_string() ? found->get<std::string>() : std::string();
 }
 
-long Number(const Json& object, const char* key, long fallback = 0) {
+// int64_t, not long: `long` is 32 bits on MSVC, and cost_micros passes 2^31
+// at about $2,147 of spend, so a Windows build silently truncated it.
+std::int64_t Number(const Json& object, const char* key, std::int64_t fallback = 0) {
     const auto found = object.find(key);
     if (found == object.end() || !found->is_number_integer()) {
         return fallback;
     }
     try {
-        return found->get<long>();
+        return found->get<std::int64_t>();
     } catch (const Json::exception&) {
         return fallback;
     }
@@ -448,7 +456,10 @@ bool Send(const Transport& transport, HttpRequest request, HttpResponse* respons
           std::string* error) {
     if (!transport(request, response, error)) {
         if (error != nullptr && error->empty()) {
-            *error = "could not reach the RunAnywhere console";
+            // Names the origin actually contacted: with RCLI_CONSOLE_URL unset
+            // that is the production console, and a plain "could not reach the
+            // console" reads as a local server that was never told about.
+            *error = "could not reach the RunAnywhere console at " + request.url;
         }
         return false;
     }
@@ -462,10 +473,13 @@ bool DisplayTextIsSafe(const std::string& value, std::size_t maximum) {
 }
 
 bool RequestCodeIsSafe(const std::string& value) {
+    // The control plane mints these with Python's `token_urlsafe`, whose
+    // alphabet is base64url: letters, digits, `-` and `_`. Omitting `_`
+    // rejected roughly half of all real codes as malformed.
     return value.size() >= 4 && value.size() <= 64 &&
            std::all_of(value.begin(), value.end(), [](unsigned char c) {
                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                      c == '-';
+                      c == '-' || c == '_';
            });
 }
 
@@ -474,7 +488,7 @@ bool ReadGrant(const Json& object, Grant* grant, std::string* error) {
     grant->refresh_token = OptionalString(object, "refresh_token");
     grant->email = OptionalString(object, "email");
     grant->plan = OptionalString(object, "plan");
-    grant->expires_in = std::max(0L, Number(object, "expires_in"));
+    grant->expires_in = std::max<std::int64_t>(0, Number(object, "expires_in"));
     if ((!grant->access_token.empty() && !SessionTokenIsSafe(grant->access_token)) ||
         (!grant->refresh_token.empty() && !SessionTokenIsSafe(grant->refresh_token)) ||
         (!grant->email.empty() && !DisplayTextIsSafe(grant->email, 320)) ||
@@ -485,6 +499,26 @@ bool ReadGrant(const Json& object, Grant* grant, std::string* error) {
         return false;
     }
     return true;
+}
+
+/// Percent-encode a query value. Model names carry dots and slashes, and a
+/// filter is user input either way.
+std::string QueryEscape(const std::string& value) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string out;
+    for (const unsigned char c : value) {
+        const bool unreserved = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' ||
+                                c == '~';
+        if (unreserved) {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += kHex[c >> 4];
+            out += kHex[c & 0x0f];
+        }
+    }
+    return out;
 }
 
 bool ConsoleOrigin(const std::string& input, std::string* origin, std::string* error) {
@@ -515,7 +549,7 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         return false;
     }
     if (response.status != 200) {
-        HttpError("authorization", response.status, error);
+        HttpError("authorization", origin, response.status, error);
         return false;
     }
 
@@ -533,10 +567,10 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         }
         return false;
     }
-    const long expires = Number(object, "expires_in", 600);
-    const long interval = Number(object, "interval", 2);
-    authorization->expires_in = static_cast<int>(std::clamp(expires, 30L, 1800L));
-    authorization->interval = static_cast<int>(std::clamp(interval, 1L, 30L));
+    const std::int64_t expires = Number(object, "expires_in", 600);
+    const std::int64_t interval = Number(object, "interval", 2);
+    authorization->expires_in = static_cast<int>(std::clamp<std::int64_t>(expires, 30, 1800));
+    authorization->interval = static_cast<int>(std::clamp<std::int64_t>(interval, 1, 30));
     return true;
 }
 
@@ -560,7 +594,7 @@ PollResult ConsoleClient::Poll(const std::string& console_url, const Authorizati
         return PollResult::Failed;
     }
     if (response.status != 200) {
-        HttpError("poll", response.status, error);
+        HttpError("poll", origin, response.status, error);
         return PollResult::Failed;
     }
 
@@ -619,7 +653,7 @@ bool ConsoleClient::Refresh(const std::string& console_url, const std::string& r
         return false;
     }
     if (response.status != 200) {
-        HttpError("refresh", response.status, error);
+        HttpError("refresh", origin, response.status, error);
         return false;
     }
     Json object;
@@ -662,7 +696,7 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
         return IdentityResult::Unauthorized;
     }
     if (response.status != 200) {
-        HttpError("identity request", response.status, error);
+        HttpError("identity request", origin, response.status, error);
         return IdentityResult::Failed;
     }
 
@@ -690,6 +724,155 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
     return IdentityResult::Ok;
 }
 
+namespace {
+
+/// A console string that is safe to print in a terminal. Anything else is
+/// dropped rather than rendered: this text lands straight in the user's shell.
+std::string DisplaySafe(const std::string& value, std::size_t maximum) {
+    return DisplayTextIsSafe(value, maximum) ? value : std::string();
+}
+
+}  // namespace
+
+IdentityResult ConsoleClient::FetchUsage(const std::string& console_url,
+                                         const std::string& access_token, const UsageQuery& query,
+                                         Usage* usage, std::string* error) const {
+    if (usage == nullptr || !SessionTokenIsSafe(access_token)) {
+        if (error != nullptr) {
+            *error = "no access token is available";
+        }
+        return IdentityResult::Failed;
+    }
+    std::string origin;
+    if (!ConsoleOrigin(console_url, &origin, error)) {
+        return IdentityResult::Failed;
+    }
+    // One read for the whole report: a terminal draws it in a single pass, and
+    // three round-trips would only give it three chances to print parts that
+    // disagree about when they were taken.
+    std::string url = origin + "/v1/cli/usage?days=" + std::to_string(std::clamp(query.days, 1, 365)) +
+                      "&limit=" + std::to_string(std::clamp(query.limit, 1, 200));
+    if (!query.model.empty()) {
+        url += "&model=" + QueryEscape(query.model);
+    }
+
+    HttpResponse response;
+    if (!Send(transport_, {"GET", url, {}, access_token}, &response, error)) {
+        return IdentityResult::Failed;
+    }
+    if (response.status == 401) {
+        if (error != nullptr) {
+            *error = "console session expired";
+        }
+        return IdentityResult::Unauthorized;
+    }
+    if (response.status != 200) {
+        HttpError("usage request", origin, response.status, error);
+        return IdentityResult::Failed;
+    }
+
+    Json object;
+    if (!ParseObject(response, &object, error)) {
+        return IdentityResult::Failed;
+    }
+
+    const auto credit = object.find("credit");
+    if (credit != object.end() && credit->is_object()) {
+        usage->credit.balance_micros = Number(*credit, "balance_micros");
+        usage->credit.granted_micros = Number(*credit, "granted_micros");
+        usage->credit.spent_micros = Number(*credit, "spent_micros");
+    }
+
+    const auto totals = object.find("totals");
+    if (totals != object.end() && totals->is_object()) {
+        usage->totals.requests = Number(*totals, "requests");
+        usage->totals.prompt_tokens = Number(*totals, "prompt_tokens");
+        usage->totals.completion_tokens = Number(*totals, "completion_tokens");
+        usage->totals.cached_tokens = Number(*totals, "cached_tokens");
+        usage->totals.cost_micros = Number(*totals, "cost_micros");
+    }
+
+    // Absent on every console deployed before windowed totals shipped. Left
+    // empty rather than filled from `totals`, which covers `days` and would
+    // read as an hour's spend while describing a month's.
+    const auto windows = object.find("windows");
+    if (windows != object.end() && windows->is_array()) {
+        for (const Json& entry : *windows) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            UsageWindow window;
+            window.window = DisplaySafe(OptionalString(entry, "window"), 16);
+            window.seconds = Number(entry, "seconds");
+            const auto window_totals = entry.find("totals");
+            if (window_totals != entry.end() && window_totals->is_object()) {
+                window.totals.requests = Number(*window_totals, "requests");
+                window.totals.prompt_tokens = Number(*window_totals, "prompt_tokens");
+                window.totals.completion_tokens = Number(*window_totals, "completion_tokens");
+                window.totals.cached_tokens = Number(*window_totals, "cached_tokens");
+                window.totals.cost_micros = Number(*window_totals, "cost_micros");
+            }
+            usage->windows.push_back(window);
+        }
+    }
+
+    const auto timeline = object.find("timeline");
+    if (timeline != object.end() && timeline->is_array()) {
+        for (const Json& point : *timeline) {
+            if (!point.is_object()) {
+                continue;
+            }
+            UsageDay day;
+            day.date = DisplaySafe(OptionalString(point, "date"), 32);
+            day.requests = Number(point, "requests");
+            day.prompt_tokens = Number(point, "prompt_tokens");
+            day.completion_tokens = Number(point, "completion_tokens");
+            day.cost_micros = Number(point, "cost_micros");
+            usage->timeline.push_back(day);
+        }
+    }
+
+    const auto models = object.find("models");
+    if (models != object.end() && models->is_array()) {
+        for (const Json& entry : *models) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            UsageModel row;
+            row.model = DisplaySafe(OptionalString(entry, "model"), 128);
+            row.requests = Number(entry, "requests");
+            row.prompt_tokens = Number(entry, "prompt_tokens");
+            row.completion_tokens = Number(entry, "completion_tokens");
+            row.cached_tokens = Number(entry, "cached_tokens");
+            row.cost_micros = Number(entry, "cost_micros");
+            usage->models.push_back(row);
+        }
+    }
+
+    const auto events = object.find("recent");
+    if (events != object.end() && events->is_array()) {
+        for (const Json& entry : *events) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            UsageEvent event;
+            event.request_id = DisplaySafe(OptionalString(entry, "request_id"), 128);
+            event.model = DisplaySafe(OptionalString(entry, "model"), 128);
+            event.harness = DisplaySafe(OptionalString(entry, "harness"), 64);
+            event.started_at = DisplaySafe(OptionalString(entry, "ts_start"), 64);
+            event.error_code = DisplaySafe(OptionalString(entry, "error_code"), 64);
+            event.prompt_tokens = Number(entry, "prompt_tokens");
+            event.completion_tokens = Number(entry, "completion_tokens");
+            event.cached_tokens = Number(entry, "cached_tokens");
+            event.cost_micros = Number(entry, "cost_micros");
+            event.ttft_ms = Number(entry, "ttft_ms");
+            event.status_code = static_cast<int>(Number(entry, "status_code"));
+            usage->events.push_back(event);
+        }
+    }
+    return IdentityResult::Ok;
+}
+
 bool ConsoleClient::Revoke(const std::string& console_url, const std::string& access_token,
                            const std::string& refresh_token, std::string* error) const {
     if (access_token.empty() && refresh_token.empty()) {
@@ -713,7 +896,7 @@ bool ConsoleClient::Revoke(const std::string& console_url, const std::string& ac
         return false;
     }
     if (response.status != 200 && response.status != 204) {
-        HttpError("revoke", response.status, error);
+        HttpError("revoke", origin, response.status, error);
         return false;
     }
     return true;

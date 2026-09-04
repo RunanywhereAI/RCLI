@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <thread>
@@ -27,6 +28,38 @@ void fail(int status) {
     if (status != 0) {
         throw CLI::RuntimeError(status);
     }
+}
+
+/// Send the approval link to a console of your choosing.
+///
+/// The control plane builds the approval URL from its own configured console
+/// origin, so a locally served console is otherwise unreachable: sign-in keeps
+/// opening the deployed one no matter where the CLI is pointed. The origin-match
+/// check above still runs against what the server sent; this replaces the origin
+/// only afterwards, only from the environment, and only with an origin that
+/// passes the same rules — the path and request code stay exactly as sent.
+/// The console origin the operator declared, normalised, or empty if none.
+std::string ConsoleWebOrigin() {
+    const char* configured = std::getenv("RCLI_CONSOLE_WEB_URL");
+    std::string origin;
+    if (configured == nullptr || *configured == '\0' ||
+        !account::NormalizeConsoleUrl(configured, &origin, nullptr)) {
+        return {};
+    }
+    return origin;
+}
+
+std::string RebaseApprovalUrl(const std::string& url) {
+    const std::string origin = ConsoleWebOrigin();
+    if (origin.empty()) {
+        return url;
+    }
+    const std::size_t scheme = url.find("://");
+    if (scheme == std::string::npos) {
+        return url;
+    }
+    const std::size_t path = url.find('/', scheme + 3);
+    return path == std::string::npos ? origin : origin + url.substr(path);
 }
 
 long long EpochSeconds() {
@@ -134,16 +167,27 @@ int Login(const std::string& requested_console, bool open_browser) {
         out::error_line(failure);
         return 1;
     }
-    if (!account::BrowserUrlMatchesConsole(authorization.verification_url, console_url)) {
+    // Rebase first, then check what we will actually open.
+    //
+    // "Must match the API's own origin" was the wrong test: the control plane
+    // runs on Cloud Run and the console it hands you runs on Railway, so the two
+    // are never equal and the check refused every real sign-in. Which origin to
+    // trust is `TrustedBrowserOrigin`'s answer, and it is never empty — the
+    // version of this that fell back to an empty string pinned nothing at all
+    // in the shipped configuration, because the environment variable it read is
+    // unset unless an operator sets it.
+    const std::vector<std::string> trusted = account::TrustedBrowserOrigins(console_url);
+    const std::string approval_url = RebaseApprovalUrl(authorization.verification_url);
+    if (!account::BrowserUrlIsTrusted(approval_url, trusted)) {
         out::error_line("console returned an approval URL outside its origin");
         return 1;
     }
 
     out::status_line("approve this sign-in in your browser");
     out::result_line("code  " + authorization.request_code);
-    out::result_line("url   " + authorization.verification_url);
+    out::result_line("url   " + approval_url);
     if (open_browser) {
-        OpenBrowser(authorization.verification_url);
+        OpenBrowser(approval_url);
     }
     out::status_line("waiting for approval");
 
@@ -266,7 +310,7 @@ void register_account(CLI::App& app, GlobalOptions& options) {
     login->add_flag("--no-browser", *no_browser, "print the URL instead of opening it");
     login
         ->add_option("--console-url", *console_url,
-                     "console origin (default: https://console.runanywhere.ai)")
+                     "console API origin (default: " + account::DefaultConsoleUrl() + ")")
         ->envname("RCLI_CONSOLE_URL");
     login->callback([no_browser, console_url] { fail(Login(*console_url, !*no_browser)); });
 

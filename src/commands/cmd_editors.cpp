@@ -102,24 +102,16 @@ std::string BundlePath(const Editor& editor) {
     return {};
 }
 
-/// "Claude" from "/Applications/Claude.app".
-std::string BundleName(const std::string& bundle_path) {
-    const size_t slash = bundle_path.rfind('/');
-    const std::string leaf =
-        slash == std::string::npos ? bundle_path : bundle_path.substr(slash + 1);
-    const size_t dot = leaf.rfind(".app");
-    return dot == std::string::npos ? leaf : leaf.substr(0, dot);
-}
-
-/// `open -W -a <bundle>`, which waits for the app to quit.
+/// `open -n -W -a <bundle>`: a new instance, waited on until it quits.
 ///
 /// Waiting is the point: the translator has to outlive the app exactly, and no
-/// longer. No environment is passed — Claude Desktop ignores those for
-/// authentication and says so in its own UI. The gateway profile is what
-/// redirects it.
+/// longer. `-n` is what makes the wait mean that. open(1) without it "waits
+/// until the applications it opens **or that were already open** have exited",
+/// so a copy the reader already had running would both miss the wiring and hold
+/// the translator open behind it.
 std::vector<std::string> OpenArgs(const std::string& bundle, const anthropic::Shim& shim,
                                   const std::vector<std::string>& passthrough) {
-    std::vector<std::string> args{"-W"};
+    std::vector<std::string> args{"-n", "-W"};
     if (shim.running) {
         // `open --env` is what carries them across; launchd would otherwise
         // start the app with the reader's login environment instead of ours.
@@ -139,32 +131,23 @@ std::vector<std::string> OpenArgs(const std::string& bundle, const anthropic::Sh
     return args;
 }
 
-/// Blocks until `name` is running or gone, whichever `running` asks for.
-///
-/// `timeout` in seconds, or 0 to wait indefinitely. Matched on the process name
-/// rather than the command line: `pgrep -f` would also match the shell running
-/// the search, and report the IDE as alive forever.
-void AwaitProcess(const std::string& name, bool running, int timeout) {
+/// Whether a process named `name` is currently running. Matched on the
+/// process name rather than the command line: `pgrep -f` would also match the
+/// shell running the search, and report the IDE as alive forever.
+bool ProcessRunning(const std::string& name) {
     const std::string probe = "pgrep -x " + name + " >/dev/null 2>&1";
+    return harness::Launch("/bin/sh", {}, {"-c", probe}) == 0;
+}
+
+/// Blocks until `name` is running or gone, whichever `running` asks for.
+/// `timeout` in seconds, or 0 to wait indefinitely.
+void AwaitProcess(const std::string& name, bool running, int timeout) {
     for (int waited = 0; timeout == 0 || waited < timeout; waited += 2) {
-        if ((harness::Launch("/bin/sh", {}, {"-c", probe}) == 0) == running) {
+        if (ProcessRunning(name) == running) {
             return;
         }
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
-}
-
-/// Quits the app if it is running. A profile change is read at launch, so a
-/// running instance would keep the old one and look like the change failed.
-void QuitBundle(const std::string& bundle) {
-    const std::string name = BundleName(bundle);
-    if (name.empty()) {
-        return;
-    }
-    harness::Launch("osascript", {}, {"-e", "tell application \"" + name + "\" to quit"});
-    // Relaunching into a process that is still shutting down gets the old
-    // profile back, so give it a moment to actually go.
-    std::this_thread::sleep_for(std::chrono::seconds(3));
 }
 
 /// Sets `name` for the child, remembering what was there so it can be undone.
@@ -311,12 +294,16 @@ int Run(const Editor& editor, const std::string& model,
             return 1;
         }
         out::status_line(std::string(editor.id) + " will talk to " + model + " through " + reachable);
-        QuitBundle(bundle);
-        // `open -W` is wrong here. Quitting the running instance first means the
-        // wait can attach to the one on its way out and return while the new one
-        // is still starting, which pulls the endpoint out from under it.
-        AwaitProcess(editor.jetbrains->launcher, false, 30);
-        std::vector<std::string> open_args{"-a", bundle};
+        // A second instance, never the running one: whatever the reader has open
+        // in it — unsaved buffers, a debug session, terminal state — is not ours
+        // to close because they named a model.
+        //
+        // Not `-W` here, unlike the Anthropic paths. The IDE reads the provider
+        // settings at startup, so a second instance can still be handed off to
+        // the copy already running by the IntelliJ platform's own single-instance
+        // logic; `-W` would then return at once and pull the endpoint out from
+        // under a live IDE. Waiting on the launcher process covers both.
+        std::vector<std::string> open_args{"-n", "-a", bundle};
         if (!args.empty()) {
             open_args.push_back("--args");
             open_args.insert(open_args.end(), args.begin(), args.end());
@@ -366,16 +353,18 @@ int Run(const Editor& editor, const std::string& model,
             harness::Release(endpoint);
             return 1;
         }
-        QuitBundle(bundle);
+        // A new instance reads the gateway profile at startup. The one already
+        // running keeps the profile it started with, and keeps whatever the
+        // reader has open in it, which is the trade we want.
         status = harness::Launch("open", {}, OpenArgs(bundle, shim, args));
         if (!desktop::RestoreGateway(&failure)) {
             out::error_line(failure);
         }
     } else if (is_bundle) {
         // An app that reads the variables itself, or spawns something that
-        // does. Quit first: a running instance keeps the environment it was
-        // started with, so the agent inside it would talk to the old endpoint.
-        QuitBundle(bundle);
+        // does. A process only ever gets the environment it was started with,
+        // so the wiring reaches a new instance and not the running one — which
+        // is the whole reason `OpenArgs` passes `-n`.
         status = harness::Launch("open", {}, OpenArgs(bundle, shim, args));
     } else {
         // Scoped so the reader's own environment is back before we report

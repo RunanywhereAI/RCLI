@@ -33,6 +33,7 @@
 #include "catalog/model_ref.h"
 #include "commands/bench_metrics.h"
 #include "commands/engine_options.h"
+#include "commands/model_labels.h"
 #include "config/cli_paths.h"
 #include "io/image_io.h"
 #include "io/output.h"
@@ -2189,6 +2190,102 @@ TestResult test_bench_metrics_consume_only() {
     return result;
 }
 
+// A negative or zero --trials must be rejected by CLI11's own PositiveNumber
+// validator (ValidationError -> ParseError -> exit 2) before run_bench ever
+// loads a model, not silently clamped to 1 trial and run anyway.
+TestResult test_bench_negative_trials_exit2() {
+    TestResult result;
+    result.test_name = "bench_negative_trials_exit2";
+
+    const int code = run_rcli({"rcli", "bench", "--trials", "-5"});
+    if (code != 2) {
+        result.expected = "2";
+        result.actual = std::to_string(code);
+        result.details = "`bench --trials -5` should be a usage error, not a clamped run";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+TestResult test_bench_zero_trials_exit2() {
+    TestResult result;
+    result.test_name = "bench_zero_trials_exit2";
+
+    const int code = run_rcli({"rcli", "bench", "-n", "0"});
+    if (code != 2) {
+        result.expected = "2";
+        result.actual = std::to_string(code);
+        result.details = "`bench -n 0` should be a usage error";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+// CLI11's help banner always names a subcommand's primary registered name,
+// never the alias actually typed (App::get_display_name() ignores it), so
+// the shorter terminal name has to be the one registered as primary — the
+// same call `rm`/`remove` already makes.
+TestResult test_models_ls_is_primary_name() {
+    TestResult result;
+    result.test_name = "models_ls_is_primary_name";
+
+    rcli::GlobalOptions options;
+    CLI::App app{"rcli test app"};
+    rcli::configure_app(app, options);
+
+    const CLI::App *ls = app.get_subcommand_no_throw("ls");
+    if (ls == nullptr) {
+        result.details = "ls subcommand not registered";
+        return result;
+    }
+    if (ls->get_name() != "ls") {
+        result.expected = "ls";
+        result.actual = ls->get_name();
+        result.details = "ls must be the primary name so its own --help banner names itself";
+        return result;
+    }
+    const CLI::App *list = app.get_subcommand_no_throw("list");
+    if (list != ls) {
+        result.details = "list must still resolve to the same subcommand, as an alias";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+TestResult test_model_labels_format() {
+    TestResult result;
+    result.test_name = "model_labels_format";
+
+    namespace v1 = runanywhere::v1;
+    using rcli::commands::model_labels::format;
+
+    // `models show --json` used to emit format() as a raw enum int; every
+    // value here has to render as the same kind of human string
+    // `models list --json` already gives category()/backend().
+    const struct {
+        v1::ModelFormat value;
+        std::string expected;
+    } cases[] = {
+        {v1::MODEL_FORMAT_GGUF, "GGUF"},
+        {v1::MODEL_FORMAT_COREML, "Core ML"},
+        {v1::MODEL_FORMAT_SAFETENSORS, "SafeTensors"},
+        {v1::MODEL_FORMAT_UNSPECIFIED, "?"},
+    };
+    for (const auto &c : cases) {
+        const std::string actual = format(c.value);
+        if (actual != c.expected) {
+            result.expected = c.expected;
+            result.actual = actual;
+            return result;
+        }
+    }
+    result.passed = true;
+    return result;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -2221,5 +2318,9 @@ int main(int argc, char **argv) {
   suite.add("write_png_multi_block", test_write_png_multi_block);
   suite.add("write_png_unwritable_path", test_write_png_unwritable_path);
   suite.add("bench_metrics_consume_only", test_bench_metrics_consume_only);
+  suite.add("bench_negative_trials_exit2", test_bench_negative_trials_exit2);
+  suite.add("bench_zero_trials_exit2", test_bench_zero_trials_exit2);
+  suite.add("models_ls_is_primary_name", test_models_ls_is_primary_name);
+  suite.add("model_labels_format", test_model_labels_format);
   return suite.run(argc, argv);
 }

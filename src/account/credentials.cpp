@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -34,7 +36,49 @@ namespace {
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
 
-constexpr const char* kProductionConsole = "https://console.runanywhere.ai";
+// Two hosts, two jobs, two different deployments. Keep them adjacent: the bug
+// they replace was one constant doing both, and it broke every command that
+// talks to the console.
+//
+// The API is the control plane — /auth/cli/start, /auth/cli/poll,
+// /auth/cli/refresh, /v1/me, /v1/cli/* — and it is served by Cloud Run. The web
+// console is the page a person approves a sign-in on, and it is served by
+// Railway. Measured 2026-09-04:
+//
+//   inference.runanywhere.ai  /auth/cli/start 422  /v1/me 405  Google Frontend
+//   console.runanywhere.ai    /auth/cli/start 404  /v1/me 404  railway-hikari
+//
+// 422 and 405 are those endpoints rejecting a bad body and a wrong verb, which
+// is how you know they are there. 404 with the console's own SPA HTML is how
+// you know they are not. Point the API constant at the Railway host — which is
+// what it used to be — and login, whoami and usage all 404.
+constexpr const char* kProductionConsoleApi = "https://inference.runanywhere.ai";
+
+// The approval page, under both names it answers to. One deployment: measured
+// 2026-09-04, both return `server: railway-hikari` and the same `etag:
+// "nqkdmw"` for /cloud/cli, so this is two DNS names for one build and not two
+// origins' worth of trust.
+//
+// The raw Railway name is here because it is what the control plane actually
+// hands out today:
+//
+//   POST https://inference.runanywhere.ai/auth/cli/start
+//     -> verification_url: https://runanywhere-frontend-production.up.railway.app/cloud/cli?code=...
+//
+// Trusting only the custom domain would refuse every real sign-in. Delete the
+// Railway entry once the control plane's configured console origin is the
+// custom domain — that is a one-line config change on the API side, and this
+// list is the thing waiting on it.
+constexpr const char* kProductionConsoleWeb[] = {
+    "https://console.runanywhere.ai",
+    "https://runanywhere-frontend-production.up.railway.app",
+};
+
+// Collapsing the API host into the approval host breaks one side or the other,
+// so say so at compile time rather than in a bug report.
+static_assert(std::string_view(kProductionConsoleApi) !=
+                  std::string_view(kProductionConsoleWeb[0]),
+              "the API host and the browser approval host are different deployments");
 constexpr std::uintmax_t kMaximumCredentialBytes = 1024 * 1024;
 #if defined(_WIN32)
 constexpr const char* kFileName = "credentials.dat";
@@ -365,13 +409,30 @@ bool ReadDocument(const std::string& path, std::string* document, bool* exists,
     struct stat metadata{};
     if (::fstat(fd, &metadata) != 0 || !S_ISREG(metadata.st_mode) || metadata.st_uid != geteuid() ||
         metadata.st_nlink != 1 || metadata.st_size < 0 ||
-        static_cast<std::uintmax_t>(metadata.st_size) > kMaximumCredentialBytes ||
-        ::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        static_cast<std::uintmax_t>(metadata.st_size) > kMaximumCredentialBytes) {
         ::close(fd);
         if (error != nullptr) {
             *error = "cloud session has unsafe file metadata";
         }
         return false;
+    }
+    // A prior version, another tool, or a permissive umask may have left this
+    // group- or world-readable; the bearer token inside is as good as a
+    // password, so say so once rather than quietly tightening it and leaving
+    // the reader to wonder whether it was ever exposed.
+    const bool was_exposed = (metadata.st_mode & (S_IRWXG | S_IRWXO)) != 0;
+    if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        ::close(fd);
+        if (error != nullptr) {
+            *error = "cloud session has unsafe file metadata";
+        }
+        return false;
+    }
+    if (was_exposed) {
+        std::fprintf(stderr,
+                     "warning: %s was readable beyond your user; permissions have been "
+                     "restricted to your user only\n",
+                     path.c_str());
     }
     std::string body;
     char buffer[4096];
@@ -455,7 +516,33 @@ bool WriteDocument(const std::string& path, const std::string& document, std::st
 
 std::string DefaultConsoleUrl() {
     const std::string configured = Env("RCLI_CONSOLE_URL");
-    return configured.empty() ? kProductionConsole : configured;
+    return configured.empty() ? kProductionConsoleApi : configured;
+}
+
+std::vector<std::string> TrustedBrowserOrigins(const std::string& console_url) {
+    // An operator who declared one has said which console they trust, and that
+    // is then the only one.
+    const std::string declared = Env("RCLI_CONSOLE_WEB_URL");
+    std::string normalized;
+    if (!declared.empty() && NormalizeConsoleUrl(declared, &normalized, nullptr)) {
+        return {normalized};
+    }
+    if (console_url == kProductionConsoleApi) {
+        return {std::begin(kProductionConsoleWeb), std::end(kProductionConsoleWeb)};
+    }
+    // Anything else — a dev console, a loopback stub — is trusted only at its
+    // own origin. That is the rule that held before, and it is the safe answer
+    // for a console whose approval page we know nothing about.
+    return {console_url};
+}
+
+bool BrowserUrlIsTrusted(const std::string& url, const std::vector<std::string>& origins) {
+    for (const std::string& origin : origins) {
+        if (BrowserUrlMatchesConsole(url, origin)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool NormalizeConsoleUrl(const std::string& input, std::string* normalized, std::string* error) {
@@ -558,8 +645,13 @@ bool Load(Credentials* out, std::string* error) {
             }
             return false;
         }
+        // A missing or empty console_url is not a malformed one: `credentials`
+        // already carries the DefaultConsoleUrl()-derived origin set above, so
+        // only a value the document actually specifies gets validated. Without
+        // this, a hand-edited or partially-written file that simply omits the
+        // field fails with "console URL must be HTTPS" instead of falling back.
         const std::string stored_url = object.value("console_url", std::string());
-        if (!NormalizeConsoleUrl(stored_url, &credentials.console_url, error)) {
+        if (!stored_url.empty() && !NormalizeConsoleUrl(stored_url, &credentials.console_url, error)) {
             return false;
         }
         credentials.email = object.value("email", std::string());
