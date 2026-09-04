@@ -76,9 +76,27 @@ struct Credits {
     long spent_micros = 0;
 };
 
+/// Spend over a window ending now, totalled by the console.
+///
+/// Not derivable here. `timeline` is grouped by calendar date, so its finest
+/// grain is a day, and summing the recent-request page instead would describe
+/// the last N requests while claiming to describe the window — the two part
+/// company the moment anyone is busy.
+struct UsageWindow {
+    /// "1h" or "24h" as the console labels it.
+    std::string window;
+    /// The span. Carried so nothing here has to parse `window`.
+    long seconds = 0;
+    UsageTotals totals;
+};
+
 struct Usage {
     Credits credit;
     UsageTotals totals;
+    /// Empty against a console that predates windowed totals, which is every
+    /// deployed one until `/v1/cli/usage` ships. Callers render what is missing
+    /// as missing rather than substituting a wider window's numbers.
+    std::vector<UsageWindow> windows;
     std::vector<UsageDay> timeline;
     std::vector<UsageModel> models;
     std::vector<UsageEvent> events;
