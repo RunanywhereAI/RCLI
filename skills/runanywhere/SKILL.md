@@ -62,8 +62,8 @@ Models land in `~/.local/share/runanywhere`. Nothing is downloaded until asked.
 ## Spend
 
 ```bash
-rcli usage               # credit left, tokens, spend by day and model
-rcli usage --days 7 --json
+rcli usage               # credit left, then input/output/cache tokens and spend
+rcli usage --json
 ```
 
 Read-only, and scoped to the signed-in account.
