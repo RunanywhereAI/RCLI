@@ -75,6 +75,13 @@ bool WriteObject(const std::string& path, const Json& value, std::string* error)
         return false;
     }
     file << value.dump(2) << "\n";
+    // Closed before it is judged. A short write on a full disk surfaces during
+    // the flush that close() performs, so testing while the stream is still
+    // open reports success and leaves the reader a truncated profile.
+    file.close();
+    if (!file.good() && error != nullptr) {
+        *error = "could not write " + path;
+    }
     return file.good();
 }
 
