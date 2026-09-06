@@ -18,6 +18,7 @@
 #include "account/console.h"
 #include "account/credentials.h"
 #include "io/output.h"
+#include "net/loopback_auth.h"
 
 namespace wally::ide {
 namespace {
@@ -46,6 +47,9 @@ struct Runtime {
     std::string prefix;
     std::string api_key;
     std::string model;
+    // The secret the editor must present. Loopback binding keeps the network
+    // out; this keeps another local process out.
+    std::string local_token;
     bool verbose = false;
 };
 
@@ -412,6 +416,7 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
     }
     runtime->api_key = endpoint.api_key;
     runtime->model = model;
+    runtime->local_token = wally::net::GenerateLoopbackToken();
     runtime->verbose = verbose;
 
     Runtime* raw = runtime.get();
@@ -436,6 +441,20 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
 
     raw->server.Post("/v1/chat/completions",
                      [raw](const httplib::Request& request, httplib::Response& response) {
+                         // This endpoint spends the signed-in user's credit, so
+                         // it serves only the editor wally configured. Bearer
+                         // token, from the provider key stored in the IDE.
+                         std::string presented;
+                         const std::string authorization = request.get_header_value("Authorization");
+                         constexpr const char* kBearer = "Bearer ";
+                         if (authorization.rfind(kBearer, 0) == 0) {
+                             presented = authorization.substr(std::string(kBearer).size());
+                         }
+                         if (!wally::net::ConstantTimeEquals(presented, raw->local_token)) {
+                             Fail(response, 401,
+                                  "this local endpoint only serves the editor wally configured");
+                             return;
+                         }
                          try {
                              const std::string body = Retarget(*raw, request.body);
                              // The editor decides whether to stream; we only
@@ -483,6 +502,7 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
 
     proxy->running = true;
     proxy->base_url = "http://127.0.0.1:" + std::to_string(bound) + "/v1";
+    proxy->auth_token = raw->local_token;
     return true;
 }
 

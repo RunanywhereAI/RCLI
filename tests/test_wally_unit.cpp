@@ -29,6 +29,7 @@
 #include "rac/infrastructure/model_management/rac_model_registry.h"
 
 #include "app.h"
+#include "net/loopback_auth.h"
 #include "catalog/catalog.h"
 #include "catalog/model_ref.h"
 #include "commands/bench_metrics.h"
@@ -2255,6 +2256,33 @@ TestResult test_models_ls_is_primary_name() {
     return result;
 }
 
+TestResult test_loopback_token() {
+    TestResult result;
+    result.test_name = "loopback_token";
+
+    const std::string a = wally::net::GenerateLoopbackToken();
+    const std::string b = wally::net::GenerateLoopbackToken();
+    // 32 bytes of randomness rendered as hex, and two draws do not collide.
+    if (a.size() != 64 || b.size() != 64 || a == b) {
+        result.details = "token is not 64 hex chars, or two draws matched";
+        return result;
+    }
+    for (const char c : a) {
+        if (std::strchr("0123456789abcdef", c) == nullptr) {
+            result.details = "token has a non-hex character";
+            return result;
+        }
+    }
+    // The constant-time compare still has to be a correct compare.
+    if (!wally::net::ConstantTimeEquals(a, a) || wally::net::ConstantTimeEquals(a, b) ||
+        wally::net::ConstantTimeEquals(a, a + "x") || wally::net::ConstantTimeEquals("", "x")) {
+        result.details = "ConstantTimeEquals gave a wrong answer";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 TestResult test_model_labels_format() {
     TestResult result;
     result.test_name = "model_labels_format";
@@ -2321,6 +2349,7 @@ int main(int argc, char **argv) {
   suite.add("bench_negative_trials_exit2", test_bench_negative_trials_exit2);
   suite.add("bench_zero_trials_exit2", test_bench_zero_trials_exit2);
   suite.add("models_ls_is_primary_name", test_models_ls_is_primary_name);
+  suite.add("loopback_token", test_loopback_token);
   suite.add("model_labels_format", test_model_labels_format);
   return suite.run(argc, argv);
 }

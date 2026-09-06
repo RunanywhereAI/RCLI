@@ -287,7 +287,11 @@ int Run(const Editor& editor, const std::string& model,
         }
 
         std::string failure;
-        if (!ide::ApplyProvider(*editor.jetbrains, reachable, std::string(), model, &failure)) {
+        // The proxy holds a per-session secret and rejects a chat request that
+        // does not present it, so the IDE is given it as the provider key. A
+        // direct (keyless) endpoint leaves proxy.auth_token empty, which is the
+        // right value there too.
+        if (!ide::ApplyProvider(*editor.jetbrains, reachable, proxy.auth_token, model, &failure)) {
             out::error_line(failure);
             ide::StopProxy(&proxy);
             harness::Release(endpoint);

@@ -66,6 +66,7 @@ set(WALLY_SOURCES
     src/config/cli_paths.cpp
     src/device_info.cpp
     src/net/control_plane.cpp
+    src/net/loopback_auth.cpp
     src/io/wav_io.cpp
     src/io/image_io.cpp
     src/io/output.cpp

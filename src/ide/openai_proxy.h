@@ -23,6 +23,10 @@ struct Proxy {
     bool running = false;
     /// What to point the editor at. An OpenAI-compatible root ending in `/v1`.
     std::string base_url;
+    /// The API key the editor must send back. A per-session secret, so a stray
+    /// local process cannot reach the loopback port and spend on the signed-in
+    /// user's credit. Give it to the editor as the provider key.
+    std::string auth_token;
 };
 
 /// Listens on `port` and forwards to `endpoint`, adding its credential.
