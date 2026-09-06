@@ -20,6 +20,12 @@ already ships as a public, on-device product with 1,544 stargazers; the
 cloud/login surface described here is a pivot bolted onto that existing base,
 not a greenfield build.
 
+The console, not this CLI, is the launch gate for Wally: onboarding through
+the console must work on its own. This CLI may ship present and imperfect
+without blocking that launch, so every blocker in this document is a bar
+this CLI sets for its own production readiness, not a gate on Wally's
+launch itself.
+
 ---
 
 ## 1. The ideal state
@@ -45,7 +51,8 @@ polling the user has to watch. This works identically whether the console
 frontend and the console API are one deployment or two, in production or in
 a developer's local sandbox — the CLI never has to guess which browser origin
 it is allowed to trust, because the console tells it, unambiguously, at every
-environment.
+environment. That production API stays fixed at a single host,
+`inference.runanywhere.ai`, through this launch.
 
 Once signed in, `wally whoami` shows identity and the current month's spend
 in one line — a single command answers "who am I and what have I used,"
@@ -255,6 +262,7 @@ entire cloud/login/opencode/usage surface described in this document.
 | RCLI-37 | Decide whether a Linux release ships, or update docs to stop implying it might | `AGENTS.md` calls Linux bottles "not a v1 merge blocker" (implying a later version), while `install.sh` deliberately fails closed on Linux today and no Linux CI job exists | CLI maintainer | L (if pursued) | Nothing today | repo: `AGENTS.md:177` vs `ci.yml` (no linux job), `install.sh` | See §5, ruling 4 |
 | RCLI-40 | Rule on PR #56 (`rcli ocr`) — its own title says "DO NOT MERGE YET" because the shipped catalog model version cannot read a page | Not currently on `main`; only relevant if OCR gets advertised at launch | whoever owns the catalog pin | M | N/A unless OCR is promised | repo: PR #56 title/body (`gh pr view 56`) | Open, self-blocked |
 | RCLI-41 | Make `wally whoami` show identity **and** the current month's spend, or stop advertising that it does | README describes `whoami` as showing "who you are, and what you have used this month" (`README.md:19`); `WhoAmI()` prints only email, session status, and console URL on both `HEAD` and `origin/main` — PR #60 added `usage` as a separate command and never touched `WhoAmI()` at all | CLI maintainer | S | README accuracy; the whoami half of §1's ideal state | repo: `src/commands/cmd_account.cpp:215-253` (HEAD), `:259-299` (origin/main); `README.md:19` | Open |
+| RCLI-45 | Give `HttpResponse` a headers field and read/honor `Retry-After` on a 429 everywhere the CLI calls the hosted API, then forward it through both coding-harness proxies | The hosted API answers overload with HTTP 429 and a `Retry-After` header, and a client is expected to back off on it. `HttpResponse` (`src/account/console.h:19-22`) carries only `status` and `body` — no headers at all — so `login`/`whoami`/`usage`/`logout` cannot see one even when the console sends it, and `HttpError()` (`src/account/console.cpp:387-395`) prints a flat "failed with HTTP 429" regardless. The Claude-Code-facing proxy already maps an upstream rate-limit error to 429 (`src/anthropic/messages.cpp:84`) and the OpenAI-facing proxy passes a real upstream status straight through (`src/ide/openai_proxy.cpp:449-455`), but neither forwards any header, so the wrapped tool's own backoff logic never sees `Retry-After` either | CLI maintainer | M | Correct client-side backoff under overload | repo: `src/account/console.h:19-22`; `src/account/console.cpp:387-395`; `src/anthropic/messages.cpp:84`; `src/ide/openai_proxy.cpp:449-455` | Open |
 
 ## 4. Edge cases and failure modes
 
