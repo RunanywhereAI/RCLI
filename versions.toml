@@ -15,7 +15,7 @@
 [product]
 # The CLI's own release version. Bumped for a wally release, independent of the
 # SDK kit below. The git tag is v<version>; auto-tag.yml reads it from here.
-version = "0.5.2"
+version = "0.5.3"
 
 [sdk]
 # The published C++ desktop kit this tree is validated against. Bump together
