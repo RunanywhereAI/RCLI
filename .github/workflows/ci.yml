@@ -36,6 +36,8 @@ jobs:
           ruby -c Formula/wally.rb
       - name: Console binding matches its pinned contract
         run: python3 contracts/generate_console_binding.py --check
+      - name: Versions consistent with versions.toml
+        run: python3 scripts/check-versions.py
 
   macos:
     # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is

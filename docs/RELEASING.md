@@ -45,6 +45,21 @@ llm           ok        HTTP 200    1           1         0
 - `auth login` runs the authenticated handshake (`/api/v1/auth/sdk/authenticate` → `/api/v1/devices/register` → model assignments). Production only.
 - `telemetry emit|blast` drive the real commons telemetry pipeline to `/api/v2/sdk/telemetry/{modality}`. Development is keyless (no JWT). Production logs in first. Modalities: `llm stt tts vlm rag imagegen embeddings vad voice lora model system`. Exit is non-zero when any POST fails or any tracked event never reached the backend.
 
+## Versions live in one file
+
+`versions.toml` at the repo root is the single source for every version and pin.
+CMake reads it directly, so `project(wally VERSION …)` and the SDK/IDL/kit pins
+in `cmake/sdk-pin.cmake` come from it and nowhere else. `scripts/package-wally.sh`
+and `auto-tag.yml` read the product version from it too.
+
+To cut a release, bump `[product] version` there and nothing else. The copies
+that cannot read TOML at their own step, the Homebrew formula's version and the
+Swift package's exact SDK pin, are checked against it by
+`scripts/check-versions.py`, which the CI distribution job and the local sim
+both run, so a half-done bump fails rather than ships. The formula's per-platform
+`sha256` lines are still stamped from the real release by
+`scripts/update-tap.sh` / `stamp-formula.py`.
+
 ## Published asset contract
 
 The current `release.yml` publishes three archives and matching SHA-256

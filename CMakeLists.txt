@@ -1,8 +1,22 @@
 cmake_minimum_required(VERSION 3.24)
-project(wally VERSION 0.5.2 LANGUAGES C CXX)
 
-# Product version is independent of the SDK kit pin in cmake/sdk-pin.cmake.
-# scripts/package-wally.sh and the release workflow stamp this into Formula/wally.rb.
+# The product version is read from versions.toml, the single source for every
+# version and pin in this repo -- never hardcoded here. Parsed before project()
+# with a plain regex, since versions.toml is flat `key = "value"` by design.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/versions.toml" _wally_version_line
+     REGEX "^[ \t]*version[ \t]*=")
+if(NOT _wally_version_line)
+    message(FATAL_ERROR "versions.toml is missing the product version")
+endif()
+list(GET _wally_version_line 0 _wally_version_line)
+string(REGEX REPLACE "^[^\"]*\"([^\"]*)\".*$" "\\1" _wally_version "${_wally_version_line}")
+
+project(wally VERSION "${_wally_version}" LANGUAGES C CXX)
+
+# The SDK kit pin (cmake/sdk-pin.cmake, also from versions.toml) moves on its
+# own cadence. scripts/package-wally.sh and the release workflow stamp the
+# product version into Formula/wally.rb; scripts/check-versions.py fails a build
+# where the formula or the Swift package pin has drifted from versions.toml.
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
