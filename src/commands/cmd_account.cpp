@@ -302,6 +302,9 @@ int WhoAmI() {
         return 1;
     }
 
+    // whoami is identity only, by decision: plan, spend and token usage belong
+    // to `wally usage`, and an e2e guard (tests/test_account_cli.py) fails the
+    // build if any of them leak in here. The README is worded to match.
     char line[220];
     std::snprintf(line, sizeof(line), "%-14s %s", "email", identity.email.c_str());
     out::result_line(line);

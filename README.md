@@ -16,7 +16,8 @@ model instead, sign in to a RunAnywhere console:
 
 ```bash
 rcli login          # opens a browser; approve it there
-rcli whoami         # who you are, and what you have used this month
+rcli whoami         # the account you are signed in as
+rcli usage          # credit, and what you have used this month
 rcli logout
 ```
 
