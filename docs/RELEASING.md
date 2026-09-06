@@ -1,6 +1,6 @@
 # RunAnywhere CLI — Releasing
 
-Contributor and release-engineering guide for shipping `rcli` binaries.
+Contributor and release-engineering guide for shipping `wally` binaries.
 
 ## Control plane
 
@@ -22,7 +22,7 @@ Two SDK environments:
 # OSS keyless blast → staging backend (PUBLIC org)
 # Unset ambient RUNANYWHERE_API_KEY or an invalid key will force a failed JWT login.
 $ unset RUNANYWHERE_API_KEY RUNANYWHERE_BASE_URL
-$ rcli --environment development \
+$ wally --environment development \
     --base-url "$STAGING_BASE_URL" \
     telemetry blast --processing-ms 42.5
 # Release builds can omit --base-url (baked STAGING_BASE_URL).
@@ -30,11 +30,11 @@ $ rcli --environment development \
 #   STAGING_BASE_URL=… ./scripts/ci/oss_keyless_telemetry_blast.sh
 
 # Team / customer authed path
-$ rcli --environment production \
+$ wally --environment production \
     --base-url https://api.example.com \
     --api-key $KEY auth login
 
-$ rcli --environment production \
+$ wally --environment production \
     --base-url https://api.example.com \
     --api-key $KEY telemetry blast
 MODALITY      RESULT    STATUS      RECEIVED    STORED    SKIPPED
@@ -47,16 +47,17 @@ llm           ok        HTTP 200    1           1         0
 
 ## Published asset contract
 
-The current `release.yml` publishes two archives and matching SHA-256
+The current `release.yml` publishes three archives and matching SHA-256
 sidecars. It does not build or advertise a Linux release:
 
 | Platform | Asset | Required archive root |
 |---|---|---|
-| macOS Apple Silicon | `rcli-X.Y.Z-macos-arm64.tar.gz` | `rcli-macos-arm64/` |
-| Windows x86_64 | `rcli-X.Y.Z-windows-x86_64.zip` | `rcli-windows-x86_64/` |
+| macOS Apple Silicon | `wally-X.Y.Z-macos-arm64.tar.gz` | `wally-macos-arm64/` |
+| Windows ARM64 | `wally-X.Y.Z-windows-arm64.zip` | `wally-windows-arm64/` |
+| Windows x86_64 | `wally-X.Y.Z-windows-x86_64.zip` | `wally-windows-x86_64/` |
 
-Each root contains a non-empty `README.md` and `bin/rcli` or `bin/rcli.exe`.
-Windows DLLs stay beside `bin/rcli.exe`. The macOS archive contains the Swift
+Each root contains a non-empty `README.md` and `bin/wally` or `bin/wally.exe`.
+Windows DLLs stay beside `bin/wally.exe`. The macOS archive contains the Swift
 MLX host and its resource bundles. `scripts/verify-release-assets.py` verifies
 the sidecar digest, filename, single-root layout, required files, executable
 mode, duplicate paths, traversal, links, and expansion limits. Packaging jobs
@@ -64,10 +65,10 @@ and the publish job all run it before a release is created.
 
 ## Signing reality and production gates
 
-Credential-free macOS packaging is ad-hoc signed. `scripts/package-rcli.sh`
+Credential-free macOS packaging is ad-hoc signed. `scripts/package-wally.sh`
 checks that signature and can sign with an already-installed Developer ID
-identity via `RCLI_CODESIGN_IDENTITY` and optional `RCLI_CODESIGN_KEYCHAIN`.
-Set `RCLI_REQUIRE_DEVELOPER_ID=1` to make ad-hoc signing an error. The GitHub
+identity via `WALLY_CODESIGN_IDENTITY` and optional `WALLY_CODESIGN_KEYCHAIN`.
+Set `WALLY_REQUIRE_DEVELOPER_ID=1` to make ad-hoc signing an error. The GitHub
 workflow does **not** currently import an identity, notarize an archive, create
 a DMG, or staple a ticket.
 
@@ -79,7 +80,7 @@ Therefore these are launch gates, not completed workflow features:
 - import a Developer ID Application identity into an ephemeral keychain, sign
   nested code and the host with hardened runtime/timestamp, notarize the exact
   distributed artifact, and validate Gatekeeper acceptance;
-- Authenticode-sign `rcli.exe` and DLLs as required, then validate signatures on
+- Authenticode-sign `wally.exe` and DLLs as required, then validate signatures on
   a clean Windows host;
 - provide the signing/notarization credentials through protected release
   environments and keep pull-request jobs credential-free.
@@ -94,13 +95,14 @@ on macOS, and `Get-AuthenticodeSignature` on Windows.
 - `ci.yml` builds and tests macOS and Windows. Its distribution job also tests
   archive verification, shell syntax, formula syntax, and stamping code.
 - `release.yml` builds macOS and Windows, runs product e2e, packages, verifies
-  each archive twice, then publishes the two archives and sidecars.
-- The publish job generates a `rcli-homebrew-formula` workflow artifact from
+  each archive twice, then publishes the three archives and sidecars.
+- The publish job generates a `wally-homebrew-formula` workflow artifact from
   the verified macOS checksum. It does not pretend that an ephemeral checkout
   updated a default branch.
 
-Homebrew still needs one ownership decision: `install.sh` taps the RCLI repo as
-`runanywhereai/rcli`, while the historical update script targeted a separate
-`homebrew-tap` repo. Until one is declared canonical, pass `RCLI_TAP_REPO`
+Homebrew still needs one ownership decision: `install.sh` taps the RCLI repo
+(the GitHub repo keeps its name) under the alias `runanywhereai/wally`, while
+the historical update script targeted a separate `homebrew-tap` repo. Until one
+is declared canonical, pass `WALLY_TAP_REPO`
 explicitly to `scripts/update-tap.sh` and apply the generated formula to the
 same tap users install from.
