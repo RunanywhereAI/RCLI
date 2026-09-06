@@ -16,6 +16,7 @@
 #include <sys/wait.h>
 #endif
 
+#include "account/baked_endpoints.h"
 #include "account/console.h"
 #include "account/credentials.h"
 #include "commands/commands.h"
@@ -45,6 +46,12 @@ std::string ConsoleWebOrigin() {
         // rcli-era override, still honored so it doesn't go silently unread
         // after the wally rename.
         configured = std::getenv("RCLI_CONSOLE_WEB_URL");
+    }
+    if (configured == nullptr || *configured == '\0') {
+        // A dev build carries its approval console compiled in (see
+        // baked_endpoints.h.in) — empty in production builds, and the env
+        // overrides above always win.
+        configured = WALLY_BAKED_CONSOLE_WEB_ORIGIN;
     }
     std::string origin;
     if (configured == nullptr || *configured == '\0' ||

@@ -1,5 +1,7 @@
 #include "account/credentials.h"
 
+#include "account/baked_endpoints.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -559,7 +561,16 @@ bool WriteDocument(const std::string& path, const std::string& document, std::st
 
 std::string DefaultConsoleUrl() {
     const std::string configured = EnvWithLegacyFallback("WALLY_CONSOLE_URL", "RCLI_CONSOLE_URL");
-    return configured.empty() ? kProductionConsoleApi : configured;
+    if (!configured.empty()) {
+        return configured;
+    }
+    // A dev build carries its control plane compiled in (see
+    // baked_endpoints.h.in): the env override above still wins, production
+    // builds generate an empty macro and fall through unchanged.
+    if (WALLY_BAKED_CONSOLE_API_URL[0] != '\0') {
+        return WALLY_BAKED_CONSOLE_API_URL;
+    }
+    return kProductionConsoleApi;
 }
 
 std::vector<std::string> TrustedBrowserOrigins(const std::string& console_url) {
@@ -572,6 +583,17 @@ std::vector<std::string> TrustedBrowserOrigins(const std::string& console_url) {
     }
     if (console_url == kProductionConsoleApi) {
         return {std::begin(kProductionConsoleWeb), std::end(kProductionConsoleWeb)};
+    }
+    // A dev build that baked its control plane also baked which browser
+    // console may approve sign-ins for it (a local console on loopback,
+    // typically). Trust holds pairwise: the baked web origin is honored only
+    // while talking to the baked API, never for an arbitrary --base-url.
+    if (WALLY_BAKED_CONSOLE_WEB_ORIGIN[0] != '\0' &&
+        console_url == std::string(WALLY_BAKED_CONSOLE_API_URL)) {
+        std::string baked_web;
+        if (NormalizeConsoleUrl(WALLY_BAKED_CONSOLE_WEB_ORIGIN, &baked_web, nullptr)) {
+            return {baked_web, console_url};
+        }
     }
     // Anything else — a dev console, a loopback stub — is trusted only at its
     // own origin. That is the rule that held before, and it is the safe answer

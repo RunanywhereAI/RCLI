@@ -98,6 +98,26 @@ target_include_directories(wally_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/linenoise"
 )
 
+# Dev endpoint bake. The values come from the ENVIRONMENT of the configure
+# step, never from -D flags: nothing endpoint-shaped lands on the command
+# line, in CMakeCache.txt, or in this log (only ON/off is printed). The
+# generated header lives in the build tree, which is gitignored — no endpoint
+# ever enters committed source. Empty env (the normal case) generates empty
+# macros and the production resolution order is untouched.
+set(WALLY_BAKED_CONSOLE_API_URL "$ENV{WALLY_BAKED_CONSOLE_API_URL}")
+set(WALLY_BAKED_CONSOLE_WEB_ORIGIN "$ENV{WALLY_BAKED_CONSOLE_WEB_ORIGIN}")
+if(WALLY_BAKED_CONSOLE_API_URL)
+    message(STATUS "wally: dev endpoint bake ON (values withheld from log)")
+else()
+    message(STATUS "wally: dev endpoint bake off (production defaults)")
+endif()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/account/baked_endpoints.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/account/baked_endpoints.h"
+    @ONLY
+)
+target_include_directories(wally_core PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 # The Anthropic translator and the JetBrains proxy need an HTTP client and a
 # JSON reader. Both used to arrive from the SDK's own source build; a kit
 # consumer never configures that build, so they are fetched here.
