@@ -64,6 +64,11 @@ void HandleNonStreaming(Runtime& runtime, const Json& request, httplib::Response
         client.Post(runtime.prefix + "/chat/completions", upstream.dump(), "application/json");
     if (!reply || reply->status < 200 || reply->status >= 300) {
         response.status = reply ? reply->status : 502;
+        // A 429 from the hosted API carries a Retry-After the wrapped tool
+        // should honor; httplib drops upstream headers unless we copy them.
+        if (reply && reply->status == 429 && reply->has_header("Retry-After")) {
+            response.set_header("Retry-After", reply->get_header_value("Retry-After"));
+        }
         response.set_content(
             translate::ErrorBody("api_error",
                                  reply ? reply->body : std::string("the model endpoint did not answer")),
@@ -82,6 +87,11 @@ void HandleNonStreaming(Runtime& runtime, const Json& request, httplib::Response
     std::string failure;
     if (translate::PayloadError(parsed, &failure_type, &failure)) {
         response.status = failure_type == "rate_limit_error" ? 429 : 502;
+        // A rate-limit error can arrive as a 200 body rather than a 429 status;
+        // forward the upstream Retry-After either way so the tool backs off.
+        if (response.status == 429 && reply->has_header("Retry-After")) {
+            response.set_header("Retry-After", reply->get_header_value("Retry-After"));
+        }
         response.set_content(translate::ErrorBody(failure_type, failure), "application/json");
         return;
     }

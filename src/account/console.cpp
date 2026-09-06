@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <utility>
@@ -225,6 +228,31 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
 
     output->status = 0;
     output->body.clear();
+    output->headers.clear();
+    // Only Retry-After is read back on this path: it is the one response header
+    // a caller acts on (a 429 with a wait hint), and querying a named header is
+    // cheaper than enumerating them all.
+    {
+        wchar_t retry_after_name[] = L"Retry-After";
+        DWORD retry_size = 0;
+        WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_CUSTOM, retry_after_name,
+                            WINHTTP_NO_OUTPUT_BUFFER, &retry_size, WINHTTP_NO_HEADER_INDEX);
+        if (retry_size > 0 && retry_size < 256) {
+            std::wstring wide(retry_size / sizeof(wchar_t), L'\0');
+            if (WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_CUSTOM, retry_after_name,
+                                    wide.data(), &retry_size, WINHTTP_NO_HEADER_INDEX)) {
+                std::string value;
+                for (const wchar_t wc : wide) {
+                    if (wc != L'\0' && wc < 128) {
+                        value.push_back(static_cast<char>(wc));
+                    }
+                }
+                if (!value.empty()) {
+                    output->headers["retry-after"] = value;
+                }
+            }
+        }
+    }
     std::array<char, 8192> buffer{};
     while (true) {
         DWORD received = 0;
@@ -274,6 +302,37 @@ std::size_t CollectBody(char* bytes, std::size_t size, std::size_t count, void* 
         return 0;
     }
     buffer->body->append(bytes, length);
+    return length;
+}
+
+// Collects one header line into the response map, keyed by a lowercased name.
+// curl hands the status line and a trailing blank line here too; both lack a
+// colon and are skipped.
+std::size_t CollectHeader(char* bytes, std::size_t size, std::size_t count, void* userdata) {
+    auto* headers = static_cast<std::map<std::string, std::string>*>(userdata);
+    const std::size_t length = size * count;
+    if (headers == nullptr || count != 0 && size > std::numeric_limits<std::size_t>::max() / count) {
+        return 0;
+    }
+    const std::string line(bytes, length);
+    const std::size_t colon = line.find(':');
+    if (colon == std::string::npos) {
+        return length;
+    }
+    std::string name = line.substr(0, colon);
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::string value = line.substr(colon + 1);
+    const auto trim = [](std::string& s) {
+        const auto not_space = [](unsigned char c) { return std::isspace(c) == 0; };
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+        s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+    };
+    trim(name);
+    trim(value);
+    if (!name.empty() && headers->size() < 100) {
+        (*headers)[name] = value;
+    }
     return length;
 }
 
@@ -338,6 +397,7 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
 
     output->status = 0;
     output->body.clear();
+    output->headers.clear();
     ResponseBuffer response{&output->body, false};
     configured =
         configured && curl_easy_setopt(request, CURLOPT_URL, input.url.c_str()) == CURLE_OK &&
@@ -352,7 +412,9 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
         curl_easy_setopt(request, CURLOPT_SSL_VERIFYHOST, 2L) == CURLE_OK &&
         curl_easy_setopt(request, CURLOPT_USERAGENT, "wally-cloud-auth/1") == CURLE_OK &&
         curl_easy_setopt(request, CURLOPT_WRITEFUNCTION, CollectBody) == CURLE_OK &&
-        curl_easy_setopt(request, CURLOPT_WRITEDATA, &response) == CURLE_OK;
+        curl_easy_setopt(request, CURLOPT_WRITEDATA, &response) == CURLE_OK &&
+        curl_easy_setopt(request, CURLOPT_HEADERFUNCTION, CollectHeader) == CURLE_OK &&
+        curl_easy_setopt(request, CURLOPT_HEADERDATA, &output->headers) == CURLE_OK;
     if (configured && !input.body.empty()) {
         configured =
             input.body.size() <= static_cast<std::size_t>(std::numeric_limits<long>::max()) &&
@@ -370,6 +432,7 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
     if (!received || response.too_large || status < 100 || status > 599) {
         output->status = 0;
         output->body.clear();
+        output->headers.clear();
         if (error != nullptr) {
             // Names the origin actually contacted: with WALLY_CONSOLE_URL unset
             // that is the production console, and a bare "could not reach the
@@ -384,13 +447,24 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
 #endif
 }
 
-void HttpError(const char* operation, const std::string& origin, int status, std::string* error) {
-    if (error != nullptr) {
-        // Names which console answered: with WALLY_CONSOLE_URL unset that is
-        // production, and a bare "failed with HTTP 404" reads as a bug rather
-        // than as the wrong console having been asked.
-        *error = std::string("console ") + operation + " (" + origin + ") failed with HTTP " +
-                std::to_string(status);
+void HttpError(const char* operation, const std::string& origin, const HttpResponse& response,
+               std::string* error) {
+    if (error == nullptr) {
+        return;
+    }
+    // Names which console answered: with WALLY_CONSOLE_URL unset that is
+    // production, and a bare "failed with HTTP 404" reads as a bug rather
+    // than as the wrong console having been asked.
+    *error = std::string("console ") + operation + " (" + origin + ") failed with HTTP " +
+             std::to_string(response.status);
+    // A 429 means overload, not a broken request. Tell the person how long the
+    // server asked them to wait, so "try again" is actionable rather than a
+    // guess.
+    if (response.status == 429) {
+        const int wait = response.retry_after_seconds();
+        *error += wait >= 0 ? "; the console is rate limiting, retry after " + std::to_string(wait) +
+                                  "s"
+                            : "; the console is rate limiting, wait a moment and retry";
     }
 }
 
@@ -527,6 +601,26 @@ bool ConsoleOrigin(const std::string& input, std::string* origin, std::string* e
 
 }  // namespace
 
+int HttpResponse::retry_after_seconds() const {
+    const auto it = headers.find("retry-after");
+    if (it == headers.end()) {
+        return -1;
+    }
+    const std::string& value = it->second;
+    if (value.empty() ||
+        !std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c); })) {
+        return -1;
+    }
+    int seconds = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), seconds);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size()) {
+        return -1;
+    }
+    // A day is the ceiling: anything larger is a misconfiguration, and honoring
+    // it would hang a terminal for hours.
+    return seconds > 86400 ? 86400 : seconds;
+}
+
 ConsoleClient::ConsoleClient(Transport transport)
     : transport_(transport ? std::move(transport) : Transport(DefaultTransport)) {}
 
@@ -556,7 +650,7 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         return false;
     }
     if (response.status != 200) {
-        HttpError("authorization", origin, response.status, error);
+        HttpError("authorization", origin, response, error);
         return false;
     }
 
@@ -601,7 +695,7 @@ PollResult ConsoleClient::Poll(const std::string& console_url, const Authorizati
         return PollResult::Failed;
     }
     if (response.status != 200) {
-        HttpError("poll", origin, response.status, error);
+        HttpError("poll", origin, response, error);
         return PollResult::Failed;
     }
 
@@ -660,7 +754,7 @@ bool ConsoleClient::Refresh(const std::string& console_url, const std::string& r
         return false;
     }
     if (response.status != 200) {
-        HttpError("refresh", origin, response.status, error);
+        HttpError("refresh", origin, response, error);
         return false;
     }
     Json object;
@@ -703,7 +797,7 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
         return IdentityResult::Unauthorized;
     }
     if (response.status != 200) {
-        HttpError("identity request", origin, response.status, error);
+        HttpError("identity request", origin, response, error);
         return IdentityResult::Failed;
     }
 
@@ -774,7 +868,7 @@ IdentityResult ConsoleClient::FetchUsage(const std::string& console_url,
         return IdentityResult::Unauthorized;
     }
     if (response.status != 200) {
-        HttpError("usage request", origin, response.status, error);
+        HttpError("usage request", origin, response, error);
         return IdentityResult::Failed;
     }
 
@@ -903,7 +997,7 @@ bool ConsoleClient::Revoke(const std::string& console_url, const std::string& ac
         return false;
     }
     if (response.status != 200 && response.status != 204) {
-        HttpError("revoke", origin, response.status, error);
+        HttpError("revoke", origin, response, error);
         return false;
     }
     return true;

@@ -453,6 +453,14 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
                                  return;
                              }
                              response.status = reply->status;
+                             // An overloaded upstream answers 429 with a
+                             // Retry-After the wrapped tool is expected to back
+                             // off on. httplib drops response headers unless we
+                             // copy them, so forward this one explicitly.
+                             if (reply->status == 429 && reply->has_header("Retry-After")) {
+                                 response.set_header("Retry-After",
+                                                     reply->get_header_value("Retry-After"));
+                             }
                              response.set_content(reply->body, "application/json");
                          } catch (const std::exception& error) {
                              Fail(response, 500, error.what());
