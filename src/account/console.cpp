@@ -20,6 +20,7 @@
 #include <mutex>
 #endif
 
+#include "account/console_contract.h"
 #include "account/credentials.h"
 
 namespace wally::account {
@@ -494,35 +495,25 @@ bool ParseObject(const HttpResponse& response, Json* object, std::string* error)
     }
 }
 
-bool RequiredString(const Json& object, const char* key, std::string* value, std::string* error) {
-    const auto found = object.find(key);
-    if (found == object.end() || !found->is_string() ||
-        found->get_ref<const std::string&>().empty()) {
-        if (error != nullptr) {
-            *error = std::string("console response is missing ") + key;
-        }
+// Parse a response body straight into its generated contract type. The typed
+// `get<T>` throws when a required field is missing or the wrong shape or an enum
+// value is unknown, so a response that does not match the pinned contract is a
+// clean failure here rather than a wrong value read field by name downstream.
+template <typename T>
+bool ParseContract(const HttpResponse& response, T* value, std::string* error) {
+    Json object;
+    if (!ParseObject(response, &object, error)) {
         return false;
     }
-    *value = found->get<std::string>();
-    return true;
-}
-
-std::string OptionalString(const Json& object, const char* key) {
-    const auto found = object.find(key);
-    return found != object.end() && found->is_string() ? found->get<std::string>() : std::string();
-}
-
-// int64_t, not long: `long` is 32 bits on MSVC, and cost_micros passes 2^31
-// at about $2,147 of spend, so a Windows build silently truncated it.
-std::int64_t Number(const Json& object, const char* key, std::int64_t fallback = 0) {
-    const auto found = object.find(key);
-    if (found == object.end() || !found->is_number_integer()) {
-        return fallback;
-    }
     try {
-        return found->get<std::int64_t>();
+        *value = object.get<T>();
+        return true;
     } catch (const Json::exception&) {
-        return fallback;
+        // Never the body: it can carry a token on an error path.
+        if (error != nullptr) {
+            *error = "console returned a response that did not match the contract";
+        }
+        return false;
     }
 }
 
@@ -557,16 +548,31 @@ bool RequestCodeIsSafe(const std::string& value) {
            });
 }
 
-bool ReadGrant(const Json& object, Grant* grant, std::string* error) {
-    grant->access_token = OptionalString(object, "access_token");
-    grant->refresh_token = OptionalString(object, "refresh_token");
-    grant->email = OptionalString(object, "email");
-    grant->plan = OptionalString(object, "plan");
-    grant->expires_in = std::max<std::int64_t>(0, Number(object, "expires_in"));
+// The plan is a closed enum in the contract, so its only text is a known-safe
+// literal; render it back for the domain Grant, which carries a plain string.
+std::string PlanText(const std::optional<contract::CliPlan>& plan) {
+    if (!plan.has_value()) {
+        return std::string();
+    }
+    return Json(*plan).get<std::string>();
+}
+
+// Map the wire grant fields onto the domain Grant, still sanitizing every
+// string that reaches the terminal or the credential file. The contract typing
+// removes the field-name guesswork; the safety checks stay.
+bool MapGrant(const std::optional<std::string>& access_token,
+              const std::optional<std::string>& refresh_token,
+              const std::optional<std::string>& email,
+              const std::optional<contract::CliPlan>& plan, std::int64_t expires_in, Grant* grant,
+              std::string* error) {
+    grant->access_token = access_token.value_or("");
+    grant->refresh_token = refresh_token.value_or("");
+    grant->email = email.value_or("");
+    grant->plan = PlanText(plan);
+    grant->expires_in = std::max<std::int64_t>(0, expires_in);
     if ((!grant->access_token.empty() && !SessionTokenIsSafe(grant->access_token)) ||
         (!grant->refresh_token.empty() && !SessionTokenIsSafe(grant->refresh_token)) ||
-        (!grant->email.empty() && !DisplayTextIsSafe(grant->email, 320)) ||
-        (!grant->plan.empty() && !DisplayTextIsSafe(grant->plan, 80))) {
+        (!grant->email.empty() && !DisplayTextIsSafe(grant->email, 320))) {
         if (error != nullptr) {
             *error = "console returned an invalid cloud session";
         }
@@ -636,16 +642,16 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
     if (!ConsoleOrigin(console_url, &origin, error)) {
         return false;
     }
-    // Wire value, not a display string -- InferenceInfra's CliClient StrEnum
-    // (api/app/services/cli_auth.py) only recognizes "rcli", pinned by
-    // api/tests/fixtures/rcli_console_contract.json. Sending "wally" here
-    // 422s /auth/cli/start for real: found live, testing this rename against
-    // a local control-plane instance. Renaming this needs a coordinated
-    // InferenceInfra change (add "wally" to the enum + update the pinned
-    // fixture) — a separate, cross-repo decision, not part of this PR.
-    const Json payload = {{"hostname", hostname}, {"client", "rcli"}};
+    // The client value is the contract enum, whose only member serializes to
+    // "rcli" -- InferenceInfra's CliClient StrEnum recognizes exactly that, and
+    // sending anything else 422s /auth/cli/start. Renaming the wire value needs
+    // a coordinated InferenceInfra change (add "wally" to the enum, re-vendor
+    // this contract), which is why it is pinned here rather than free text.
+    contract::CliStartRequest request;
+    request.client = contract::CliClient::kRcli;
+    request.hostname = hostname;
     HttpResponse response;
-    if (!Send(transport_, {"POST", origin + "/auth/cli/start", payload.dump(), {}}, &response,
+    if (!Send(transport_, {"POST", origin + "/auth/cli/start", Json(request).dump(), {}}, &response,
               error)) {
         return false;
     }
@@ -654,13 +660,13 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         return false;
     }
 
-    Json object;
-    if (!ParseObject(response, &object, error) ||
-        !RequiredString(object, "request_code", &authorization->request_code, error) ||
-        !RequiredString(object, "poll_secret", &authorization->poll_secret, error) ||
-        !RequiredString(object, "verification_url", &authorization->verification_url, error)) {
+    contract::CliStartResponse parsed;
+    if (!ParseContract(response, &parsed, error)) {
         return false;
     }
+    authorization->request_code = parsed.request_code;
+    authorization->poll_secret = parsed.poll_secret;
+    authorization->verification_url = parsed.verification_url;
     if (!RequestCodeIsSafe(authorization->request_code) ||
         !SessionTokenIsSafe(authorization->poll_secret)) {
         if (error != nullptr) {
@@ -668,10 +674,9 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         }
         return false;
     }
-    const std::int64_t expires = Number(object, "expires_in", 600);
-    const std::int64_t interval = Number(object, "interval", 2);
-    authorization->expires_in = static_cast<int>(std::clamp<std::int64_t>(expires, 30, 1800));
-    authorization->interval = static_cast<int>(std::clamp<std::int64_t>(interval, 1, 30));
+    authorization->expires_in =
+        static_cast<int>(std::clamp<std::int64_t>(parsed.expires_in, 30, 1800));
+    authorization->interval = static_cast<int>(std::clamp<std::int64_t>(parsed.interval, 1, 30));
     return true;
 }
 
@@ -687,10 +692,11 @@ PollResult ConsoleClient::Poll(const std::string& console_url, const Authorizati
     if (!ConsoleOrigin(console_url, &origin, error)) {
         return PollResult::Failed;
     }
-    const Json payload = {{"request_code", authorization.request_code},
-                          {"poll_secret", authorization.poll_secret}};
+    contract::CliPollRequest request;
+    request.request_code = authorization.request_code;
+    request.poll_secret = authorization.poll_secret;
     HttpResponse response;
-    if (!Send(transport_, {"POST", origin + "/auth/cli/poll", payload.dump(), {}}, &response,
+    if (!Send(transport_, {"POST", origin + "/auth/cli/poll", Json(request).dump(), {}}, &response,
               error)) {
         return PollResult::Failed;
     }
@@ -699,31 +705,23 @@ PollResult ConsoleClient::Poll(const std::string& console_url, const Authorizati
         return PollResult::Failed;
     }
 
-    Json object;
-    if (!ParseObject(response, &object, error)) {
+    contract::PollResponse parsed;
+    if (!ParseContract(response, &parsed, error)) {
         return PollResult::Failed;
     }
-    std::string state;
-    if (!RequiredString(object, "status", &state, error)) {
-        return PollResult::Failed;
-    }
-    if (state == "pending") {
-        return PollResult::Pending;
-    }
-    if (state == "denied") {
-        return PollResult::Denied;
-    }
-    if (state == "expired") {
-        return PollResult::Expired;
-    }
-    if (state != "approved") {
-        if (error != nullptr) {
-            *error = "console returned an unknown authorization state";
-        }
-        return PollResult::Failed;
+    switch (parsed.status) {
+        case contract::PollStatus::kPending:
+            return PollResult::Pending;
+        case contract::PollStatus::kDenied:
+            return PollResult::Denied;
+        case contract::PollStatus::kExpired:
+            return PollResult::Expired;
+        case contract::PollStatus::kApproved:
+            break;
     }
 
-    if (!ReadGrant(object, grant, error)) {
+    if (!MapGrant(parsed.access_token, parsed.refresh_token, parsed.email, parsed.plan,
+                  parsed.expires_in.value_or(0), grant, error)) {
         return PollResult::Failed;
     }
     if (grant->access_token.empty() || grant->refresh_token.empty()) {
@@ -747,21 +745,23 @@ bool ConsoleClient::Refresh(const std::string& console_url, const std::string& r
     if (!ConsoleOrigin(console_url, &origin, error)) {
         return false;
     }
-    const Json payload = {{"refresh_token", refresh_token}};
+    contract::CliRefreshRequest request;
+    request.refresh_token = refresh_token;
     HttpResponse response;
-    if (!Send(transport_, {"POST", origin + "/auth/cli/refresh", payload.dump(), {}}, &response,
-              error)) {
+    if (!Send(transport_, {"POST", origin + "/auth/cli/refresh", Json(request).dump(), {}},
+              &response, error)) {
         return false;
     }
     if (response.status != 200) {
         HttpError("refresh", origin, response, error);
         return false;
     }
-    Json object;
-    if (!ParseObject(response, &object, error)) {
+    contract::GrantResponse parsed;
+    if (!ParseContract(response, &parsed, error)) {
         return false;
     }
-    if (!ReadGrant(object, grant, error)) {
+    if (!MapGrant(parsed.access_token, parsed.refresh_token, parsed.email, parsed.plan,
+                  parsed.expires_in, grant, error)) {
         return false;
     }
     if (grant->access_token.empty()) {
@@ -801,22 +801,21 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
         return IdentityResult::Failed;
     }
 
-    Json object;
-    if (!ParseObject(response, &object, error) ||
-        !RequiredString(object, "email", &identity->email, error)) {
+    contract::IdentityResponse parsed;
+    if (!ParseContract(response, &parsed, error)) {
         return IdentityResult::Failed;
     }
+    identity->email = parsed.email;
     if (!DisplayTextIsSafe(identity->email, 320)) {
         if (error != nullptr) {
             *error = "console returned an invalid account identity";
         }
         return IdentityResult::Failed;
     }
-    identity->plan = OptionalString(object, "plan");
-    identity->tokens_this_month = Number(object, "tokens_this_month");
-    identity->monthly_token_limit = Number(object, "monthly_token_limit");
-    if ((!identity->plan.empty() && !DisplayTextIsSafe(identity->plan, 80)) ||
-        identity->tokens_this_month < 0 || identity->monthly_token_limit < 0) {
+    identity->plan = PlanText(parsed.plan);
+    identity->tokens_this_month = parsed.tokens_this_month;
+    identity->monthly_token_limit = parsed.monthly_token_limit;
+    if (identity->tokens_this_month < 0 || identity->monthly_token_limit < 0) {
         if (error != nullptr) {
             *error = "console returned invalid account usage";
         }
@@ -872,104 +871,75 @@ IdentityResult ConsoleClient::FetchUsage(const std::string& console_url,
         return IdentityResult::Failed;
     }
 
-    Json object;
-    if (!ParseObject(response, &object, error)) {
+    contract::CliUsageResponse parsed;
+    if (!ParseContract(response, &parsed, error)) {
         return IdentityResult::Failed;
     }
 
-    const auto credit = object.find("credit");
-    if (credit != object.end() && credit->is_object()) {
-        usage->credit.balance_micros = Number(*credit, "balance_micros");
-        usage->credit.granted_micros = Number(*credit, "granted_micros");
-        usage->credit.spent_micros = Number(*credit, "spent_micros");
+    // Map the typed response onto the domain Usage, sanitizing every string the
+    // server chose before it reaches the terminal. The numbers are already
+    // typed; the strings still pass through DisplaySafe because a hostile
+    // console must not be able to write escape sequences to the user's screen.
+    const auto copy_totals = [](const contract::UsageTotals& from, UsageTotals* to) {
+        to->requests = from.requests;
+        to->prompt_tokens = from.prompt_tokens;
+        to->completion_tokens = from.completion_tokens;
+        to->cached_tokens = from.cached_tokens;
+        to->cost_micros = from.cost_micros;
+    };
+
+    usage->credit.balance_micros = parsed.credit.balance_micros;
+    usage->credit.granted_micros = parsed.credit.granted_micros;
+    usage->credit.spent_micros = parsed.credit.spent_micros;
+    copy_totals(parsed.totals, &usage->totals);
+
+    // Absent on every console deployed before windowed totals shipped. The
+    // window label is a closed enum, so its text is a known-safe literal.
+    for (const contract::CliUsageWindow& entry : parsed.windows) {
+        UsageWindow window;
+        window.window = Json(entry.window).get<std::string>();
+        window.seconds = entry.seconds;
+        copy_totals(entry.totals, &window.totals);
+        usage->windows.push_back(window);
     }
 
-    const auto totals = object.find("totals");
-    if (totals != object.end() && totals->is_object()) {
-        usage->totals.requests = Number(*totals, "requests");
-        usage->totals.prompt_tokens = Number(*totals, "prompt_tokens");
-        usage->totals.completion_tokens = Number(*totals, "completion_tokens");
-        usage->totals.cached_tokens = Number(*totals, "cached_tokens");
-        usage->totals.cost_micros = Number(*totals, "cost_micros");
+    for (const contract::UsageTimelinePoint& point : parsed.timeline) {
+        UsageDay day;
+        day.date = DisplaySafe(point.date, 32);
+        day.requests = point.requests;
+        day.prompt_tokens = point.prompt_tokens;
+        day.completion_tokens = point.completion_tokens;
+        day.cost_micros = point.cost_micros;
+        usage->timeline.push_back(day);
     }
 
-    // Absent on every console deployed before windowed totals shipped. Left
-    // empty rather than filled from `totals`, which covers `days` and would
-    // read as an hour's spend while describing a month's.
-    const auto windows = object.find("windows");
-    if (windows != object.end() && windows->is_array()) {
-        for (const Json& entry : *windows) {
-            if (!entry.is_object()) {
-                continue;
-            }
-            UsageWindow window;
-            window.window = DisplaySafe(OptionalString(entry, "window"), 16);
-            window.seconds = Number(entry, "seconds");
-            const auto window_totals = entry.find("totals");
-            if (window_totals != entry.end() && window_totals->is_object()) {
-                window.totals.requests = Number(*window_totals, "requests");
-                window.totals.prompt_tokens = Number(*window_totals, "prompt_tokens");
-                window.totals.completion_tokens = Number(*window_totals, "completion_tokens");
-                window.totals.cached_tokens = Number(*window_totals, "cached_tokens");
-                window.totals.cost_micros = Number(*window_totals, "cost_micros");
-            }
-            usage->windows.push_back(window);
-        }
+    for (const contract::UsageModelRollup& entry : parsed.models) {
+        UsageModel row;
+        row.model = DisplaySafe(entry.model, 128);
+        row.requests = entry.requests;
+        row.prompt_tokens = entry.prompt_tokens;
+        row.completion_tokens = entry.completion_tokens;
+        row.cached_tokens = entry.cached_tokens;
+        row.cost_micros = entry.cost_micros;
+        usage->models.push_back(row);
     }
 
-    const auto timeline = object.find("timeline");
-    if (timeline != object.end() && timeline->is_array()) {
-        for (const Json& point : *timeline) {
-            if (!point.is_object()) {
-                continue;
-            }
-            UsageDay day;
-            day.date = DisplaySafe(OptionalString(point, "date"), 32);
-            day.requests = Number(point, "requests");
-            day.prompt_tokens = Number(point, "prompt_tokens");
-            day.completion_tokens = Number(point, "completion_tokens");
-            day.cost_micros = Number(point, "cost_micros");
-            usage->timeline.push_back(day);
-        }
-    }
-
-    const auto models = object.find("models");
-    if (models != object.end() && models->is_array()) {
-        for (const Json& entry : *models) {
-            if (!entry.is_object()) {
-                continue;
-            }
-            UsageModel row;
-            row.model = DisplaySafe(OptionalString(entry, "model"), 128);
-            row.requests = Number(entry, "requests");
-            row.prompt_tokens = Number(entry, "prompt_tokens");
-            row.completion_tokens = Number(entry, "completion_tokens");
-            row.cached_tokens = Number(entry, "cached_tokens");
-            row.cost_micros = Number(entry, "cost_micros");
-            usage->models.push_back(row);
-        }
-    }
-
-    const auto events = object.find("recent");
-    if (events != object.end() && events->is_array()) {
-        for (const Json& entry : *events) {
-            if (!entry.is_object()) {
-                continue;
-            }
-            UsageEvent event;
-            event.request_id = DisplaySafe(OptionalString(entry, "request_id"), 128);
-            event.model = DisplaySafe(OptionalString(entry, "model"), 128);
-            event.harness = DisplaySafe(OptionalString(entry, "harness"), 64);
-            event.started_at = DisplaySafe(OptionalString(entry, "ts_start"), 64);
-            event.error_code = DisplaySafe(OptionalString(entry, "error_code"), 64);
-            event.prompt_tokens = Number(entry, "prompt_tokens");
-            event.completion_tokens = Number(entry, "completion_tokens");
-            event.cached_tokens = Number(entry, "cached_tokens");
-            event.cost_micros = Number(entry, "cost_micros");
-            event.ttft_ms = Number(entry, "ttft_ms");
-            event.status_code = static_cast<int>(Number(entry, "status_code"));
-            usage->events.push_back(event);
-        }
+    for (const contract::CliUsageEvent& entry : parsed.recent) {
+        UsageEvent event;
+        event.request_id = DisplaySafe(entry.request_id, 128);
+        event.model = DisplaySafe(entry.model, 128);
+        event.harness =
+            entry.harness.has_value() ? DisplaySafe(Json(*entry.harness).get<std::string>(), 64)
+                                      : std::string();
+        event.started_at = DisplaySafe(entry.ts_start, 64);
+        event.error_code = DisplaySafe(entry.error_code.value_or(""), 64);
+        event.prompt_tokens = entry.prompt_tokens;
+        event.completion_tokens = entry.completion_tokens;
+        event.cached_tokens = entry.cached_tokens;
+        event.cost_micros = entry.cost_micros;
+        event.ttft_ms = entry.ttft_ms.value_or(0);
+        event.status_code = static_cast<int>(entry.status_code);
+        usage->events.push_back(event);
     }
     return IdentityResult::Ok;
 }
@@ -990,9 +960,10 @@ bool ConsoleClient::Revoke(const std::string& console_url, const std::string& ac
     if (!ConsoleOrigin(console_url, &origin, error)) {
         return false;
     }
-    const Json payload = {{"refresh_token", refresh_token}};
+    contract::CliRefreshRequest request;
+    request.refresh_token = refresh_token;
     HttpResponse response;
-    if (!Send(transport_, {"POST", origin + "/auth/cli/revoke", payload.dump(), access_token},
+    if (!Send(transport_, {"POST", origin + "/auth/cli/revoke", Json(request).dump(), access_token},
               &response, error)) {
         return false;
     }

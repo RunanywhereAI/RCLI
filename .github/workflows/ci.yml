@@ -34,6 +34,8 @@ jobs:
           python3 -m py_compile scripts/verify-release-assets.py scripts/stamp-formula.py
           bash -n install.sh scripts/package-wally.sh scripts/update-tap.sh
           ruby -c Formula/wally.rb
+      - name: Console binding matches its pinned contract
+        run: python3 contracts/generate_console_binding.py --check
 
   macos:
     # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is

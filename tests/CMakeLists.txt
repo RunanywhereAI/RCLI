@@ -13,6 +13,14 @@ target_link_libraries(test_wally_account PRIVATE wally_core nlohmann_json::nlohm
 wally_stage_windows_runtime_dlls(test_wally_account)
 add_test(NAME wally_account_tests COMMAND test_wally_account --run-all)
 
+add_executable(test_wally_contract test_wally_contract.cpp)
+target_include_directories(test_wally_contract PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(test_wally_contract PRIVATE
+    "WALLY_CONTRACT_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../contracts/wally-cli-v1.openapi.json\"")
+target_link_libraries(test_wally_contract PRIVATE wally_core nlohmann_json::nlohmann_json)
+wally_stage_windows_runtime_dlls(test_wally_contract)
+add_test(NAME wally_contract_tests COMMAND test_wally_contract --run-all)
+
 add_executable(test_wally_opencode test_wally_opencode.cpp)
 target_include_directories(test_wally_opencode PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(test_wally_opencode PRIVATE wally_core nlohmann_json::nlohmann_json)
