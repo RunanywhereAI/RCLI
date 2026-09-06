@@ -126,6 +126,33 @@ struct ParsedUrl {
     bool bracketed = false;
 };
 
+/// Reduces a console URL's path to the prefix every endpoint hangs off, or
+/// fails if it is not one.
+///
+/// A console is not always at the root of its host. Development is reached at
+/// `https://inference.runanywhere.ai/api-dev`, where the load balancer strips
+/// the prefix and forwards to the dev control plane; the same host without it
+/// is production. Refusing the path -- which this did until it was found --
+/// leaves no way to name the dev console at all, so `--console-url` had to be
+/// given the backend's own Cloud Run hostname, which bypasses the load balancer
+/// and therefore reaches different code than any real client does.
+///
+/// A query or fragment is still refused. Every caller builds an endpoint by
+/// appending to this string, and `?a=1` + `/v1/me` is not a URL.
+bool NormalizeBasePath(const std::string& suffix, std::string* base_path) {
+    if (suffix.empty() || suffix == "/") {
+        base_path->clear();
+        return true;
+    }
+    if (suffix.front() != '/' || suffix.find_first_of("?#") != std::string::npos ||
+        suffix.find("//") != std::string::npos || suffix.find("/.") != std::string::npos ||
+        suffix.size() > 256) {
+        return false;
+    }
+    *base_path = suffix.back() == '/' ? suffix.substr(0, suffix.size() - 1) : suffix;
+    return true;
+}
+
 bool ValidPort(const std::string& port) {
     if (port.empty()) {
         return true;
@@ -563,14 +590,17 @@ bool BrowserUrlIsTrusted(const std::string& url, const std::vector<std::string>&
 
 bool NormalizeConsoleUrl(const std::string& input, std::string* normalized, std::string* error) {
     ParsedUrl parsed;
-    if (!ParseUrl(input, false, &parsed)) {
+    std::string base_path;
+    if (!ParseUrl(input, true, &parsed) || !NormalizeBasePath(parsed.suffix, &base_path)) {
         if (error != nullptr) {
-            *error = "console URL must be an HTTPS origin, or HTTP on exact loopback";
+            *error =
+                "console URL must be an HTTPS origin with an optional path, "
+                "or HTTP on exact loopback";
         }
         return false;
     }
     if (normalized != nullptr) {
-        *normalized = RenderOrigin(parsed);
+        *normalized = RenderOrigin(parsed) + base_path;
     }
     return true;
 }
@@ -583,7 +613,9 @@ bool BrowserUrlIsSafe(const std::string& url) {
 bool BrowserUrlMatchesConsole(const std::string& url, const std::string& console_url) {
     ParsedUrl browser;
     ParsedUrl console;
-    return ParseUrl(url, true, &browser) && ParseUrl(console_url, false, &console) &&
+    // Origins, not full URLs: a console's base path says where its API lives,
+    // and says nothing about which pages on that host may approve a sign-in.
+    return ParseUrl(url, true, &browser) && ParseUrl(console_url, true, &console) &&
            RenderOrigin(browser) == RenderOrigin(console);
 }
 

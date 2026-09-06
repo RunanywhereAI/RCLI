@@ -84,6 +84,10 @@ TestResult test_console_url_validation() {
         {"http://localhost:8080", "http://localhost:8080"},
         {"http://127.0.0.1:8002", "http://127.0.0.1:8002"},
         {"http://[::1]:9000", "http://[::1]:9000"},
+        // Development is a path prefix on the production host, not its own one.
+        {"https://inference.runanywhere.ai/api-dev", "https://inference.runanywhere.ai/api-dev"},
+        {"https://inference.runanywhere.ai/api-dev/", "https://inference.runanywhere.ai/api-dev"},
+        {"http://localhost:8080/api-dev", "http://localhost:8080/api-dev"},
     };
     for (const Accepted& test : accepted) {
         std::string normalized;
@@ -104,8 +108,12 @@ TestResult test_console_url_validation() {
         "http://[::1].evil.example",
         "http://localhost@evil.example",
         "https://user:password@console.runanywhere.ai",
-        "https://console.runanywhere.ai/path",
         "https://console.runanywhere.ai?query=1",
+        "https://console.runanywhere.ai/api-dev?query=1",
+        "https://console.runanywhere.ai/api-dev#fragment",
+        "https://console.runanywhere.ai//api-dev",
+        "https://console.runanywhere.ai/../api-dev",
+        "https://console.runanywhere.ai/api/../../dev",
         "https://console.runanywhere.ai:",
         "http://[::1]:",
         "https://",
@@ -126,6 +134,11 @@ TestResult test_console_url_validation() {
         !wally::account::BrowserUrlMatchesConsole(
             "https://console.runanywhere.ai/device?code=ABCD-EFGH",
             "https://console.runanywhere.ai") ||
+        !wally::account::BrowserUrlMatchesConsole(
+            "https://inference.runanywhere.ai/cloud/cli?code=ABCD",
+            "https://inference.runanywhere.ai/api-dev") ||
+        wally::account::BrowserUrlMatchesConsole("https://auth.attacker.example/device",
+                                                "https://inference.runanywhere.ai/api-dev") ||
         wally::account::BrowserUrlMatchesConsole("https://auth.attacker.example/device",
                                                 "https://console.runanywhere.ai")) {
         result.details = "browser URL policy does not match the origin policy";

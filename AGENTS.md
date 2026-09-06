@@ -120,6 +120,18 @@ it trusts the deployed console, and for any other API origin it trusts only
 that origin. Pointing at a local dev console needs `WALLY_CONSOLE_URL` set
 explicitly, e.g. `WALLY_CONSOLE_URL=http://localhost:8080`.
 
+The API URL may carry a path, because the deployed development console is one:
+`https://inference.runanywhere.ai/api-dev`, where the load balancer strips the
+prefix and forwards to the dev control plane. Every endpoint is appended to
+whatever is configured, so the prefix follows the whole flow. Its approval page
+is on Railway rather than that host, so dev also needs
+`WALLY_CONSOLE_WEB_URL=https://runanywhere-frontend-development.up.railway.app`.
+
+Do not reach for the dev backend's own Cloud Run hostname instead. It answers,
+but it is behind the load balancer, so `/v1/chat/completions` lands on the
+control plane rather than the gateway and returns 502 — a route no installed
+binary can produce, and a day lost to debugging it.
+
 `WALLY_PROFILE_DIR` moves the credential file, which is what lets several
 accounts share one machine.
 
