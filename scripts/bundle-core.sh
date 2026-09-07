@@ -17,7 +17,15 @@ OUT_FLAGS="${BUILD}/wally-link-flags.txt"
 # Ninja never writes CMakeFiles/<tgt>.dir/link.txt (Makefiles only). The last
 # command ninja runs for `wally` is the link; compile lines also contain
 # `CMakeFiles/wally.dir/` so grepping for "wally" picks compiles.
-if [[ ! -s "${LINK_TXT}" && -f "${BUILD}/build.ninja" ]]; then
+#
+# Always re-harvest here, rather than only when LINK_TXT is missing: unlike
+# Makefiles (where this same path is CMake's own file, rewritten by `make`
+# every build), for Ninja this path is a cache this script wrote by hand. A
+# stale copy from before a private overlay (NeuRT, QHexRT, ...) was applied
+# silently drops that overlay's archives from the merge — the build still
+# succeeds, it just links a bundle missing the registrar. Re-harvesting is
+# one cheap `ninja -t commands` query, not a rebuild.
+if [[ -f "${BUILD}/build.ninja" ]]; then
     mkdir -p "${BUILD}/CMakeFiles/wally.dir"
     ninja_bin="$(command -v ninja || command -v ninja-build || true)"
     if [[ -n "${ninja_bin}" ]]; then
