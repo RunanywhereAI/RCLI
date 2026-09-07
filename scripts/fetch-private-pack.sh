@@ -22,6 +22,10 @@ case "$PLATFORM" in
     echo "QHexRT is Windows ARM64 (Snapdragon NPU) only; no overlay on windows-x64."
     exit 0
     ;;
+  linux-x64)
+    echo "No private engine overlay on linux-x64 (OSS kit only)."
+    exit 0
+    ;;
   *)
     echo "error: unknown platform '$PLATFORM'" >&2
     exit 2
