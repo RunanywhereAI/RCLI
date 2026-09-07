@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -132,6 +133,30 @@ TestResult test_json_writer_shape() {
       R"({"name":"qwen3-0.6b","size":640,"downloaded":true,)"
       R"("files":[{"path":"a.gguf"},{"path":"b.gguf"}],)"
       R"("scores":[1,0.5]})";
+  if (json.str() != expected) {
+    result.expected = expected;
+    result.actual = json.str();
+    return result;
+  }
+  result.passed = true;
+  return result;
+}
+
+TestResult test_json_writer_nan_is_null() {
+  TestResult result;
+  result.test_name = "json_writer_nan_is_null";
+
+  // A NaN/Inf double (e.g. sherpa's unset STT confidence) has no JSON
+  // literal; %g used to print it verbatim as the bareword `nan`, producing
+  // invalid JSON on every stt --json call.
+  wally::out::JsonWriter json;
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  json.begin_object().field("confidence", nan).field("gain", inf);
+  json.begin_array("scores").value(nan).value(0.5).end_array();
+  json.end_object();
+
+  const std::string expected = R"({"confidence":null,"gain":null,"scores":[null,0.5]})";
   if (json.str() != expected) {
     result.expected = expected;
     result.actual = json.str();
@@ -2320,6 +2345,7 @@ int main(int argc, char **argv) {
   TestSuite suite("wally_unit");
   suite.add("json_escape", test_json_escape);
   suite.add("json_writer_shape", test_json_writer_shape);
+  suite.add("json_writer_nan_is_null", test_json_writer_nan_is_null);
   suite.add("human_bytes", test_human_bytes);
   suite.add("normalize_dir", test_normalize_dir);
   suite.add("resolve_home_precedence", test_resolve_home_precedence);
