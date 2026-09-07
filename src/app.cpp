@@ -134,6 +134,14 @@ int run(int argc, char** argv) {
     CLI::App app{"RunAnywhere on-device AI CLI — llm, vlm, stt, tts, vad, embed, rerank, "
                  "image, rag, voice and the models that back them"};
     configure_app(app, options);
+    // Every subcommand here loads a model on this machine; a hosted console
+    // model (glm-5.3-flash, ...) has no path through `run`/`llm generate` at
+    // all, and that dead end used to be the only place someone learned the
+    // cloud path exists.
+    app.footer(
+        "A model your account has on the hosted console (not this machine) runs through "
+        "`wally claude-code -m <id>` or `wally opencode --cloud -m <id>`, not `run`/`llm "
+        "generate`.");
 
     int exit_code = 0;
     try {
