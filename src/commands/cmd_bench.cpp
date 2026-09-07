@@ -29,10 +29,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "catalog/model_ref.h"
@@ -676,9 +678,31 @@ int run_bench(const GlobalOptions& options, const std::string& model_ref_arg, in
         return 1;
     }
 
+    // `--vlm-image`'s default is a path inside the wally source tree
+    // (docs/gifs/...), so it silently doesn't exist for anyone benchmarking an
+    // installed binary from any other cwd. Checked once, outside the loop: the
+    // llama.cpp load failure it otherwise causes reports "Input is invalid"
+    // with the real cause buried in the engine's own stderr lines above it.
+    std::error_code vlm_image_ec;
+    const bool vlm_image_exists = std::filesystem::exists(vlm_image, vlm_image_ec);
+
     std::vector<BenchRow> rows;
     for (const BenchModel& model : models) {
         for (const Scenario& scenario : scenarios_for(model.modality)) {
+            if (model.modality == Modality::kVlm && !vlm_image_exists) {
+                BenchRow row;
+                row.model_id = model.id;
+                row.modality = model.modality;
+                row.scenario = scenario.label;
+                row.trials = trials;
+                row.error = "VLM sample image not found: '" + vlm_image +
+                            "' (pass --vlm-image <path>; the built-in default only "
+                            "resolves from inside the wally source tree)";
+                out::status_line(std::string("skipping ") + modality_label(model.modality) + " " +
+                                 model.id + " — " + scenario.label + ": " + row.error);
+                rows.push_back(row);
+                continue;
+            }
             out::status_line(std::string("benchmarking ") + modality_label(model.modality) + " " +
                              model.id + " — " + scenario.label + " (" + std::to_string(trials) +
                              " trials)");
