@@ -4,36 +4,39 @@
 #   scripts/fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest-dir>
 #
 # Requires: gh, and either shasum or sha256sum.
-# Pins live in cmake/sdk-pin.cmake. SDK_VERSION, if set, must equal
-# WALLY_PINNED_SDK_VERSION — checksums are keyed to that pin, not a repo variable.
+# Pins live in versions.toml (the single source; cmake/sdk-pin.cmake reads the
+# same file). SDK_VERSION, if set, must equal kit_version there -- checksums are
+# keyed to that pin, not a repo variable.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLATFORM="${1:?usage: fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest>}"
 DEST="${2:?usage: fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest>}"
-PIN="${ROOT}/cmake/sdk-pin.cmake"
+PIN="${ROOT}/versions.toml"
 
 case "$PLATFORM" in
-  macos-arm64) SHA_VAR=WALLY_PINNED_KIT_SHA256_MACOS_ARM64 ;;
-  windows-x64) SHA_VAR=WALLY_PINNED_KIT_SHA256_WINDOWS_X64 ;;
-  windows-arm64) SHA_VAR=WALLY_PINNED_KIT_SHA256_WINDOWS_ARM64 ;;
+  macos-arm64) SHA_KEY=kit_sha256_macos_arm64 ;;
+  windows-x64) SHA_KEY=kit_sha256_windows_x64 ;;
+  windows-arm64) SHA_KEY=kit_sha256_windows_arm64 ;;
   *) echo "error: unknown platform '$PLATFORM'" >&2; exit 2 ;;
 esac
 
+# versions.toml is flat `key = "value"`, one per line (its own header guarantees
+# this), so a single regex reads any pin.
 pin_value() {
   local key="$1"
-  sed -n "s/^set(${key} \"\\(.*\\)\")/\\1/p" "$PIN" | head -1
+  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$PIN" | head -1
 }
 
-PINNED_SDK="$(pin_value WALLY_PINNED_SDK_VERSION)"
-EXPECTED="$(pin_value "$SHA_VAR")"
+PINNED_SDK="$(pin_value kit_version)"
+EXPECTED="$(pin_value "$SHA_KEY")"
 if [[ -z "$PINNED_SDK" || -z "$EXPECTED" ]]; then
-  echo "error: missing $SHA_VAR or WALLY_PINNED_SDK_VERSION in $PIN" >&2
+  echo "error: missing $SHA_KEY or kit_version in $PIN" >&2
   exit 1
 fi
 if [[ -n "${SDK_VERSION:-}" && "$SDK_VERSION" != "$PINNED_SDK" ]]; then
-  echo "error: SDK_VERSION=$SDK_VERSION does not match WALLY_PINNED_SDK_VERSION=$PINNED_SDK in $PIN" >&2
-  echo "  bump cmake/sdk-pin.cmake (version + SHA-256) together; do not override only SDK_VERSION" >&2
+  echo "error: SDK_VERSION=$SDK_VERSION does not match kit_version=$PINNED_SDK in $PIN" >&2
+  echo "  bump versions.toml (kit_version + kit_sha256_*) together; do not override only SDK_VERSION" >&2
   exit 1
 fi
 SDK_VERSION="$PINNED_SDK"
