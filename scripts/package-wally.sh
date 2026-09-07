@@ -21,9 +21,11 @@ PLATFORM="${2:?usage: package-wally.sh <build-dir> <platform-tag>}"
 
 VERSION="${WALLY_VERSION:-}"
 if [[ -z "${VERSION}" ]]; then
-  VERSION="$(sed -nE 's/^project\(wally VERSION ([0-9.]+).*/\1/p' "${ROOT}/CMakeLists.txt" | head -1)"
+  # versions.toml is the single source; read the product version's flat line.
+  VERSION="$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"([0-9.]+)".*/\1/p' \
+    "${ROOT}/versions.toml" | head -1)"
 fi
-[[ -n "${VERSION}" ]] || { echo "error: cannot resolve WALLY version" >&2; exit 1; }
+[[ -n "${VERSION}" ]] || { echo "error: cannot resolve WALLY version from versions.toml" >&2; exit 1; }
 
 KIT="${WALLY_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
 KIT="${KIT%%:*}"

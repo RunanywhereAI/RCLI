@@ -514,6 +514,65 @@ TestResult test_console_errors_do_not_echo_secrets() {
     return result;
 }
 
+TestResult test_a_rate_limit_surfaces_its_retry_after() {
+    TestResult result;
+    result.test_name = "a_rate_limit_surfaces_its_retry_after";
+
+    // A 429 with a numeric Retry-After: the error a caller sees should name the
+    // wait in seconds, not just "HTTP 429".
+    wally::account::ConsoleClient with_hint([&](const wally::account::HttpRequest&,
+                                               wally::account::HttpResponse* response, std::string*) {
+        response->status = 429;
+        response->headers["retry-after"] = "30";
+        response->body = "{}";
+        return true;
+    });
+    wally::account::Authorization authorization;
+    std::string error;
+    if (with_hint.BeginAuthorization("https://console.runanywhere.ai", "host", &authorization,
+                                     &error) ||
+        error.find("retry after 30s") == std::string::npos) {
+        result.details = "a 429 with Retry-After did not surface the wait: " + error;
+        return result;
+    }
+
+    // A 429 without the header still reads as a rate limit, just without a
+    // number, and a garbage value is treated as absent rather than echoed.
+    wally::account::ConsoleClient no_hint([&](const wally::account::HttpRequest&,
+                                             wally::account::HttpResponse* response, std::string*) {
+        response->status = 429;
+        response->headers["retry-after"] = "soon";
+        response->body = "{}";
+        return true;
+    });
+    error.clear();
+    if (no_hint.BeginAuthorization("https://console.runanywhere.ai", "host", &authorization,
+                                   &error) ||
+        error.find("rate limiting") == std::string::npos ||
+        error.find("soon") != std::string::npos) {
+        result.details = "a 429 with a non-numeric Retry-After was mishandled: " + error;
+        return result;
+    }
+
+    // The parser itself: valid, absent, non-numeric, and the day ceiling.
+    wally::account::HttpResponse r;
+    r.headers["retry-after"] = "45";
+    const bool ok = r.retry_after_seconds() == 45;
+    r.headers.clear();
+    const bool absent = r.retry_after_seconds() == -1;
+    r.headers["retry-after"] = "-5";
+    const bool negative = r.retry_after_seconds() == -1;
+    r.headers["retry-after"] = "999999";
+    const bool capped = r.retry_after_seconds() == 86400;
+    if (!ok || !absent || !negative || !capped) {
+        result.details = "retry_after_seconds parsed a value wrong";
+        return result;
+    }
+
+    result.passed = true;
+    return result;
+}
+
 TestResult test_console_rejects_header_injection() {
     TestResult result;
     result.test_name = "console_rejects_header_injection";
@@ -724,6 +783,7 @@ int main(int argc, char** argv) {
 #endif
     suite.add("console_client_contract", test_console_client_contract);
     suite.add("console_errors_do_not_echo_secrets", test_console_errors_do_not_echo_secrets);
+    suite.add("a_rate_limit_surfaces_its_retry_after", test_a_rate_limit_surfaces_its_retry_after);
     suite.add("console_rejects_header_injection", test_console_rejects_header_injection);
     suite.add("the_api_host_and_the_browser_host_stay_apart",
               test_the_api_host_and_the_browser_host_stay_apart);

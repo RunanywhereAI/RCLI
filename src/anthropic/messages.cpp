@@ -10,6 +10,7 @@
 
 #include "anthropic/translate.h"
 #include "io/output.h"
+#include "net/loopback_auth.h"
 
 namespace wally::anthropic {
 namespace {
@@ -43,8 +44,27 @@ struct Runtime {
     std::string api_key;
     std::string model;
     std::string advertised;
+    // The secret handed to the wrapped tool, and required back on every request.
+    // Binding to 127.0.0.1 keeps the network out; this keeps other local
+    // processes out.
+    std::string local_token;
     bool verbose = false;
 };
+
+// The token the wrapped tool presents, read from either header Claude Code may
+// send it in: Authorization: Bearer <t> (from ANTHROPIC_AUTH_TOKEN) or
+// x-api-key: <t> (from ANTHROPIC_API_KEY). Both carry the same value.
+std::string PresentedToken(const httplib::Request& request) {
+    if (request.has_header("x-api-key")) {
+        return request.get_header_value("x-api-key");
+    }
+    const std::string authorization = request.get_header_value("Authorization");
+    constexpr const char* kBearer = "Bearer ";
+    if (authorization.rfind(kBearer, 0) == 0) {
+        return authorization.substr(std::string(kBearer).size());
+    }
+    return std::string();
+}
 
 std::unique_ptr<Runtime> g_runtime;
 
@@ -64,6 +84,11 @@ void HandleNonStreaming(Runtime& runtime, const Json& request, httplib::Response
         client.Post(runtime.prefix + "/chat/completions", upstream.dump(), "application/json");
     if (!reply || reply->status < 200 || reply->status >= 300) {
         response.status = reply ? reply->status : 502;
+        // A 429 from the hosted API carries a Retry-After the wrapped tool
+        // should honor; httplib drops upstream headers unless we copy them.
+        if (reply && reply->status == 429 && reply->has_header("Retry-After")) {
+            response.set_header("Retry-After", reply->get_header_value("Retry-After"));
+        }
         response.set_content(
             translate::ErrorBody("api_error",
                                  reply ? reply->body : std::string("the model endpoint did not answer")),
@@ -82,6 +107,11 @@ void HandleNonStreaming(Runtime& runtime, const Json& request, httplib::Response
     std::string failure;
     if (translate::PayloadError(parsed, &failure_type, &failure)) {
         response.status = failure_type == "rate_limit_error" ? 429 : 502;
+        // A rate-limit error can arrive as a 200 body rather than a 429 status;
+        // forward the upstream Retry-After either way so the tool backs off.
+        if (response.status == 429 && reply->has_header("Retry-After")) {
+            response.set_header("Retry-After", reply->get_header_value("Retry-After"));
+        }
         response.set_content(translate::ErrorBody(failure_type, failure), "application/json");
         return;
     }
@@ -192,11 +222,20 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
     runtime->api_key = upstream.api_key;
     runtime->model = model;
     runtime->advertised = advertised.empty() ? model : advertised;
+    runtime->local_token = wally::net::GenerateLoopbackToken();
     runtime->verbose = verbose;
 
     Runtime* raw = runtime.get();
     raw->server.Post("/v1/messages", [raw](const httplib::Request& request,
                                            httplib::Response& response) {
+        if (!wally::net::ConstantTimeEquals(PresentedToken(request), raw->local_token)) {
+            response.status = 401;
+            response.set_content(
+                translate::ErrorBody("authentication_error",
+                                     "this local endpoint only serves the tool wally launched"),
+                "application/json");
+            return;
+        }
         if (raw->verbose) {
             out::status_line("anthropic: POST /v1/messages, " +
                         std::to_string(request.body.size()) + " bytes");
@@ -294,10 +333,11 @@ bool Start(const harness::Endpoint& upstream, const std::string& model, Shim* sh
     started->thread = std::thread([started] { started->server.listen_after_bind(); });
 
     shim->base_url = "http://127.0.0.1:" + std::to_string(port);
-    // Never the upstream key: the client only has to send something, and
-    // handing it a real console token would put it in that process's
-    // environment where it does not belong.
-    shim->auth_token = "wally-local";
+    // A per-session secret, never the upstream key: handing the tool a real
+    // console token would put it in that process's environment where it does
+    // not belong, and a fixed value would let any local process spend the
+    // signed-in user's credit. The server checks this back on every request.
+    shim->auth_token = started->local_token;
     shim->running = true;
     return true;
 }

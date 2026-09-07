@@ -4,15 +4,15 @@ class Wally < Formula
   desc "Run language, speech and image models on your own machine"
   # Repo stays RunanywhereAI/RCLI -- only the binary and formula are wally.
   homepage "https://github.com/RunanywhereAI/RCLI"
-  version "0.5.2"
+  version "0.5.3"
   license "MIT"
 
   # macOS arm64 ships the Swift MLX host
   # (llama.cpp + ONNX + Sherpa + MLX). Linux is not in this cut.
   on_macos do
     on_arm do
-      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.5.2/wally-0.5.2-macos-arm64.tar.gz"
-      # Placeholder -- no v0.5.2 release has published a wally-named asset
+      url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.5.3/wally-0.5.3-macos-arm64.tar.gz"
+      # Placeholder -- no v0.5.3 release has published a wally-named asset
       # yet. scripts/update-tap.sh re-stamps this from the real release
       # checksum; a stale value here fails brew install's own hash check
       # rather than installing something unverified.
