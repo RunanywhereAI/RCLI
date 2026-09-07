@@ -662,7 +662,11 @@ int run_llm(const GlobalOptions& options, LlmVerb verb, const std::string& promp
                                          : stream_once(options, resolved.model_id,
                                                        effective_prompt, params);
     }
-    if (verb == LlmVerb::Chat) {
+    // The REPL is interactive by nature; --json promises exactly one JSON
+    // document on stdout, which an interactive prompt loop can never keep.
+    // `wally run m "" --json` used to fall through into it anyway and exit 0
+    // with nothing on stdout.
+    if (verb == LlmVerb::Chat && !options.json) {
         return run_repl(options, resolved.model_id, params);
     }
     out::error_line("no prompt given");
