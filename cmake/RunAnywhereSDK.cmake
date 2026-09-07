@@ -116,6 +116,20 @@ if(WIN32)
     endforeach()
 endif()
 
+# GNU ld resolves static archives in a single left-to-right pass, so the kit's
+# many interdependent .a files (protobuf<->absl, a backend<->its runtime) leave
+# undefined references when their order does not happen to satisfy every
+# cross-reference. Wrap the whole imported link interface in a linker group so
+# ld re-scans it until resolved. Apple's ld64 and MSVC link.exe do multi-pass
+# resolution and need no group; only GNU ld (Linux) does.
+if(UNIX AND NOT APPLE)
+    get_target_property(_wally_ra_ifaces RunAnywhere::commons INTERFACE_LINK_LIBRARIES)
+    if(_wally_ra_ifaces)
+        set_property(TARGET RunAnywhere::commons PROPERTY INTERFACE_LINK_LIBRARIES
+            "-Wl,--start-group" ${_wally_ra_ifaces} "-Wl,--end-group")
+    endif()
+endif()
+
 # Back-compat name used by the rest of this CMakeLists.
 if(NOT TARGET rac_commons)
     add_library(rac_commons ALIAS RunAnywhere::commons)
