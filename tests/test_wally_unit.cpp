@@ -2234,6 +2234,36 @@ TestResult test_bench_negative_trials_exit2() {
     return result;
 }
 
+TestResult test_run_max_tokens_zero_exit2() {
+    TestResult result;
+    result.test_name = "run_max_tokens_zero_exit2";
+
+    const int code = run_wally({"wally", "run", "qwen3-0.6b", "hi", "--max-tokens", "0"});
+    if (code != 2) {
+        result.expected = "2";
+        result.actual = std::to_string(code);
+        result.details = "`run --max-tokens 0` should be a usage error, not an uncapped run";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+TestResult test_run_max_tokens_negative_exit2() {
+    TestResult result;
+    result.test_name = "run_max_tokens_negative_exit2";
+
+    const int code = run_wally({"wally", "run", "qwen3-0.6b", "hi", "--max-tokens", "-5"});
+    if (code != 2) {
+        result.expected = "2";
+        result.actual = std::to_string(code);
+        result.details = "`run --max-tokens -5` should be a usage error";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 TestResult test_bench_zero_trials_exit2() {
     TestResult result;
     result.test_name = "bench_zero_trials_exit2";
@@ -2372,6 +2402,8 @@ int main(int argc, char **argv) {
   suite.add("write_png_multi_block", test_write_png_multi_block);
   suite.add("write_png_unwritable_path", test_write_png_unwritable_path);
   suite.add("bench_metrics_consume_only", test_bench_metrics_consume_only);
+  suite.add("run_max_tokens_zero_exit2", test_run_max_tokens_zero_exit2);
+  suite.add("run_max_tokens_negative_exit2", test_run_max_tokens_negative_exit2);
   suite.add("bench_negative_trials_exit2", test_bench_negative_trials_exit2);
   suite.add("bench_zero_trials_exit2", test_bench_zero_trials_exit2);
   suite.add("models_ls_is_primary_name", test_models_ls_is_primary_name);

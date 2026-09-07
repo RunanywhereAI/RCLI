@@ -24,6 +24,7 @@
 #include <csignal>
 #include <chrono>
 #include <condition_variable>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -714,7 +715,12 @@ void add_generation_options(CLI::App* cmd, const std::shared_ptr<RunParams>& par
     cmd->add_option("--stop", params->stop_sequences,
                     "Stop as soon as this text is produced (repeat for several)");
     cmd->add_option("--max-output-tokens,--max-tokens", params->max_output_tokens,
-                    "Cap the generated tokens (default 1024)");
+                    "Cap the generated tokens (default 1024)")
+        // Range, not PositiveNumber, for the message alone (mirrors
+        // cmd_bench.cpp's --trials): 0 or negative used to reach the engine
+        // as-is and read as "no cap" — full/whole-context output — instead of
+        // the usage error a nonsensical budget should be.
+        ->check(CLI::Range(1, std::numeric_limits<int32_t>::max()));
     cmd->add_option("--reasoning", params->reasoning,
                     "Turn the model's thinking phase on or off (default on)")
         ->check(CLI::IsMember({"on", "off"}));
