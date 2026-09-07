@@ -2264,6 +2264,38 @@ TestResult test_run_max_tokens_negative_exit2() {
     return result;
 }
 
+TestResult test_rerank_top_n_zero_exit2() {
+    TestResult result;
+    result.test_name = "rerank_top_n_zero_exit2";
+
+    const int code = run_wally(
+        {"wally", "rerank", "q", "-m", "m", "-d", "doc", "--top-n", "0"});
+    if (code != 2) {
+        result.expected = "2";
+        result.actual = std::to_string(code);
+        result.details = "`rerank --top-n 0` should be a usage error, not every document back";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+TestResult test_rerank_top_n_negative_exit2() {
+    TestResult result;
+    result.test_name = "rerank_top_n_negative_exit2";
+
+    const int code = run_wally(
+        {"wally", "rerank", "q", "-m", "m", "-d", "doc", "--top-n", "-1"});
+    if (code != 2) {
+        result.expected = "2";
+        result.actual = std::to_string(code);
+        result.details = "`rerank --top-n -1` should be a usage error";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 TestResult test_bench_zero_trials_exit2() {
     TestResult result;
     result.test_name = "bench_zero_trials_exit2";
@@ -2404,6 +2436,8 @@ int main(int argc, char **argv) {
   suite.add("bench_metrics_consume_only", test_bench_metrics_consume_only);
   suite.add("run_max_tokens_zero_exit2", test_run_max_tokens_zero_exit2);
   suite.add("run_max_tokens_negative_exit2", test_run_max_tokens_negative_exit2);
+  suite.add("rerank_top_n_zero_exit2", test_rerank_top_n_zero_exit2);
+  suite.add("rerank_top_n_negative_exit2", test_rerank_top_n_negative_exit2);
   suite.add("bench_negative_trials_exit2", test_bench_negative_trials_exit2);
   suite.add("bench_zero_trials_exit2", test_bench_zero_trials_exit2);
   suite.add("models_ls_is_primary_name", test_models_ls_is_primary_name);

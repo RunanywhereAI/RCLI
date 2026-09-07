@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -167,7 +168,11 @@ void register_rerank(CLI::App& app, GlobalOptions& options) {
     cmd->add_option("--model,-m", *model, "Reranker model id or on-disk path")->required();
     cmd->add_option("--doc,-d", *docs, "Document text to score; repeat for several");
     cmd->add_option("--file,-f", *files, "Text file to score; repeat for several");
-    cmd->add_option("--top-n", *top_n, "Return only this many best matches");
+    cmd->add_option("--top-n", *top_n, "Return only this many best matches")
+        // 0 or negative used to reach run_rerank unrejected and fall through
+        // the `top_n > 0` guard there, silently returning every document
+        // instead of the usage error a nonsensical count should be.
+        ->check(CLI::Range(1, std::numeric_limits<int>::max()));
     cmd->callback([&options, query, model, docs, files, top_n]() {
         const int exit_code = run_rerank(options, *model, *query, *docs, *files, *top_n);
         if (exit_code != 0) {
