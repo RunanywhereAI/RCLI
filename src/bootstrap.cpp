@@ -615,12 +615,17 @@ rac_result_t bootstrap(const GlobalOptions &options, Bootstrapped *out) {
     }
 #endif
 #if defined(WALLY_HAS_MLX)
+    // A C++-only host (wally-cxx) links the MLX plugin from the kit but provides
+    // no MLX runtime callbacks, so availability is false by design. That is the
+    // normal state for that build, not a warning — note it only under --verbose.
+    // A host that DOES provide the runtime and still fails to register is a real
+    // problem and always warns.
     if (rac_mlx_is_available() != RAC_TRUE) {
-      out::status_line(
-          "warning: mlx backend requires MLX runtime callbacks; skipping registration");
+      if (options.verbose) {
+        out::status_line("mlx runtime callbacks not provided; skipping MLX backend");
+      }
     } else if (rac_backend_mlx_register() != RAC_SUCCESS) {
-      out::status_line(
-          "warning: mlx backend requires MLX runtime callbacks; backend failed to register");
+      out::status_line("warning: mlx backend failed to register");
     }
 #endif
 #if defined(WALLY_HAS_NEURT)
