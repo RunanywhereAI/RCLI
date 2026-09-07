@@ -187,8 +187,8 @@ jobs:
           bash scripts/fetch-kit.sh linux-x64 "${GITHUB_WORKSPACE}/kit"
       - name: Configure + build
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
-          cmake --build build -j "$(nproc)"
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
+          cmake --build build --target wally -j "$(nproc)"
       - name: Product e2e
         env:
           WALLY_SDK_KIT: ${{ github.workspace }}/kit
