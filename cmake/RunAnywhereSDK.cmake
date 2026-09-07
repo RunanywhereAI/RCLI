@@ -123,6 +123,20 @@ endif()
 # ld re-scans it until resolved. Apple's ld64 and MSVC link.exe do multi-pass
 # resolution and need no group; only GNU ld (Linux) does.
 if(UNIX AND NOT APPLE)
+    # On Linux, sherpa-onnx ships as a shared library in the kit's third_party
+    # dir (macOS/Windows bundle it as a static .a). The kit config wires sherpa
+    # only through a Windows .lib glob, so the SherpaOnnx* symbols the sherpa
+    # backend needs are otherwise unresolved here. Link the .so explicitly; its
+    # dir is already on the build rpath (RunAnywhere_THIRD_PARTY_DIR), and the
+    # release bottle stages it beside the binary.
+    if(DEFINED RunAnywhere_THIRD_PARTY_DIR
+       AND EXISTS "${RunAnywhere_THIRD_PARTY_DIR}/libsherpa-onnx-c-api.so")
+        set_property(TARGET RunAnywhere::commons APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+            "${RunAnywhere_THIRD_PARTY_DIR}/libsherpa-onnx-c-api.so")
+    endif()
+    # GNU ld resolves static archives in a single left-to-right pass, so wrap the
+    # kit's interdependent .a files in a linker group so ld re-scans until
+    # resolved. Apple ld64 and MSVC do multi-pass resolution and need no group.
     get_target_property(_wally_ra_ifaces RunAnywhere::commons INTERFACE_LINK_LIBRARIES)
     if(_wally_ra_ifaces)
         set_property(TARGET RunAnywhere::commons PROPERTY INTERFACE_LINK_LIBRARIES
