@@ -156,7 +156,12 @@ FetchContent_MakeAvailable(cpp_httplib nlohmann_json)
 
 find_package(Threads REQUIRED)
 target_link_libraries(wally_core PUBLIC rac_commons Threads::Threads)
-target_link_libraries(wally_core PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+# httplib is PUBLIC because wally_core headers expose httplib types, so every
+# consumer (the wally binary and the test executables) references its symbols.
+# As a PRIVATE dep it linked for wally on macOS/Windows by luck of the linker's
+# multi-pass resolution, but Linux's single-pass ld left the tests undefined.
+target_link_libraries(wally_core PUBLIC httplib::httplib)
+target_link_libraries(wally_core PRIVATE nlohmann_json::nlohmann_json)
 if(WIN32)
     # The console client uses the Windows system HTTP stack so source builds and
     # release archives do not need curl/OpenSSL DLLs beside wally.exe.
