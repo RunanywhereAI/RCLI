@@ -87,6 +87,34 @@ jobs:
           WALLY_SDK_KIT: ${{ github.workspace }}/kit
         run: bash scripts/e2e.sh ./build/wally
 
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake libcurl4-openssl-dev
+      - name: Download C++ desktop kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/fetch-kit.sh linux-x64 "${GITHUB_WORKSPACE}/kit"
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Product e2e
+        env:
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally
+
   windows-arm64:
     # Native ARM64 runner, free for public repos. Cross-compiling from the x64
     # host would build but never execute, and Windows-on-ARM is exactly where

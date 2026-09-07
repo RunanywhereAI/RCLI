@@ -21,13 +21,15 @@ version = "0.5.3"
 # The published C++ desktop kit this tree is validated against. Bump together
 # with the kit SHAs after an SDK release; see cmake/sdk-pin.cmake's own header
 # for why the IDL pin moves the way it does.
-kit_version = "0.20.34"
-idl_version = "1.1.1"
-idl_schema_sha256 = "ec50b7ca4beff9fa065c5ae1f12dbbc0c996d8b43e64c44bf350ef86a1fa41aa"
+kit_version = "0.20.37"
+kit_release_tag = "cpp-desktop-v0.20.37"
+idl_version = "1.2.0"
+idl_schema_sha256 = "571199c430eead0638472fc55355513831aeb2139e6fee5d5cd841f1b01d5a43"
 idl_protoc_version = "35.1"
-kit_sha256_macos_arm64 = "8bf2019b27f10001b33d78338b5dcf78a14977c70fcded3f8a3e0647ca8da188"
-kit_sha256_windows_x64 = "d472ada77c67bdf4445cd0ba12cb029e9f9cc3ff09937b18fe8025d5e28e5c6f"
-kit_sha256_windows_arm64 = "4d1984ec8c3867a2fe23ed660e586b5ff8515b31211acf8eff7144dfee9cea22"
+kit_sha256_macos_arm64 = "551e531007299dcabef6e97056cab5aa907834c83668c35183417b8ae7c20c8b"
+kit_sha256_windows_x64 = "7dcc8af2e07ac0087f5f2657532b48211d32039043ab3da918eec2b532577f39"
+kit_sha256_windows_arm64 = "b350e50d4a3640340a269311569c84fea94c7472bd1899948b9fa6b4cf2d17f4"
+kit_sha256_linux_x64 = "92ead69ec5bbda64f91e7c292366bf69fb9add6b45bc20cf0e74c19f5e18ac4c"
 
 [swift]
 # The Swift SDK package the Apple MLX host resolves (swift/Package.swift). This

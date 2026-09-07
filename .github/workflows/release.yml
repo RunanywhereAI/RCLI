@@ -168,8 +168,46 @@ jobs:
             dist/*.zip.sha256
           if-no-files-found: error
 
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake libcurl4-openssl-dev
+      - name: Download C++ desktop kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/fetch-kit.sh linux-x64 "${GITHUB_WORKSPACE}/kit"
+      - name: Configure + build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
+          cmake --build build -j "$(nproc)"
+      - name: Product e2e
+        env:
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/e2e.sh ./build/wally
+      - name: Package
+        run: |
+          VERSION="${WALLY_VERSION#v}"
+          WALLY_VERSION="${VERSION}" WALLY_SDK_KIT="${GITHUB_WORKSPACE}/kit" \
+            bash scripts/package-wally.sh build linux-x86_64
+          python3 scripts/verify-release-assets.py \
+            "dist/wally-${VERSION}-linux-x86_64.tar.gz" \
+            "dist/wally-${VERSION}-linux-x86_64.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wally-linux-x86_64
+          path: dist/wally-*-linux-x86_64.tar.gz*
+
   publish:
-    needs: [macos, windows, windows-arm64]
+    needs: [macos, windows, windows-arm64, linux]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -192,6 +230,9 @@ jobs:
           python3 scripts/verify-release-assets.py \
             "artifacts/wally-${VERSION}-windows-arm64.zip" \
             "artifacts/wally-${VERSION}-windows-arm64.zip.sha256"
+          python3 scripts/verify-release-assets.py \
+            "artifacts/wally-${VERSION}-linux-x86_64.tar.gz" \
+            "artifacts/wally-${VERSION}-linux-x86_64.tar.gz.sha256"
       - name: Generate Homebrew formula update
         run: |
           set -euo pipefail

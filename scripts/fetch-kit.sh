@@ -18,6 +18,7 @@ case "$PLATFORM" in
   macos-arm64) SHA_KEY=kit_sha256_macos_arm64 ;;
   windows-x64) SHA_KEY=kit_sha256_windows_x64 ;;
   windows-arm64) SHA_KEY=kit_sha256_windows_arm64 ;;
+  linux-x64) SHA_KEY=kit_sha256_linux_x64 ;;
   *) echo "error: unknown platform '$PLATFORM'" >&2; exit 2 ;;
 esac
 
@@ -41,6 +42,14 @@ if [[ -n "${SDK_VERSION:-}" && "$SDK_VERSION" != "$PINNED_SDK" ]]; then
 fi
 SDK_VERSION="$PINNED_SDK"
 
+# The kit's own version (baked into the tarball name from core/VERSION) is always
+# SDK_VERSION. The GitHub Release it hangs on is separate: kit-only releases live
+# on a `cpp-desktop-v<ver>` tag so they never trip the full SDK release train,
+# while a kit cut by that train sits on the plain `v<ver>` tag. `kit_release_tag`
+# in versions.toml names it; absent, we fall back to `v<ver>` for older pins.
+RELEASE_TAG="$(pin_value kit_release_tag)"
+RELEASE_TAG="${RELEASE_TAG:-v${SDK_VERSION}}"
+
 asset="RunAnywhere-cpp-desktop-${PLATFORM}-v${SDK_VERSION}.tar.gz"
 dl="$(mktemp -d)"
 trap 'rm -rf "$dl"' EXIT
@@ -48,12 +57,12 @@ trap 'rm -rf "$dl"' EXIT
 # Draft GitHub Releases are invisible to another repo's GITHUB_TOKEN
 # (`release not found`). The pin must point at a published release
 # (prerelease is fine; latest is not required).
-if ! gh release download "v${SDK_VERSION}" \
+if ! gh release download "$RELEASE_TAG" \
   --repo RunanywhereAI/runanywhere-sdks \
   --pattern "$asset" --dir "$dl"; then
-  echo "error: could not download $asset from RunanywhereAI/runanywhere-sdks@v${SDK_VERSION}" >&2
+  echo "error: could not download $asset from RunanywhereAI/runanywhere-sdks@${RELEASE_TAG}" >&2
   echo "  that tag must be a published GitHub Release (drafts 404 for this token)." >&2
-  gh release view "v${SDK_VERSION}" --repo RunanywhereAI/runanywhere-sdks >&2 || true
+  gh release view "$RELEASE_TAG" --repo RunanywhereAI/runanywhere-sdks >&2 || true
   exit 1
 fi
 
