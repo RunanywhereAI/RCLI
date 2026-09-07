@@ -1,26 +1,16 @@
-# The one place every version and pin in this repo lives.
-#
-# CMake reads this file directly (cmake/sdk-pin.cmake and the top of
-# CMakeLists.txt), so a build takes its product version and its SDK pins from
-# here and nowhere else. The copies that cannot read TOML at their own build
-# step -- the Homebrew formula's version line, the Swift package's exact SDK pin
-# -- are checked against this file by scripts/check-versions.py, which the CI
-# distribution job and Work-Space-Scripts/ci-cd-sim/scripts/rcli.sh both run, so
-# a drift fails the build rather than shipping.
-#
-# Format is deliberately flat: `key = "value"`, one per line, no nesting inside
-# a value, because it is parsed by a regex on both the CMake and the Python side.
-# Keep it that way.
+# The one place every version, pin, and runner image in this repo lives.
+# CMake reads it directly (cmake/sdk-pin.cmake); the copies that can't read TOML
+# at their own step -- workflow refs and runners, the Homebrew formula, the Swift
+# package pin, CMake's own floor -- are held to it by scripts/check-versions.py,
+# so drift fails CI. Format is flat `key = "value"`, one per line: both the CMake
+# and the Python side parse it by regex. Keep it flat.
 
 [product]
-# The CLI's own release version. Bumped for a wally release, independent of the
-# SDK kit below. The git tag is v<version>; auto-tag.yml reads it from here.
+# wally's own release version; git tag is v<version> (auto-tag.yml reads it here).
 version = "0.5.3"
 
 [sdk]
-# The published C++ desktop kit this tree is validated against. Bump together
-# with the kit SHAs after an SDK release; see cmake/sdk-pin.cmake's own header
-# for why the IDL pin moves the way it does.
+# The published C++ desktop kit this tree builds against; bump the SHAs with it.
 kit_version = "0.20.37"
 kit_release_tag = "cpp-desktop-v0.20.37"
 idl_version = "1.2.0"
@@ -32,21 +22,23 @@ kit_sha256_windows_arm64 = "d15cd4af84efa4168b1c48eb747a9ca79c666f1b74a016a52fc0
 kit_sha256_linux_x64 = "7b27190f2011f80831d3daeeec75651195c191b774c26d994335c3d142e0d4b5"
 
 [swift]
-# The Swift SDK package the Apple MLX host resolves (swift/Package.swift). This
-# is a different artifact from the C++ kit above and moves on its own cadence;
-# it is tracked here only so the two are visible side by side and a check can
-# catch Package.swift drifting away from this value.
+# The Apple MLX host's Swift SDK: sdk_package_version pins swift/Package.swift,
+# sdk_ci_ref is the runanywhere-sdks tag ci.yml/release.yml check out. Both move
+# on their own cadence, distinct from the C++ kit above.
 sdk_package_version = "0.20.25"
 tools_version = "6.0"
-# The runanywhere-sdks tag CI and the release workflow check out to build the
-# Apple MLX host (the `ref:` in ci.yml and release.yml). A third SDK reference,
-# distinct from the package pin above and the C++ kit -- tracked here so all
-# three are visible in one place and check-versions.py catches the workflows
-# drifting from it.
 sdk_ci_ref = "0.20.31"
 
 [toolchain]
-# Build-floor constants, tracked for visibility. CMakeLists.txt still declares
-# cmake_minimum_required and the C++ standard itself; these mirror them.
+# CMake's own floor; CMakeLists.txt declares these and check-versions holds it here.
 cmake_minimum = "3.24"
 cxx_standard = "20"
+
+[runners]
+# GitHub Actions images. macos_mlx needs Xcode 26 for the Swift host; macos_oss
+# is the cheaper C++-only OSS build. check-versions fails an untracked runs-on.
+macos_mlx = "macos-26"
+macos_oss = "macos-14"
+windows_x64 = "windows-2022"
+windows_arm64 = "windows-11-arm"
+linux = "ubuntu-24.04"

@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parent.parent
 VERSIONS = ROOT / "versions.toml"
 FORMULA = ROOT / "Formula" / "wally.rb"
 PACKAGE = ROOT / "swift" / "Package.swift"
+CMAKELISTS = ROOT / "CMakeLists.txt"
+WORKFLOWS = ROOT / ".github" / "workflows"
 
 
 def read_toml_value(key: str) -> str:
@@ -31,6 +33,14 @@ def read_toml_value(key: str) -> str:
     if not match:
         sys.exit(f"versions.toml is missing '{key}'")
     return match.group(1)
+
+
+def read_toml_section(name: str) -> dict[str, str]:
+    text = VERSIONS.read_text(encoding="utf-8")
+    body = re.search(rf'^\[{re.escape(name)}\]\n(.*?)(?=^\[|\Z)', text, re.M | re.S)
+    if not body:
+        sys.exit(f"versions.toml is missing section '[{name}]'")
+    return dict(re.findall(r'^\s*(\w+)\s*=\s*"([^"]*)"', body.group(1), re.M))
 
 
 def main() -> None:
@@ -77,6 +87,29 @@ def main() -> None:
         failures.append(
             f"{PACKAGE}: swift SDK pin \"{package_pin.group(1)}\" != versions.toml \"{swift_pin}\""
         )
+
+    # CMake declares its own floor and C++ standard; hold them to the pins here.
+    toolchain = read_toml_section("toolchain")
+    cmake = CMAKELISTS.read_text(encoding="utf-8")
+    for label, pattern, key in (
+        ("cmake_minimum_required", r"cmake_minimum_required\(VERSION\s+([0-9.]+)", "cmake_minimum"),
+        ("CMAKE_CXX_STANDARD", r"CMAKE_CXX_STANDARD\s+([0-9]+)\)", "cxx_standard"),
+    ):
+        found = re.search(pattern, cmake)
+        if not found:
+            failures.append(f"{CMAKELISTS}: no {label} found")
+        elif found.group(1) != toolchain.get(key):
+            failures.append(
+                f"{CMAKELISTS}: {label} {found.group(1)} != versions.toml {key} {toolchain.get(key)}"
+            )
+
+    # Every runner a workflow names must be one tracked here, so a new image
+    # can't slip in unpinned.
+    runners = set(read_toml_section("runners").values())
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for runner in re.findall(r"runs-on:\s*(\S+)", workflow.read_text(encoding="utf-8")):
+            if runner not in runners:
+                failures.append(f"{workflow}: runs-on '{runner}' is not a tracked runner")
 
     if failures:
         sys.stderr.write("version drift from versions.toml:\n")
