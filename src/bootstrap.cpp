@@ -3,7 +3,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 #if !defined(_WIN32)
 #include <unistd.h>
@@ -549,6 +551,20 @@ rac_result_t bootstrap(const GlobalOptions &options, Bootstrapped *out) {
   }
 
   if (!g_bootstrapped) {
+    // rac_model_paths_set_base_dir happily creates <home>/Models on first use,
+    // which is right for the real default — but an explicit --home that
+    // doesn't exist is far more often a typo than a fresh directory someone
+    // wants populated from nothing, and the only symptom otherwise is a
+    // catalog that looks empty with no explanation at all.
+    if (!options.home_override.empty()) {
+      std::error_code exists_ec;
+      if (!std::filesystem::exists(home, exists_ec)) {
+        out::status_line("warning: --home '" + home +
+                         "' does not exist yet; it will be created empty "
+                         "(pass the right path, or `wally pull` into this one)");
+      }
+    }
+
     rac_result_t rc = rac_desktop_adapter_init(nullptr, &g_adapter);
     if (rc != RAC_SUCCESS) {
       out::error_line("desktop adapter init failed: " +
