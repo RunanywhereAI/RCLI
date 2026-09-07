@@ -1,0 +1,5 @@
+# The pinned contract is hashed byte-for-byte against a SHA-256 baked into
+# console_contract.h at generation time (see test_wally_contract.cpp). Windows
+# runners default to core.autocrlf=true, which rewrites LF to CRLF on checkout
+# and breaks that hash. Keep it untouched on every platform.
+contracts/wally-cli-v1.openapi.json -text
