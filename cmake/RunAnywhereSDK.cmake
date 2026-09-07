@@ -134,13 +134,24 @@ if(UNIX AND NOT APPLE)
         set_property(TARGET RunAnywhere::commons APPEND PROPERTY INTERFACE_LINK_LIBRARIES
             "${RunAnywhere_THIRD_PARTY_DIR}/libsherpa-onnx-c-api.so")
     endif()
-    # GNU ld resolves static archives in a single left-to-right pass, so wrap the
+    # ggml-cpu is built with OpenMP; GNU needs libgomp linked explicitly.
+    find_package(OpenMP QUIET)
+    # GNU ld resolves static archives in a single left-to-right pass. Wrap the
     # kit's interdependent .a files in a linker group so ld re-scans until
-    # resolved. Apple ld64 and MSVC do multi-pass resolution and need no group.
+    # resolved — and include librac_commons.a itself, because the backend
+    # archives reference symbols (the CPU runtime registry, etc.) that live in
+    # commons, which the imported target otherwise places ahead of the group.
+    # Apple ld64 and MSVC do multi-pass resolution and need no group.
     get_target_property(_wally_ra_ifaces RunAnywhere::commons INTERFACE_LINK_LIBRARIES)
-    if(_wally_ra_ifaces)
-        set_property(TARGET RunAnywhere::commons PROPERTY INTERFACE_LINK_LIBRARIES
-            "-Wl,--start-group" ${_wally_ra_ifaces} "-Wl,--end-group")
+    set(_wally_grp_head "")
+    if(DEFINED RunAnywhere_LIBRARY_DIR AND EXISTS "${RunAnywhere_LIBRARY_DIR}/librac_commons.a")
+        list(APPEND _wally_grp_head "${RunAnywhere_LIBRARY_DIR}/librac_commons.a")
+    endif()
+    set_property(TARGET RunAnywhere::commons PROPERTY INTERFACE_LINK_LIBRARIES
+        "-Wl,--start-group" ${_wally_grp_head} ${_wally_ra_ifaces} "-Wl,--end-group")
+    if(OpenMP_CXX_FOUND)
+        set_property(TARGET RunAnywhere::commons APPEND PROPERTY
+            INTERFACE_LINK_LIBRARIES OpenMP::OpenMP_CXX)
     endif()
 endif()
 
