@@ -208,13 +208,26 @@ if(MINGW)
     target_link_options(wally PRIVATE -static-libgcc -static-libstdc++ -static)
 endif()
 
+# On Apple the shipped product is the Swift MLX host at build/wally (see the
+# wally-mlx target below); the pure-C++ build of this target is an intermediate
+# the Swift host links, not a product. Name it wally-cxx so `cmake --build`
+# cannot clobber the fat Apple `wally`, and by default keep it out of the build
+# root so a normal build surfaces only `wally`. Set WALLY_APPLE_CXX_BINARY=ON to
+# get the standalone C++ binary at build/wally-cxx for a fast C++-only loop.
+option(WALLY_APPLE_MLX_HOST
+    "On Apple, link the Swift MLX host as build/wally (the product CLI)" ON)
+option(WALLY_APPLE_CXX_BINARY
+    "On Apple, emit the standalone C++ wally-cxx binary in the build root" OFF)
+
+set(_wally_runtime_dir "${CMAKE_BINARY_DIR}")
 if(APPLE)
-    # Shipped `wally` is scripts/build-mlx.sh + Swift MLX host. This binary is
-    # wally-cxx so cmake --build cannot clobber the fat Apple binary.
     set_target_properties(wally PROPERTIES OUTPUT_NAME "wally-cxx")
+    if(WALLY_APPLE_MLX_HOST AND NOT WALLY_APPLE_CXX_BINARY)
+        set(_wally_runtime_dir "${CMAKE_BINARY_DIR}/cxx-host")
+    endif()
 endif()
 
-set_target_properties(wally PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+set_target_properties(wally PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${_wally_runtime_dir}")
 if(APPLE)
     set_target_properties(wally PROPERTIES
         BUILD_RPATH "${RunAnywhere_THIRD_PARTY_DIR}"
@@ -230,9 +243,8 @@ install(TARGETS wally RUNTIME DESTINATION bin)
 
 # Apple product binary is the Swift MLX host (`build/wally`), not `wally-cxx`.
 # Users still type `wally`; llama.cpp / ONNX / Sherpa register from C++ bootstrap
-# and MLX from the Swift entry. Turn off only for a C++-only compile loop.
-option(WALLY_APPLE_MLX_HOST
-    "On Apple, link the Swift MLX host as build/wally (the product CLI)" ON)
+# and MLX from the Swift entry. Turn WALLY_APPLE_MLX_HOST (declared above) off
+# only for a C++-only compile loop.
 if(APPLE AND WALLY_APPLE_MLX_HOST)
     if(NOT WALLY_SDK_ROOT)
         message(FATAL_ERROR "WALLY_SDK_ROOT is empty; cannot build the MLX host")
