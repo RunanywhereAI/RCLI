@@ -268,7 +268,7 @@ int Logout() {
     return 0;
 }
 
-int WhoAmI() {
+int WhoAmI(bool as_json) {
     account::Credentials credentials;
     if (!LoadCredentials(&credentials)) {
         return 1;
@@ -305,6 +305,16 @@ int WhoAmI() {
     // whoami is identity only, by decision: plan, spend and token usage belong
     // to `wally usage`, and an e2e guard (tests/test_account_cli.py) fails the
     // build if any of them leak in here. The README is worded to match.
+    if (as_json) {
+        out::JsonWriter json;
+        json.begin_object()
+            .field("email", identity.email)
+            .field("session", "active")
+            .field("console", credentials.console_url)
+            .end_object();
+        out::result_line(json.str());
+        return 0;
+    }
     char line[220];
     std::snprintf(line, sizeof(line), "%-14s %s", "email", identity.email.c_str());
     out::result_line(line);
@@ -318,7 +328,6 @@ int WhoAmI() {
 }  // namespace
 
 void register_account(CLI::App& app, GlobalOptions& options) {
-    static_cast<void>(options);
     auto no_browser = std::make_shared<bool>(false);
     auto console_url = std::make_shared<std::string>();
     auto* login = app.add_subcommand("login", "sign in through the RunAnywhere console");
@@ -332,8 +341,12 @@ void register_account(CLI::App& app, GlobalOptions& options) {
     auto* logout = app.add_subcommand("logout", "revoke and remove the cloud session");
     logout->callback([] { fail(Logout()); });
 
+    auto whoami_json = std::make_shared<bool>(false);
     auto* whoami = app.add_subcommand("whoami", "show the signed-in cloud account");
-    whoami->callback([] { fail(WhoAmI()); });
+    whoami->add_flag("--json", *whoami_json, "machine-readable output");
+    // `wally --json whoami` and `wally whoami --json` mean the same thing; see
+    // the identical fix in register_usage (cmd_usage.cpp).
+    whoami->callback([whoami_json, &options] { fail(WhoAmI(*whoami_json || options.json)); });
 }
 
 }  // namespace wally::commands
