@@ -33,6 +33,7 @@ include(RunAnywhereSDK)
 # thin: parse → bootstrap() → one rac_* call → render.
 set(WALLY_SOURCES
     src/app.cpp
+    src/cli_formatter.cpp
     src/bootstrap.cpp
     src/catalog/catalog.cpp
     src/catalog/model_ref.cpp

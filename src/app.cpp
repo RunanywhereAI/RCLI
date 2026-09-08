@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include <exception>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -8,6 +9,7 @@
 #include <CLI11.hpp>
 
 #include "bootstrap.h"
+#include "cli_formatter.h"
 #include "commands/commands.h"
 #include "io/output.h"
 
@@ -28,24 +30,32 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     app.add_flag("-v,--verbose", options.verbose, "Debug logging on stderr");
     app.add_flag("-q,--quiet", options.quiet, "Errors only on stderr");
     app.add_flag("--no-progress", options.no_progress, "Disable progress rendering");
+    app.add_flag("--no-color", options.no_color, "Disable colored --help output");
     app.add_option("--home", options.home_override,
                    "RunAnywhere home directory (default: $RUNANYWHERE_HOME or "
                    "~/.local/share/runanywhere; models live under <home>/Models)");
 
     // Control-plane connection. validation happens in resolve_connection().
+    // Developer/SDK-facing, not something a person reaches for day to day --
+    // group("") drops them out of the default --help listing the same way
+    // `telemetry` is hidden below, while leaving them fully parseable
+    // (flags and RUNANYWHERE_* env fallbacks both still resolve).
     app.add_option("--environment", options.environment,
                    "SDK environment: development (default, keyless OSS → baked staging "
                    "backend) or production (API key + https URL).")
         ->envname("RUNANYWHERE_ENVIRONMENT")
-        ->check(CLI::IsMember({"dev", "development", "prod", "production"}));
+        ->check(CLI::IsMember({"dev", "development", "prod", "production"}))
+        ->group("");
     app.add_option("--base-url", options.base_url,
                    "Backend base URL. Optional in development (baked staging URL). "
                    "Required https for production.")
-        ->envname("RUNANYWHERE_BASE_URL");
+        ->envname("RUNANYWHERE_BASE_URL")
+        ->group("");
     app.add_option("--api-key", options.api_key,
                    "Control-plane API key (required for production; omit for "
                    "keyless development)")
-        ->envname("RUNANYWHERE_API_KEY");
+        ->envname("RUNANYWHERE_API_KEY")
+        ->group("");
 
     // Namespaces first (the spec grammar), then the terminal aliases, then the
     // infrastructure commands — that is the order `--help` lists them in.
@@ -131,8 +141,21 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
 int run(int argc, char** argv) {
     GlobalOptions options;
 
+    // Decided ahead of CLI11's own parse: a subcommand inherits its parent's
+    // formatter_ at construction time (App::App), which configure_app()
+    // triggers below, so the color decision has to already be settled before
+    // that call. Plain argv scan rather than parsing --no-color for real.
+    bool no_color_requested = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--no-color") {
+            no_color_requested = true;
+            break;
+        }
+    }
+
     CLI::App app{"RunAnywhere on-device AI CLI — llm, vlm, stt, tts, vad, embed, rerank, "
                  "image, rag, voice and the models that back them"};
+    app.formatter(std::make_shared<CliFormatter>(color_output_enabled(no_color_requested)));
     configure_app(app, options);
     // Every subcommand here loads a model on this machine; a hosted console
     // model (glm-5.3-flash, ...) has no path through `run`/`llm generate` at

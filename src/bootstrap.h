@@ -29,6 +29,8 @@ struct GlobalOptions {
     bool verbose = false;
     bool quiet = false;
     bool no_progress = false;
+    bool no_color = false;  // --no-color flag; the actual ANSI decision is made
+                             // in run() before parsing, see cli_formatter.h
     std::string home_override;  // --home flag
 
     // Control-plane connection. CLI11 fills these from
