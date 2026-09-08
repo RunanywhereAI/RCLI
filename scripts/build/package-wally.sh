@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD="${1:?usage: package-wally.sh <build-dir> <platform-tag> [channel]}"
 PLATFORM="${2:?usage: package-wally.sh <build-dir> <platform-tag> [channel]}"
 # channel: empty/prod for the production bottle, "dev" for the dev-endpoint

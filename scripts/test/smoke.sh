@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Command-surface smoke: no model download.
 #
-#   scripts/smoke.sh <path-to-wally>
+#   scripts/test/smoke.sh <path-to-wally>
 set -euo pipefail
 
 WALLY="${1:?usage: smoke.sh <path-to-wally>}"

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Kit-consumer e2e for a built wally binary. Does not compile the SDK.
 #
-#   scripts/e2e.sh <path-to-wally>
+#   scripts/test/e2e.sh <path-to-wally>
 #
-# Always runs scripts/smoke.sh (no model download). Set WALLY_E2E_MODEL to also
+# Always runs scripts/test/smoke.sh (no model download). Set WALLY_E2E_MODEL to also
 # pull a catalog model and run one generation — that needs network + disk.
-# Overlay / device round-trips live in scripts/e2e-modalities.sh and are keyed
+# Overlay / device round-trips live in scripts/test/e2e-modalities.sh and are keyed
 # by primitive, not engine. Public CI leaves those knobs unset (skip).
 # CMAKE_PREFIX_PATH is optional; WALLY_SDK_KIT is preferred. Unset is fine.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WALLY="${1:?usage: e2e.sh <path-to-wally>}"
 if [[ ! -e "${WALLY}" ]]; then
     echo "not found: ${WALLY}" >&2
@@ -67,7 +67,7 @@ if [[ "${WALLY}" == *.exe || "${WALLY}" == *.EXE ]] && [[ -n "${kit_root}" ]]; t
     export PATH
 fi
 
-bash "${ROOT}/scripts/smoke.sh" "${WALLY}"
+bash "${ROOT}/scripts/test/smoke.sh" "${WALLY}"
 
 fail=0
 check() {
@@ -131,14 +131,14 @@ if [[ -n "${overlay_root}" ]]; then
 fi
 if [[ ${#expected_backends[@]} -eq 0 ]]; then
     echo "  skip  backends (kit has no engines)"
-elif bash "${ROOT}/scripts/assert-backends.sh" "${WALLY}" "${expected_backends[@]}"; then
+elif bash "${ROOT}/scripts/test/assert-backends.sh" "${WALLY}" "${expected_backends[@]}"; then
     echo "  ok    backends ${expected_backends[*]}"
 else
     echo "  FAIL  backends ${expected_backends[*]}"
     fail=1
 fi
 if [[ ${#expected_backends[@]} -gt 0 ]]; then
-    if bash "${ROOT}/scripts/assert-binary-backends.sh" "${WALLY}" "${expected_backends[@]}"; then
+    if bash "${ROOT}/scripts/test/assert-binary-backends.sh" "${WALLY}" "${expected_backends[@]}"; then
         echo "  ok    binary ${expected_backends[*]}"
     else
         echo "  FAIL  binary ${expected_backends[*]}"
@@ -164,7 +164,7 @@ done
 # Modality round-trips (engine-agnostic). Skip when no model is discovered.
 # WALLY_E2E_MODALITIES=0 disables this so public CI can stay modelless-only.
 if [[ "${WALLY_E2E_MODALITIES:-1}" != "0" ]]; then
-    if bash "${ROOT}/scripts/e2e-modalities.sh" "${WALLY}"; then
+    if bash "${ROOT}/scripts/test/e2e-modalities.sh" "${WALLY}"; then
         echo "  ok    modalities"
     else
         echo "  FAIL  modalities"

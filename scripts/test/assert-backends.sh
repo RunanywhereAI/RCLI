@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assert `wally backends` lists the given engine names.
 #
-#   scripts/assert-backends.sh <path-to-wally> <name> [<name>...]
+#   scripts/test/assert-backends.sh <path-to-wally> <name> [<name>...]
 set -euo pipefail
 
 WALLY="${1:?usage: assert-backends.sh <wally> <name>...}"

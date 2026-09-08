@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# MLX smoke — port of runanywhere-sdks/wally/scripts/smoke-mlx-cli.sh
+# MLX smoke — port of runanywhere-sdks/wally/scripts/test/smoke-mlx-cli.sh
 #
 # Builds the Swift MLX host, then exercises backends, LLM, TTS, STT, and VLM
 # against the product `wally` binary (not the SDK DevTools playground).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BIN="${WALLY_BIN:-$ROOT/build/wally}"
 HOME_DIR="${WALLY_HOME:-${RUNANYWHERE_MLX_SMOKE_HOME:-/tmp/wally-mlx-smoke}}"
 PULL="${WALLY_SMOKE_PULL:-${RUNANYWHERE_MLX_SMOKE_PULL:-1}}"
@@ -24,9 +24,9 @@ if [[ "$(uname -m)" != "arm64" ]]; then
   exit 0
 fi
 
-bash "$ROOT/scripts/build-mlx.sh"
+bash "$ROOT/scripts/build/build-mlx.sh"
 if [[ ! -x "$BIN" ]]; then
-  echo "error: missing $BIN (scripts/build-mlx.sh should install it as build/wally)" >&2
+  echo "error: missing $BIN (scripts/build/build-mlx.sh should install it as build/wally)" >&2
   exit 1
 fi
 

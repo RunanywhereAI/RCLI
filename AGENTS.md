@@ -178,8 +178,8 @@ register, so an install puts both together and points a wrapper at them.
 Hermetic unit tests (`tests/test_wally_unit.cpp`): no models, no network, no real
 keys. `ctest` is the default CI bar.
 
-Smoke / e2e (`scripts/smoke.sh`, `scripts/e2e.sh`) prove the product promise
-against a **pinned kit**, not SDK source. `scripts/e2e-modalities.sh` (called
+Smoke / e2e (`scripts/test/smoke.sh`, `scripts/test/e2e.sh`) prove the product promise
+against a **pinned kit**, not SDK source. `scripts/test/e2e-modalities.sh` (called
 from `e2e.sh`) runs optional round-trips **by modality** — LLM, STT, TTS, VLM,
 embed, image, VAD, rerank, segment — and never requires `--engine`. Discover
 models via `WALLY_E2E_<MOD>` (path or catalog id), `WALLY_E2E_MODEL_ROOTS`, or
@@ -189,11 +189,11 @@ primitives. Public CI leaves every knob unset (skip). There is one CLI named
 `wally`. On Apple, `cmake --build` links the Swift MLX host as `build/wally`
 (llama.cpp + ONNX + Sherpa + MLX). Windows is `build/wally.exe` (no MLX).
 `wally-cxx` is an Apple compile artifact, not the product. Full MLX model
-smoke: `scripts/smoke-mlx.sh`.
+smoke: `scripts/test/smoke-mlx.sh`.
 
 ## CI
 
-Minimum: fetch the pinned kit (`scripts/fetch-kit.sh`) → configure → build →
+Minimum: fetch the pinned kit (`scripts/build/fetch-kit.sh`) → configure → build →
 ctest → smoke. Fail on pin / schema mismatch. `scripts/ci/check-agents-sync.sh`
 fails the PR when `CLAUDE.md` is not a symlink to `AGENTS.md`, or when
 `.claude/skills` and `.agents/skills` differ.
@@ -208,7 +208,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
 ctest --test-dir build --output-on-failure
 # Apple: ./build/wally   Windows: ./build/wally.exe
-bash scripts/e2e.sh ./build/wally
+bash scripts/test/e2e.sh ./build/wally
 ```
 
 On Apple Silicon, `cmake --build` produces `build/wally` (Swift host wrapping

@@ -1,8 +1,8 @@
-# Build output
-build/
-build-*/
-cmake-build-*/
-dist/
+# Build output (root-anchored so .github/actions/build-wally/ isn't caught).
+/build/
+/build-*/
+/cmake-build-*/
+/dist/
 
 # Shallow SDK checkout used by CI to link the Swift MLX host.
 .deps/

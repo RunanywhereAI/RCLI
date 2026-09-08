@@ -5,7 +5,7 @@
 # Stamps Formula/wally.rb from a PUBLISHED GitHub Release (reads .sha256
 # sidecars) and pushes Formula/wally.rb to the Homebrew tap.
 #
-#   ./scripts/update-tap.sh 0.5.0
+#   ./scripts/release/update-tap.sh 0.5.0
 #
 # Environment:
 #   WALLY_TAP_REPO   Tap git remote to update (required unless DRY_RUN=1)
@@ -19,7 +19,7 @@ VERSION="${1:?usage: update-tap.sh <version>}"
 VERSION="${VERSION#v}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLI_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CLI_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 FORMULA="${CLI_ROOT}/Formula/wally.rb"
 # The repo itself is still RCLI -- only the binary, formula and tap file
 # renamed to wally. Do not "fix" this to RunanywhereAI/wally; that repo
@@ -42,11 +42,11 @@ fetch_sha() {
 echo "Fetching release checksums for v${VERSION}..."
 SHA_MAC_ARM="$(fetch_sha "wally-${VERSION}-macos-arm64.tar.gz")"
 
-if [[ -f "${CLI_ROOT}/scripts/stamp-formula.py" ]]; then
-    python3 "${CLI_ROOT}/scripts/stamp-formula.py" "${VERSION}" \
+if [[ -f "${SCRIPT_DIR}/stamp-formula.py" ]]; then
+    python3 "${SCRIPT_DIR}/stamp-formula.py" "${VERSION}" \
         "macos-arm64=${SHA_MAC_ARM}"
 else
-    echo "ERROR: scripts/stamp-formula.py missing" >&2
+    echo "ERROR: scripts/release/stamp-formula.py missing" >&2
     exit 1
 fi
 

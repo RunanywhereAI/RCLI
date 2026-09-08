@@ -36,7 +36,7 @@ fi
 
 if [[ "${RA_SKIP_BUILD:-0}" != "1" ]]; then
   if [[ ! -f "$KIT/include/runanywhere/proto/model_types.pb.h" ]]; then
-    bash "$ROOT/scripts/fetch-kit.sh" "$PLATFORM" "$KIT"
+    bash "$ROOT/scripts/build/fetch-kit.sh" "$PLATFORM" "$KIT"
   fi
   cmake -B "$ROOT/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="$KIT"

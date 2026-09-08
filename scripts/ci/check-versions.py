@@ -8,7 +8,7 @@ builds from that version, and the Swift package's exact SDK pin. This checks
 both against versions.toml so a bump in one place that misses the other fails
 CI rather than shipping a mismatch.
 
-    python3 scripts/check-versions.py
+    python3 scripts/ci/check-versions.py
 
 Run from anywhere in the repo. Exits non-zero on the first mismatch.
 """
@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 VERSIONS = ROOT / "versions.toml"
 FORMULA = ROOT / "Formula" / "wally.rb"
 PACKAGE = ROOT / "swift" / "Package.swift"

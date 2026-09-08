@@ -11,7 +11,7 @@
 #   3. skip (OSS bottle) unless WALLY_REQUIRE_PRIVATE=1
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLATFORM="${1:?usage: fetch-private-pack.sh <macos-arm64|windows-arm64> <kit-prefix>}"
 DEST="${2:?usage: fetch-private-pack.sh <macos-arm64|windows-arm64> <kit-prefix>}"
 

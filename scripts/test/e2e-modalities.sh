@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Engine-agnostic modality e2e. Invoked from scripts/e2e.sh.
+# Engine-agnostic modality e2e. Invoked from scripts/test/e2e.sh.
 #
 # Tests are keyed by primitive (llm, stt, tts, vlm, embed, image, vad, rerank,
 # segment), not by engine name. wally routes via catalog framework / local path

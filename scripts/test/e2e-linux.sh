@@ -6,7 +6,7 @@
 # That original built wally inside the SDK Docker image (RAC_BUILD_CLI=ON).
 # WALLY is a kit consumer, so this drives an already-built binary instead:
 #
-#   scripts/e2e-linux.sh [path-to-wally]
+#   scripts/test/e2e-linux.sh [path-to-wally]
 #
 # Always runs modelless contract checks. Inference + hermetic pull run when
 # WALLY_TEST_MODEL_DIR is set (same layout as SDK download-test-models.sh).
@@ -14,7 +14,7 @@
 # =============================================================================
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BIN="${1:-${WALLY_BIN:-}}"
 if [[ -z "$BIN" ]]; then
   if [[ -x "$ROOT/build/wally" ]]; then

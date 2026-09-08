@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Kit-consumer rewrite of runanywhere-sdks/wally/scripts/test-e2e.sh
+# Kit-consumer rewrite of runanywhere-sdks/wally/scripts/test/test-e2e.sh
 #
 # Original configured the SDK with RAC_BUILD_CLI=ON. This repo consumes a
 # published C++ desktop kit:
 #
 #   1. Configure + build against CMAKE_PREFIX_PATH / WALLY_SDK_KIT
 #   2. Offline unit/segment tests (ctest)
-#   3. CLI contract smoke (scripts/smoke.sh + scripts/e2e.sh)
+#   3. CLI contract smoke (scripts/test/smoke.sh + scripts/test/e2e.sh)
 #   4. Optional model round-trip when WALLY_E2E_MODEL is set
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 KIT="${WALLY_SDK_KIT:-${CMAKE_PREFIX_PATH:-$ROOT/kit}}"
@@ -32,7 +32,7 @@ bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 echo "==> Kit prefix: $KIT"
 if [[ ! -d "$KIT/include" ]]; then
   case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64) bash "$ROOT/scripts/fetch-kit.sh" macos-arm64 "$KIT" ;;
+    Darwin-arm64) bash "$ROOT/scripts/build/fetch-kit.sh" macos-arm64 "$KIT" ;;
     *)
       echo "error: no kit at $KIT — set WALLY_SDK_KIT or CMAKE_PREFIX_PATH" >&2
       exit 1
@@ -64,8 +64,8 @@ else
 fi
 
 echo "==> CLI contract"
-if bash "$ROOT/scripts/smoke.sh" "$BIN"; then ok "smoke.sh"; else bad "smoke.sh"; fi
-if bash "$ROOT/scripts/e2e.sh" "$BIN"; then ok "e2e.sh"; else bad "e2e.sh"; fi
+if bash "$ROOT/scripts/test/smoke.sh" "$BIN"; then ok "smoke.sh"; else bad "smoke.sh"; fi
+if bash "$ROOT/scripts/test/e2e.sh" "$BIN"; then ok "e2e.sh"; else bad "e2e.sh"; fi
 
 echo "Summary: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

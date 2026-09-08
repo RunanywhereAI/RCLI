@@ -9,30 +9,17 @@
 # keyed to that pin, not a repo variable.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/lib/common.sh
+source "${ROOT}/scripts/lib/common.sh"
 PLATFORM="${1:?usage: fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest>}"
 DEST="${2:?usage: fetch-kit.sh <macos-arm64|windows-x64|windows-arm64> <dest>}"
 PIN="${ROOT}/versions.toml"
 
-case "$PLATFORM" in
-  macos-arm64) SHA_KEY=kit_sha256_macos_arm64 ;;
-  windows-x64) SHA_KEY=kit_sha256_windows_x64 ;;
-  windows-arm64) SHA_KEY=kit_sha256_windows_arm64 ;;
-  linux-x64) SHA_KEY=kit_sha256_linux_x64 ;;
-  *) echo "error: unknown platform '$PLATFORM'" >&2; exit 2 ;;
-esac
-
-# versions.toml is flat `key = "value"`, one per line (its own header guarantees
-# this), so a single regex reads any pin.
-pin_value() {
-  local key="$1"
-  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$PIN" | head -1
-}
-
-PINNED_SDK="$(pin_value kit_version)"
-EXPECTED="$(pin_value "$SHA_KEY")"
+PINNED_SDK="$(wally_kit_version)"
+EXPECTED="$(wally_kit_sha "$PLATFORM")" || exit 2
 if [[ -z "$PINNED_SDK" || -z "$EXPECTED" ]]; then
-  echo "error: missing $SHA_KEY or kit_version in $PIN" >&2
+  echo "error: missing kit pin for '$PLATFORM' or kit_version in $PIN" >&2
   exit 1
 fi
 if [[ -n "${SDK_VERSION:-}" && "$SDK_VERSION" != "$PINNED_SDK" ]]; then
@@ -47,8 +34,7 @@ SDK_VERSION="$PINNED_SDK"
 # on a `cpp-desktop-v<ver>` tag so they never trip the full SDK release train,
 # while a kit cut by that train sits on the plain `v<ver>` tag. `kit_release_tag`
 # in versions.toml names it; absent, we fall back to `v<ver>` for older pins.
-RELEASE_TAG="$(pin_value kit_release_tag)"
-RELEASE_TAG="${RELEASE_TAG:-v${SDK_VERSION}}"
+RELEASE_TAG="$(wally_kit_release_tag)"
 
 asset="RunAnywhere-cpp-desktop-${PLATFORM}-v${SDK_VERSION}.tar.gz"
 dl="$(mktemp -d)"

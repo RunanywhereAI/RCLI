@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assert the binary actually contains the engines `wally backends` claims.
 #
-#   scripts/assert-binary-backends.sh <path-to-wally> <name> [<name>...]
+#   scripts/test/assert-binary-backends.sh <path-to-wally> <name> [<name>...]
 #
 # Release bottles (especially the Swift MLX host) strip global C symbols.
 # Stream nm/strings into grep. `grep -q` closes the pipe early; with

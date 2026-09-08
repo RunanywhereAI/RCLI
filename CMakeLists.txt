@@ -14,8 +14,8 @@ string(REGEX REPLACE "^[^\"]*\"([^\"]*)\".*$" "\\1" _wally_version "${_wally_ver
 project(wally VERSION "${_wally_version}" LANGUAGES C CXX)
 
 # The SDK kit pin (cmake/sdk-pin.cmake, also from versions.toml) moves on its
-# own cadence. scripts/package-wally.sh and the release workflow stamp the
-# product version into Formula/wally.rb; scripts/check-versions.py fails a build
+# own cadence. scripts/build/package-wally.sh and the release workflow stamp the
+# product version into Formula/wally.rb; scripts/ci/check-versions.py fails a build
 # where the formula or the Swift package pin has drifted from versions.toml.
 
 set(CMAKE_CXX_STANDARD 20)
@@ -252,7 +252,7 @@ if(APPLE AND WALLY_APPLE_MLX_HOST)
     add_custom_target(wally-mlx ALL
         COMMAND "${CMAKE_COMMAND}" -E env
             "WALLY_SDK_KIT=${WALLY_SDK_ROOT}"
-            bash "${CMAKE_SOURCE_DIR}/scripts/build-mlx.sh" "${CMAKE_BINARY_DIR}"
+            bash "${CMAKE_SOURCE_DIR}/scripts/build/build-mlx.sh" "${CMAKE_BINARY_DIR}"
         DEPENDS wally
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "Swift MLX host → ${CMAKE_BINARY_DIR}/wally"

@@ -9,7 +9,7 @@
 #   - Xcode (xcodebuild compiles MLX Metal shaders; `swift build` cannot)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD="${1:-${ROOT}/build}"
 
 KIT="${WALLY_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
