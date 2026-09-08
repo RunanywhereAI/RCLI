@@ -76,7 +76,12 @@ fi
 copy_kit_runtime() {
   local src="$1"
   [[ -n "${src}" && -e "${src}" ]] || return 0
-  cp -R "${src}" "${STAGE}/lib/"
+  # -L dereferences: the kit ships onnxruntime as a
+  # libonnxruntime.so -> .so.1 -> .so.1.28.0 symlink chain, and the release
+  # verifier rejects symlinks in a bottle (they can escape the archive root).
+  # Copying the targets as real files keeps the soname the binary needs present
+  # without a link. A dangling link is skipped by the -e guard above.
+  cp -RL "${src}" "${STAGE}/lib/"
 }
 
 if [[ -n "${KIT}" && -d "${KIT}/third_party" ]]; then
