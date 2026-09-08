@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$Repo = 'RunanywhereAI/RCLI'
+$Repo = 'RunanywhereAI/wally'
 # There is no Homebrew here, so this installer does the whole job itself rather
 # than handing off to a package manager: download the release zip, check it,
 # unpack it, put it on PATH.

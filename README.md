@@ -73,7 +73,7 @@ brew install runanywhereai/wally/wally
 or
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/wally/main/install.sh | sh
 ```
 
 ### From source
@@ -104,7 +104,7 @@ Copy the binary on its own and MLX will not register.
 ### Windows (x64)
 
 ```powershell
-irm https://raw.githubusercontent.com/RunanywhereAI/RCLI/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/RunanywhereAI/wally/main/install.ps1 | iex
 ```
 
 ### Linux (x86_64)

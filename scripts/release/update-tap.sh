@@ -21,15 +21,12 @@ VERSION="${VERSION#v}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 FORMULA="${CLI_ROOT}/Formula/wally.rb"
-# The repo itself is still RCLI -- only the binary, formula and tap file
-# renamed to wally. Do not "fix" this to RunanywhereAI/wally; that repo
-# doesn't exist.
-RELEASE_BASE="https://github.com/RunanywhereAI/RCLI/releases/download/v${VERSION}"
-# The tap is the RCLI repo itself: install.sh taps `RunanywhereAI/wally` aliased
-# to this repo's git URL, and the formula lives in-repo at Formula/wally.rb, so
-# the stamped formula is pushed back here. Override with WALLY_TAP_REPO only to
+RELEASE_BASE="https://github.com/RunanywhereAI/wally/releases/download/v${VERSION}"
+# The tap is the wally repo itself: install.sh taps `RunanywhereAI/wally` at this
+# repo's git URL, and the formula lives in-repo at Formula/wally.rb, so the
+# stamped formula is pushed back here. Override with WALLY_TAP_REPO only to
 # publish to a separate homebrew-tap repo.
-TAP_REPO="${WALLY_TAP_REPO:-git@github.com:RunanywhereAI/RCLI.git}"
+TAP_REPO="${WALLY_TAP_REPO:-git@github.com:RunanywhereAI/wally.git}"
 
 fetch_sha() {
     local asset="$1"

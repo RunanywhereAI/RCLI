@@ -22,9 +22,7 @@ import re
 import sys
 
 FORMULA = "Formula/wally.rb"
-# Repo stays RunanywhereAI/RCLI -- only the binary, formula and tap file are
-# named wally.
-RELEASES = "https://github.com/RunanywhereAI/RCLI/releases/download"
+RELEASES = "https://github.com/RunanywhereAI/wally/releases/download"
 
 # The archive extension per platform, since Windows would be a zip if it were
 # ever served by Homebrew. Adding a platform here and to the formula is all a

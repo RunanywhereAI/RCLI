@@ -5,7 +5,7 @@ description: Cut an Wally product release (independent of SDK version) — versi
 
 # Wally release
 
-Repo: `RunanywhereAI/RCLI`. Product version is `project(wally VERSION x.y.z)` in
+Repo: `RunanywhereAI/wally`. Product version is `project(wally VERSION x.y.z)` in
 `CMakeLists.txt` (also stamped into `Formula/wally.rb`). Independent of the SDK
 kit pin.
 
@@ -54,7 +54,7 @@ Re-check immediately before merge (a rollup of SUCCESS can hide checks that
 have not started):
 
 ```bash
-gh pr checks <pr> --repo RunanywhereAI/RCLI --json name,state,bucket \
+gh pr checks <pr> --repo RunanywhereAI/wally --json name,state,bucket \
   --jq '[.[] | select(.state == null or .state == "")] | length'   # must be 0
 ```
 
@@ -64,7 +64,7 @@ the SDK (`bypass_pull_request_allowances`) before `--admin`.
 ## 4. Merge triggers the release
 
 ```bash
-gh pr merge <pr> --repo RunanywhereAI/RCLI --squash --admin   # only if allow-listed
+gh pr merge <pr> --repo RunanywhereAI/wally --squash --admin   # only if allow-listed
 ```
 
 `auto-tag.yml` tags `v$PRODUCT` and dispatches `release.yml`. Unlike the SDK
@@ -75,7 +75,7 @@ link + e2e).
 ## 5. Verify the GitHub Release
 
 ```bash
-gh release view v$PRODUCT --repo RunanywhereAI/RCLI --json isDraft,assets \
+gh release view v$PRODUCT --repo RunanywhereAI/wally --json isDraft,assets \
   --jq '{isDraft, names: [.assets[].name]}'
 ```
 

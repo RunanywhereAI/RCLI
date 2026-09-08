@@ -12,7 +12,7 @@ Record pass/fail per OS. Do not treat a screenshot as a pass.
 
 Kit must contain `include/rac/**`, `lib/librac_commons.a` (or equivalent), `lib/cmake/RunAnywhere/RunAnywhereConfig.cmake`, `share/runanywhere/idl/*.proto`. No `wally` binary.
 
-## RCLI (this repo)
+## Wally (this repo)
 
 ```bash
 cmake -B build -DCMAKE_PREFIX_PATH=<kit> -DCMAKE_BUILD_TYPE=Release

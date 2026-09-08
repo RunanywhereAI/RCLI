@@ -1,7 +1,7 @@
 class WallyBeta < Formula
   desc "Run language, speech and image models on your own machine (beta)"
-  homepage "https://github.com/RunanywhereAI/RCLI"
-  url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.4.0-beta.1/wally-0.4.0-beta.1-Darwin-arm64.tar.gz"
+  homepage "https://github.com/RunanywhereAI/wally"
+  url "https://github.com/RunanywhereAI/wally/releases/download/v0.4.0-beta.1/wally-0.4.0-beta.1-Darwin-arm64.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
   version "0.4.0-beta.1"

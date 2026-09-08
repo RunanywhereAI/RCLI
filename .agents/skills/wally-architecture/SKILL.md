@@ -5,7 +5,7 @@ description: Where Wally logic belongs — command layering, proto as SOT, kit v
 
 # Wally architecture
 
-Repo: `RunanywhereAI/RCLI`. Product CLI named `wally`. It consumes a **packaged
+Repo: `RunanywhereAI/wally`. Product CLI named `wally`. It consumes a **packaged
 C++ desktop kit** via `find_package(RunAnywhere)`. It does not
 `add_subdirectory` or FetchContent the SDK, and it does not compile llama.cpp /
 Sherpa / ONNX / MLX from source.

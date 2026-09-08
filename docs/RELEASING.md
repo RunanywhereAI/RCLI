@@ -115,8 +115,8 @@ on macOS, and `Get-AuthenticodeSignature` on Windows.
   the verified macOS checksum. It does not pretend that an ephemeral checkout
   updated a default branch.
 
-Homebrew still needs one ownership decision: `install.sh` taps the RCLI repo
-(the GitHub repo keeps its name) under the alias `runanywhereai/wally`, while
+Homebrew still needs one ownership decision: `install.sh` taps the wally repo
+itself under the alias `runanywhereai/wally`, while
 the historical update script targeted a separate `homebrew-tap` repo. Until one
 is declared canonical, pass `WALLY_TAP_REPO`
 explicitly to `scripts/release/update-tap.sh` and apply the generated formula to the
