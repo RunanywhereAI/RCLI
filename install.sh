@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The GitHub repo stays RCLI -- only the binary, formula and tap alias below
-# are named wally. Don't "fix" REPO to match; that repo doesn't exist.
-REPO="RunanywhereAI/RCLI"
+# Repo, binary, formula and tap are all wally. The tap alias below is fully
+# qualified on purpose (see FORMULA).
+REPO="RunanywhereAI/wally"
 TAP="RunanywhereAI/wally"
 # Fully qualified on purpose. runanywhereai/tap also provides a formula called
 # wally, and a bare `brew install wally` on a machine with both taps fails with
@@ -14,6 +14,31 @@ info()  { printf "\033[1;34m==>\033[0m \033[1m%s\033[0m\n" "$*"; }
 ok()    { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 warn()  { printf "\033[1;33mWarning:\033[0m %s\n" "$*"; }
 fail()  { printf "\033[1;31mError:\033[0m %s\n" "$*" >&2; exit 1; }
+
+# Which agent homes get the skill. Claude Code reads ~/.claude/skills; Cursor,
+# Codex and other AGENTS.md tools read ~/.agents/skills. Install into every home
+# the person already has, so a Codex-only user is not handed a skill their agent
+# never reads. A fresh machine with neither is a Claude-first get-started, so it
+# defaults to ~/.claude. One dir per line; callers set IFS=newline to be safe
+# with a $HOME that contains spaces.
+skill_target_dirs() {
+    targets=""
+    [ -d "${HOME}/.claude" ] && targets="${targets}${HOME}/.claude/skills/runanywhere
+"
+    [ -d "${HOME}/.agents" ] && targets="${targets}${HOME}/.agents/skills/runanywhere
+"
+    [ -n "${targets}" ] || targets="${HOME}/.claude/skills/runanywhere
+"
+    printf '%s' "${targets}"
+}
+
+# Debug-only: print the resolved skill targets and exit before any network or
+# brew work. Exercised by scripts/test/test-install-skill-dirs.sh. Not part of
+# the user-facing flow.
+if [ "${1:-}" = "--print-skill-dirs" ]; then
+    skill_target_dirs
+    exit 0
+fi
 
 info "Checking latest Wally release..."
 VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
@@ -96,15 +121,25 @@ ok "Wally v${VERSION} installed successfully"
 # instructions when the skill runs, so fetching it off a moving branch means a
 # push to main changes what an already-installed assistant does. The tag is the
 # same one the binary above came from, so the two cannot drift apart either.
-SKILL_DIR="${HOME}/.claude/skills/runanywhere"
-info "Installing the RunAnywhere skill for Claude Code..."
-if mkdir -p "$SKILL_DIR" 2>/dev/null &&
-   curl -fsSL "https://raw.githubusercontent.com/${REPO}/v${VERSION}/skills/runanywhere/SKILL.md" \
-        -o "${SKILL_DIR}/SKILL.md"; then
-    ok "Skill installed at ${SKILL_DIR}/SKILL.md"
-else
-    warn "Could not install the Claude skill. Everything else still works."
-fi
+SKILL_URL="https://raw.githubusercontent.com/${REPO}/v${VERSION}/skills/runanywhere/SKILL.md"
+info "Installing the RunAnywhere skill for your coding agent..."
+skill_installed=0
+old_ifs="$IFS"
+IFS='
+'
+for skill_dir in $(skill_target_dirs); do
+    IFS="$old_ifs"
+    if mkdir -p "$skill_dir" 2>/dev/null && curl -fsSL "$SKILL_URL" -o "${skill_dir}/SKILL.md"; then
+        ok "Skill installed at ${skill_dir}/SKILL.md"
+        skill_installed=1
+    else
+        warn "Could not install the skill at ${skill_dir}."
+    fi
+    IFS='
+'
+done
+IFS="$old_ifs"
+[ "$skill_installed" -eq 1 ] || warn "Could not install the RunAnywhere skill. Everything else still works."
 
 # Signing in is the point of the whole flow, so it happens here rather than
 # being left as an instruction the person has to notice. Already signed in is a
