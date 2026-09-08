@@ -190,6 +190,9 @@ function(wally_define_engine_macros target)
     if(RunAnywhere_HAS_SERVER)
         target_compile_definitions(${target} PRIVATE WALLY_HAS_SERVER=1)
     endif()
+    if(TARGET RunAnywhere::server)
+        target_link_libraries(${target} PRIVATE RunAnywhere::server)
+    endif()
 endfunction()
 
 # Win32 LoadLibrary searches the exe directory then PATH. Kit third_party
