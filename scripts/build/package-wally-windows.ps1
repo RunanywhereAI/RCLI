@@ -26,7 +26,12 @@ $Suffix = if ($Channel -eq "dev") { "-dev" } else { "" }
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$CliRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+# This script lives in scripts/build, so the repo root is two levels up, not
+# one. At one level $CliRoot was scripts/, and a relative -BuildDir "build"
+# resolved to scripts/build, where no wally.exe exists -- the packaging step
+# failed with "wally.exe was not found under ...\scripts\build". Matches the
+# bash packager's ROOT=$SCRIPT_DIR/../.. .
+$CliRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 if (-not [IO.Path]::IsPathRooted($BuildDir)) {
     $BuildDir = Join-Path $CliRoot $BuildDir
 }
