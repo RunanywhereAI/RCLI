@@ -85,8 +85,13 @@ if [[ -n "${KIT}" && -d "${KIT}/third_party" ]]; then
       copy_kit_runtime "${KIT}/third_party/libonnxruntime.dylib"
       ;;
     linux-*)
+      # Every shared object the kit ships, not just onnxruntime: the binary
+      # dynamically links sherpa too (libsherpa-onnx-c-api.so), and a bottle
+      # missing any one of them fails to load with `cannot open shared object
+      # file` the moment it runs -- which the `wally version` smoke below is
+      # here to catch. patchelf's $ORIGIN/../lib rpath resolves them from here.
       shopt -s nullglob
-      for so in "${KIT}/third_party"/libonnxruntime.so*; do
+      for so in "${KIT}/third_party"/*.so*; do
         copy_kit_runtime "${so}"
       done
       shopt -u nullglob
