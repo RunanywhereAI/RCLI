@@ -13,8 +13,15 @@ param(
     # that spelling or the native archive is never found.
     [Parameter(Mandatory = $false)]
     [ValidateSet("windows-x86_64", "windows-arm64")]
-    [string]$Platform = "windows-x86_64"
+    [string]$Platform = "windows-x86_64",
+
+    # "prod" for the production bottle, "dev" for the dev-endpoint bottle. Only
+    # the archive filename changes (-dev); the staged tree stays wally-<platform>.
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("prod", "dev")]
+    [string]$Channel = "prod"
 )
+$Suffix = if ($Channel -eq "dev") { "-dev" } else { "" }
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -54,7 +61,7 @@ $DistDir = Join-Path $CliRoot "dist"
 $StageRoot = Join-Path $DistDir "stage"
 $Stage = Join-Path $StageRoot "wally-$Platform"
 $BinDir = Join-Path $Stage "bin"
-$Zip = Join-Path $DistDir "wally-$Version-$Platform.zip"
+$Zip = Join-Path $DistDir "wally-$Version-$Platform$Suffix.zip"
 
 Remove-Item $Stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $BinDir -ItemType Directory -Force | Out-Null

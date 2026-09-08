@@ -17,14 +17,26 @@ permissions:
 env:
   WALLY_VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
+# Every platform builds two bottles from one kit: `prod` (empty bake, falls to
+# the production console defaults in credentials.cpp) and `dev` (dev console
+# endpoints baked in from the WALLY_DEV_* repo variables, so a dev build targets
+# the dev backend with no env vars). The endpoints reach the configure step as
+# environment only — never on the command line, never in committed source. The
+# dev bottle's filename carries a -dev suffix; both extract to wally-<platform>.
 jobs:
   macos:
     # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is
     # Xcode 16.4 / Swift 6.1; macos-14 is Xcode 15 / Swift 5.10.
     runs-on: macos-26
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
     env:
       WALLY_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/fetch-kit.sh macos-arm64 "${GITHUB_WORKSPACE}/kit"
-      - name: Configure + build
+      - name: Configure + build (${{ matrix.variant }})
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
           cmake --build build -j "$(sysctl -n hw.logicalcpu)"
@@ -52,18 +64,19 @@ jobs:
         env:
           WALLY_SDK_KIT: ${{ github.workspace }}/kit
         run: bash scripts/e2e.sh ./build/wally
-      - name: Package
+      - name: Package (${{ matrix.variant }})
         run: |
           VERSION="${WALLY_VERSION#v}"
+          suffix=""; [ "${{ matrix.variant }}" = dev ] && suffix="-dev"
           WALLY_VERSION="${VERSION}" WALLY_SDK_KIT="${GITHUB_WORKSPACE}/kit" \
-            bash scripts/package-wally.sh build macos-arm64
+            bash scripts/package-wally.sh build macos-arm64 "${{ matrix.variant }}"
           python3 scripts/verify-release-assets.py \
-            "dist/wally-${VERSION}-macos-arm64.tar.gz" \
-            "dist/wally-${VERSION}-macos-arm64.tar.gz.sha256"
+            "dist/wally-${VERSION}-macos-arm64${suffix}.tar.gz" \
+            "dist/wally-${VERSION}-macos-arm64${suffix}.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: wally-macos-arm64
-          path: dist/wally-*-macos-arm64.tar.gz*
+          name: wally-macos-arm64-${{ matrix.variant }}
+          path: dist/wally-*-macos-arm64*.tar.gz*
 
   windows-arm64:
     # install.ps1 already prefers wally-<ver>-windows-arm64.zip and warns when it
@@ -71,6 +84,13 @@ jobs:
     # and every Windows-on-ARM user silently got the emulated x64 build.
     runs-on: windows-11-arm
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
+    env:
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,7 +106,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/fetch-kit.sh windows-arm64 "${GITHUB_WORKSPACE}/kit"
-      - name: Configure + build
+      - name: Configure + build (${{ matrix.variant }})
         shell: bash
         run: |
           prefix="${GITHUB_WORKSPACE}/kit"
@@ -100,19 +120,20 @@ jobs:
         env:
           WALLY_SDK_KIT: ${{ github.workspace }}/kit
         run: bash scripts/e2e.sh ./build/wally.exe
-      - name: Package
+      - name: Package (${{ matrix.variant }})
         shell: pwsh
         run: |
           $ver = $env:WALLY_VERSION.TrimStart('v')
           $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
           $env:WALLY_SDK_KIT = $kit
-          & powershell -File scripts/package-wally-windows.ps1 -BuildDir build -Version $ver -KitDir $kit -Platform windows-arm64
+          $suffix = if ("${{ matrix.variant }}" -eq "dev") { "-dev" } else { "" }
+          & powershell -File scripts/package-wally-windows.ps1 -BuildDir build -Version $ver -KitDir $kit -Platform windows-arm64 -Channel "${{ matrix.variant }}"
           python scripts/verify-release-assets.py `
-            "dist/wally-$ver-windows-arm64.zip" `
-            "dist/wally-$ver-windows-arm64.zip.sha256"
+            "dist/wally-$ver-windows-arm64$suffix.zip" `
+            "dist/wally-$ver-windows-arm64$suffix.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: wally-windows-arm64
+          name: wally-windows-arm64-${{ matrix.variant }}
           path: |
             dist/*.zip
             dist/*.zip.sha256
@@ -121,6 +142,13 @@ jobs:
   windows:
     runs-on: windows-2022
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
+    env:
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -134,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/fetch-kit.sh windows-x64 "${GITHUB_WORKSPACE}/kit"
-      - name: Configure + build
+      - name: Configure + build (${{ matrix.variant }})
         shell: bash
         run: |
           prefix="${GITHUB_WORKSPACE}/kit"
@@ -148,21 +176,22 @@ jobs:
         env:
           WALLY_SDK_KIT: ${{ github.workspace }}/kit
         run: bash scripts/e2e.sh ./build/wally.exe
-      - name: Package
+      - name: Package (${{ matrix.variant }})
         shell: pwsh
         run: |
           $ver = $env:WALLY_VERSION.TrimStart('v')
           $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
           $env:WALLY_SDK_KIT = $kit
-          & powershell -File scripts/package-wally-windows.ps1 -BuildDir build -Version $ver -KitDir $kit
+          $suffix = if ("${{ matrix.variant }}" -eq "dev") { "-dev" } else { "" }
+          & powershell -File scripts/package-wally-windows.ps1 -BuildDir build -Version $ver -KitDir $kit -Channel "${{ matrix.variant }}"
           python scripts/verify-release-assets.py `
-            "dist/wally-$ver-windows-x86_64.zip" `
-            "dist/wally-$ver-windows-x86_64.zip.sha256"
+            "dist/wally-$ver-windows-x86_64$suffix.zip" `
+            "dist/wally-$ver-windows-x86_64$suffix.zip.sha256"
       # Zip only. onnxruntime.dll lives next to wally.exe *inside* the archive;
       # uploading the loose DLL/exe made them look like first-class release assets.
       - uses: actions/upload-artifact@v4
         with:
-          name: wally-windows-x64
+          name: wally-windows-x64-${{ matrix.variant }}
           path: |
             dist/*.zip
             dist/*.zip.sha256
@@ -171,6 +200,13 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
+    env:
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -185,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/fetch-kit.sh linux-x64 "${GITHUB_WORKSPACE}/kit"
-      - name: Configure + build
+      - name: Configure + build (${{ matrix.variant }})
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
           cmake --build build --target wally -j "$(nproc)"
@@ -193,18 +229,19 @@ jobs:
         env:
           WALLY_SDK_KIT: ${{ github.workspace }}/kit
         run: bash scripts/e2e.sh ./build/wally
-      - name: Package
+      - name: Package (${{ matrix.variant }})
         run: |
           VERSION="${WALLY_VERSION#v}"
+          suffix=""; [ "${{ matrix.variant }}" = dev ] && suffix="-dev"
           WALLY_VERSION="${VERSION}" WALLY_SDK_KIT="${GITHUB_WORKSPACE}/kit" \
-            bash scripts/package-wally.sh build linux-x86_64
+            bash scripts/package-wally.sh build linux-x86_64 "${{ matrix.variant }}"
           python3 scripts/verify-release-assets.py \
-            "dist/wally-${VERSION}-linux-x86_64.tar.gz" \
-            "dist/wally-${VERSION}-linux-x86_64.tar.gz.sha256"
+            "dist/wally-${VERSION}-linux-x86_64${suffix}.tar.gz" \
+            "dist/wally-${VERSION}-linux-x86_64${suffix}.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: wally-linux-x86_64
-          path: dist/wally-*-linux-x86_64.tar.gz*
+          name: wally-linux-x86_64-${{ matrix.variant }}
+          path: dist/wally-*-linux-x86_64*.tar.gz*
 
   publish:
     needs: [macos, windows, windows-arm64, linux]
@@ -221,22 +258,26 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${WALLY_VERSION#v}"
-          python3 scripts/verify-release-assets.py \
-            "artifacts/wally-${VERSION}-macos-arm64.tar.gz" \
-            "artifacts/wally-${VERSION}-macos-arm64.tar.gz.sha256"
-          python3 scripts/verify-release-assets.py \
-            "artifacts/wally-${VERSION}-windows-x86_64.zip" \
-            "artifacts/wally-${VERSION}-windows-x86_64.zip.sha256"
-          python3 scripts/verify-release-assets.py \
-            "artifacts/wally-${VERSION}-windows-arm64.zip" \
-            "artifacts/wally-${VERSION}-windows-arm64.zip.sha256"
-          python3 scripts/verify-release-assets.py \
-            "artifacts/wally-${VERSION}-linux-x86_64.tar.gz" \
-            "artifacts/wally-${VERSION}-linux-x86_64.tar.gz.sha256"
+          # Both bottles of every platform: prod (no suffix) and dev (-dev).
+          for suffix in "" "-dev"; do
+            python3 scripts/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-macos-arm64${suffix}.tar.gz" \
+              "artifacts/wally-${VERSION}-macos-arm64${suffix}.tar.gz.sha256"
+            python3 scripts/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-windows-x86_64${suffix}.zip" \
+              "artifacts/wally-${VERSION}-windows-x86_64${suffix}.zip.sha256"
+            python3 scripts/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-windows-arm64${suffix}.zip" \
+              "artifacts/wally-${VERSION}-windows-arm64${suffix}.zip.sha256"
+            python3 scripts/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-linux-x86_64${suffix}.tar.gz" \
+              "artifacts/wally-${VERSION}-linux-x86_64${suffix}.tar.gz.sha256"
+          done
       - name: Generate Homebrew formula update
         run: |
           set -euo pipefail
           VERSION="${WALLY_VERSION#v}"
+          # Homebrew ships the production bottle; the dev bottle is not tapped.
           sidecar="artifacts/wally-${VERSION}-macos-arm64.tar.gz.sha256"
           digest=$(awk 'NF == 2 { print $1 }' "$sidecar")
           [[ "$digest" =~ ^[0-9a-f]{64}$ ]]

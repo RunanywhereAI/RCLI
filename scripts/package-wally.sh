@@ -15,8 +15,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUILD="${1:?usage: package-wally.sh <build-dir> <platform-tag>}"
-PLATFORM="${2:?usage: package-wally.sh <build-dir> <platform-tag>}"
+BUILD="${1:?usage: package-wally.sh <build-dir> <platform-tag> [channel]}"
+PLATFORM="${2:?usage: package-wally.sh <build-dir> <platform-tag> [channel]}"
+# channel: empty/prod for the production bottle, "dev" for the dev-endpoint
+# bottle. Only the archive filename changes (-dev); the staged tree and its
+# single root stay wally-<platform> so install scripts extract both the same.
+CHANNEL="${3:-}"
+SUFFIX=""
+[[ "${CHANNEL}" == dev ]] && SUFFIX="-dev"
 [[ "${BUILD}" = /* ]] || BUILD="${ROOT}/${BUILD}"
 
 VERSION="${WALLY_VERSION:-}"
@@ -50,7 +56,7 @@ fi
 DIST="${ROOT}/dist"
 STAGE_ROOT="${DIST}/stage"
 STAGE="${STAGE_ROOT}/wally-${PLATFORM}"
-TARBALL="${DIST}/wally-${VERSION}-${PLATFORM}.tar.gz"
+TARBALL="${DIST}/wally-${VERSION}-${PLATFORM}${SUFFIX}.tar.gz"
 
 rm -rf "${STAGE}"
 mkdir -p "${STAGE}/bin" "${STAGE}/lib"
