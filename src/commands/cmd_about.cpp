@@ -15,6 +15,7 @@
 #include "rac/core/rac_platform_adapter.h"
 #include "runanywhere/proto/schema_lock.h"
 
+#include "account/baked_endpoints.h"
 #include "account/credentials.h"
 #include "cli_formatter.h"
 #include "config/cli_paths.h"
@@ -82,6 +83,15 @@ void register_about(CLI::App& app, GlobalOptions& options) {
 
         const std::map<std::string, EngineRow> engines = collect_backend_rows();
 
+        // Which bottle this binary is: WALLY_BAKED_CONSOLE_API_URL is compiled
+        // in empty for a production build and non-empty for a dev one (see
+        // baked_endpoints.h.in) -- the same compile-time fact
+        // DefaultConsoleUrl() itself keys on. console_url is the *effective*
+        // target though, since an env override still wins over the bake.
+        const bool dev_channel = WALLY_BAKED_CONSOLE_API_URL[0] != '\0';
+        const char* channel = dev_channel ? "development" : "production";
+        const std::string console_url = account::DefaultConsoleUrl();
+
         account::Credentials credentials;
         std::string credentials_error;
         const bool signed_in =
@@ -95,6 +105,8 @@ void register_about(CLI::App& app, GlobalOptions& options) {
                 .field("idl_version", RUNANYWHERE_IDL_VERSION)
                 .field("idl_schema_sha256", RUNANYWHERE_IDL_SCHEMA_SHA256)
                 .field("platform", kPlatform)
+                .field("channel", channel)
+                .field("console", console_url)
                 .field("os", device.os_version)
                 .field("cpu", device.chip)
                 .field("core_count", static_cast<int64_t>(device.core_count))
@@ -144,6 +156,8 @@ void register_about(CLI::App& app, GlobalOptions& options) {
         row("idl", std::string(RUNANYWHERE_IDL_VERSION) + " sha256 " +
                             RUNANYWHERE_IDL_SCHEMA_SHA256);
         row("platform", kPlatform);
+        row("channel", channel);
+        row("console", console_url);
 
         heading(pal, "System");
         row("os", device.os_version.empty() ? "unknown" : device.os_version);
