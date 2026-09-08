@@ -11,7 +11,6 @@
 #include <unistd.h>
 #endif
 
-#include "rac/backends/rac_llm_llamacpp.h"
 #include "rac/core/rac_core.h"
 #include "rac/core/rac_logger.h"
 #include "rac/core/rac_platform_adapter.h"
@@ -83,15 +82,19 @@ rac_log_level_t log_level_for(const GlobalOptions &options) {
   return RAC_LOG_ERROR;
 }
 
+#if defined(WALLY_HAS_LLAMACPP)
 // ggml/llama.cpp prints its backend and Metal init straight to stderr, outside
 // rac_logger's gate, so --quiet never reached it. Route each line back through
 // the logger at ggml's own level: the default ERROR floor and --quiet then
-// drop it like any other SDK log, and --verbose still shows it.
+// drop it like any other SDK log, and --verbose still shows it. Only compiled
+// where llama.cpp is linked -- windows-arm64's kit ships no llamacpp backend,
+// so rac_llamacpp_set_log_callback isn't a symbol there.
 void route_ggml_log(rac_log_level_t level, const char *message, void *) {
   if (message != nullptr && level >= rac_logger_get_min_level()) {
     rac_logger_logf(level, "LLM.LlamaCpp.GGML", nullptr, "%s", message);
   }
 }
+#endif
 
 std::string first_env_value(const char *first, const char *second,
                             const char *third) {
@@ -597,7 +600,9 @@ rac_result_t bootstrap(const GlobalOptions &options, Bootstrapped *out) {
     const rac_log_level_t log_level = log_level_for(options);
     rac_logger_set_stderr_always(RAC_FALSE);
     rac_logger_set_min_level(log_level);
+#if defined(WALLY_HAS_LLAMACPP)
     rac_llamacpp_set_log_callback(route_ggml_log, nullptr);
+#endif
 
     rac_config_t config = {};
     config.platform_adapter = &g_adapter;
