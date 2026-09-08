@@ -18,19 +18,35 @@
 
 namespace wally::commands {
 
-namespace {
-
 // Walk every live primitive. ONNX without RAG only advertises SEGMENT /
 // DIARIZE — omitting those made a registered onnx backend invisible.
-
-struct EngineRow {
-    std::string display_name;
-    std::string version;
-    int32_t priority = 0;
-    std::set<std::string> primitives;
-};
-
-}  // namespace
+std::map<std::string, EngineRow> collect_backend_rows() {
+    std::map<std::string, EngineRow> engines;
+    for (int raw = 1; raw < static_cast<int>(RAC_PRIMITIVE_COUNT); ++raw) {
+        if (raw == 6) {
+            continue; // retired RERANK wire value
+        }
+        const rac_primitive_t primitive = static_cast<rac_primitive_t>(raw);
+        const rac_engine_vtable_t* plugins[16] = {};
+        size_t count = 0;
+        if (rac_plugin_list(primitive, plugins, 16, &count) != RAC_SUCCESS) {
+            continue;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            const rac_engine_metadata_t& meta = plugins[i]->metadata;
+            EngineRow& row = engines[meta.name ? meta.name : "?"];
+            if (meta.display_name) {
+                row.display_name = meta.display_name;
+            }
+            if (meta.engine_version) {
+                row.version = meta.engine_version;
+            }
+            row.priority = meta.priority;
+            row.primitives.insert(rac_primitive_name(primitive));
+        }
+    }
+    return engines;
+}
 
 void register_backends(CLI::App& app, GlobalOptions& options) {
     CLI::App* cmd = app.add_subcommand("backends", "List registered inference backends");
@@ -40,30 +56,7 @@ void register_backends(CLI::App& app, GlobalOptions& options) {
             throw CLI::RuntimeError(1);
         }
 
-        std::map<std::string, EngineRow> engines;
-        for (int raw = 1; raw < static_cast<int>(RAC_PRIMITIVE_COUNT); ++raw) {
-            if (raw == 6) {
-                continue; // retired RERANK wire value
-            }
-            const rac_primitive_t primitive = static_cast<rac_primitive_t>(raw);
-            const rac_engine_vtable_t* plugins[16] = {};
-            size_t count = 0;
-            if (rac_plugin_list(primitive, plugins, 16, &count) != RAC_SUCCESS) {
-                continue;
-            }
-            for (size_t i = 0; i < count; ++i) {
-                const rac_engine_metadata_t& meta = plugins[i]->metadata;
-                EngineRow& row = engines[meta.name ? meta.name : "?"];
-                if (meta.display_name) {
-                    row.display_name = meta.display_name;
-                }
-                if (meta.engine_version) {
-                    row.version = meta.engine_version;
-                }
-                row.priority = meta.priority;
-                row.primitives.insert(rac_primitive_name(primitive));
-            }
-        }
+        std::map<std::string, EngineRow> engines = collect_backend_rows();
 
         if (options.json) {
             out::JsonWriter json;

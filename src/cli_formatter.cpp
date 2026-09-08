@@ -14,15 +14,26 @@
 
 namespace wally {
 
-namespace {
+namespace cli_color {
 
-constexpr const char* kBold = "\033[1m";
-constexpr const char* kBoldCyan = "\033[1;36m";
-constexpr const char* kReset = "\033[0m";
+namespace {
+constexpr const char* kBoldCode = "\033[1m";
+constexpr const char* kBoldCyanCode = "\033[1;36m";
+constexpr const char* kResetCode = "\033[0m";
+}  // namespace
+
+Palette make_palette(bool enabled) {
+    if (!enabled) return Palette{};
+    return Palette{kBoldCode, kBoldCyanCode, kResetCode};
+}
+
+}  // namespace cli_color
+
+namespace {
 
 std::string colorize(const std::string& text, const char* code, bool enabled) {
     if (!enabled || text.empty()) return text;
-    return std::string(code) + text + kReset;
+    return std::string(code) + text + cli_color::kResetCode;
 }
 
 }  // namespace
@@ -42,7 +53,7 @@ CliFormatter::CliFormatter(bool color_enabled) : color_enabled_(color_enabled) {
 std::string CliFormatter::make_group(std::string group, bool is_positional,
                                       std::vector<const CLI::Option*> opts) const {
     std::stringstream out;
-    out << "\n" << colorize(group, kBold, color_enabled_) << ":\n";
+    out << "\n" << colorize(group, cli_color::kBoldCode, color_enabled_) << ":\n";
     for (const CLI::Option* opt : opts) {
         out << make_option(opt, is_positional);
     }
@@ -74,7 +85,7 @@ std::string CliFormatter::make_subcommands(const CLI::App* app, CLI::AppFormatMo
     }
 
     for (const std::string& group : subcmd_groups_seen) {
-        out << '\n' << colorize(group, kBold, color_enabled_) << ":\n";
+        out << '\n' << colorize(group, cli_color::kBoldCode, color_enabled_) << ":\n";
         std::vector<const CLI::App*> subcommands_group = app->get_subcommands([&group](const CLI::App* sub_app) {
             return CLI::detail::to_lower(sub_app->get_group()) == CLI::detail::to_lower(group);
         });
@@ -97,7 +108,7 @@ std::string CliFormatter::make_subcommand(const CLI::App* sub) const {
     const std::string suffix = sub->get_required() ? " " + get_label("REQUIRED") : "";
     const std::string plain_name = "  " + sub->get_display_name(true) + suffix;
 
-    out << colorize("  " + sub->get_display_name(true), kBoldCyan, color_enabled_) << suffix;
+    out << colorize("  " + sub->get_display_name(true), cli_color::kBoldCyanCode, color_enabled_) << suffix;
     if (plain_name.length() < get_column_width()) {
         out << std::string(get_column_width() - plain_name.length(), ' ');
     }
@@ -115,7 +126,7 @@ std::string CliFormatter::make_option(const CLI::Option* opt, bool is_positional
         const std::string plain_left = "  " + make_option_name(opt, true) + make_option_opts(opt);
         const std::string desc = make_option_desc(opt);
 
-        out << colorize("  " + make_option_name(opt, true), kBoldCyan, color_enabled_) << make_option_opts(opt);
+        out << colorize("  " + make_option_name(opt, true), cli_color::kBoldCyanCode, color_enabled_) << make_option_opts(opt);
         if (plain_left.length() < column_width) {
             out << std::string(column_width - plain_left.length(), ' ');
         }
@@ -171,7 +182,7 @@ std::string CliFormatter::make_option(const CLI::Option* opt, bool is_positional
             short_over_size = static_cast<int>(plain_short.length()) - short_column_width;
         }
 
-        const std::string colored_name = colorize("  " + short_names, kBoldCyan, color_enabled_);
+        const std::string colored_name = colorize("  " + short_names, cli_color::kBoldCyanCode, color_enabled_);
         const std::string trailer = plain_short.substr(2 + short_names.length());
         out << colored_name << trailer;
         visible_length += plain_short.length();
@@ -193,7 +204,7 @@ std::string CliFormatter::make_option(const CLI::Option* opt, bool is_positional
         if (!opts_text.empty()) plain_long += opts_text;
         if (static_cast<int>(plain_long.length()) >= adjusted_long_width) plain_long += " ";
 
-        const std::string colored_name = colorize(long_names, kBoldCyan, color_enabled_);
+        const std::string colored_name = colorize(long_names, cli_color::kBoldCyanCode, color_enabled_);
         const std::string trailer = plain_long.substr(long_names.length());
         out << colored_name << trailer;
         visible_length += plain_long.length();

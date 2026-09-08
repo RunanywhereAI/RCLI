@@ -669,6 +669,19 @@ rac_result_t device_http_post(const char *endpoint, const char *json_body,
 
 } // namespace
 
+DeviceSnapshot collect_device_snapshot() {
+  DeviceInfoState info;
+  collect_device_info(info);
+  DeviceSnapshot snapshot;
+  snapshot.chip = info.chip;
+  snapshot.os_version = info.os_version;
+  snapshot.architecture = info.architecture;
+  snapshot.core_count = info.core_count;
+  snapshot.performance_cores = info.performance_cores;
+  snapshot.efficiency_cores = info.efficiency_cores;
+  return snapshot;
+}
+
 rac_result_t install_device_callbacks() {
   auto &info = state();
   char device_id[RAC_DEVICE_ID_BUFFER_MIN_SIZE] = {};

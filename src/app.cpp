@@ -82,6 +82,7 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     commands::register_bench(app, options);
     commands::register_backends(app, options);
     commands::register_info(app, options);
+    commands::register_about(app, options);
     commands::register_version(app, options);
     commands::register_auth(app, options);
     commands::register_account(app, options);
@@ -105,7 +106,7 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
         {"models", "Models"},     {"lora", "Models"},
         {"serve", "Serve & measure"}, {"bench", "Serve & measure"},
         {"backends", "Serve & measure"}, {"info", "Serve & measure"},
-        {"version", "Serve & measure"},
+        {"about", "Serve & measure"},    {"version", "Serve & measure"},
         {"auth", "Account"},      {"login", "Account"},      {"logout", "Account"},
         {"whoami", "Account"},    {"usage", "Account"},
         {"opencode", "Editors & agents"},    {"claude-code", "Editors & agents"},

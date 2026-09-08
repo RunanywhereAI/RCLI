@@ -19,6 +19,24 @@ namespace wally {
 // redirected output (CI logs, `| cat`, a file) always gets plain text.
 bool color_output_enabled(bool no_color_flag);
 
+// The same tasteful, minimal palette CliFormatter uses for `--help`, shared so
+// other output (`wally about`) styles itself identically instead of picking
+// its own ANSI codes.
+namespace cli_color {
+
+// Every field is "" when color is disabled, so a caller can always splice
+// these in (`pal.bold + text + pal.reset`) without an if/else at the call
+// site -- pasting empty strings is a no-op.
+struct Palette {
+    const char* bold = "";
+    const char* bold_cyan = "";
+    const char* reset = "";
+};
+
+Palette make_palette(bool enabled);
+
+}  // namespace cli_color
+
 // Overrides just enough of CLI::Formatter to color section headings and
 // command/option names, computing column padding from the visible (plain)
 // text rather than the ANSI-decorated one -- CLI11's own setw-based padding
