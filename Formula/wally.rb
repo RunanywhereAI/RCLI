@@ -13,7 +13,7 @@ class Wally < Formula
     on_arm do
       url "https://github.com/RunanywhereAI/RCLI/releases/download/v0.5.3/wally-0.5.3-macos-arm64.tar.gz"
       # Placeholder -- no v0.5.3 release has published a wally-named asset
-      # yet. scripts/update-tap.sh re-stamps this from the real release
+      # yet. scripts/release/update-tap.sh re-stamps this from the real release
       # checksum; a stale value here fails brew install's own hash check
       # rather than installing something unverified.
       sha256 "0000000000000000000000000000000000000000000000000000000000000"

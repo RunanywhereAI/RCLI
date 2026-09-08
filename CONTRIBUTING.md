@@ -12,7 +12,7 @@ fix belongs in the SDK, then a new kit — not a workaround here.
 
 - CMake 3.24+, a C++20 compiler
 - A staged kit matching `cmake/sdk-pin.cmake` (`WALLY_PINNED_SDK_VERSION`)
-- Xcode 26+ only if you are linking the shipping Apple binary (`scripts/build-mlx.sh`)
+- Xcode 26+ only if you are linking the shipping Apple binary (`scripts/build/build-mlx.sh`)
 
 Build a kit from a runanywhere-sdks checkout:
 
@@ -46,9 +46,9 @@ at a source tree is a configure error. C++-only: `-DWALLY_APPLE_MLX_HOST=OFF`.
 ```bash
 cmake --build build --target test_wally_unit
 ctest --test-dir build -R wally --output-on-failure
-bash scripts/e2e.sh ./build/wally
+bash scripts/test/e2e.sh ./build/wally
 # Device / overlay: primitives, not engines
-# bash scripts/e2e-modalities.sh ./build/wally
+# bash scripts/test/e2e-modalities.sh ./build/wally
 ```
 
 ## Layout

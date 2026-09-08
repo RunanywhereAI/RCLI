@@ -75,6 +75,6 @@ echo "kit verified and extracted to $DEST"
 
 # Optional NeuRT / QHexRT overlay. Missing overlay is not a failure unless
 # WALLY_REQUIRE_PRIVATE=1 — public bottles stay OSS.
-if [[ -x "$ROOT/scripts/fetch-private-pack.sh" ]]; then
-  "$ROOT/scripts/fetch-private-pack.sh" "$PLATFORM" "$DEST"
+if [[ -x "$ROOT/scripts/build/fetch-private-pack.sh" ]]; then
+  "$ROOT/scripts/build/fetch-private-pack.sh" "$PLATFORM" "$DEST"
 fi

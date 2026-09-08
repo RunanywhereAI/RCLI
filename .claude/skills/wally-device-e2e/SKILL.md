@@ -5,8 +5,8 @@ description: Run engine-agnostic wally modality e2e on Apple Neural Engine (NeuR
 
 # Wally device modality e2e
 
-Do not write per-engine tests. The harness is `scripts/e2e-modalities.sh`,
-called from `scripts/e2e.sh`. Keys are **primitives** (`llm`, `stt`, `tts`,
+Do not write per-engine tests. The harness is `scripts/test/e2e-modalities.sh`,
+called from `scripts/test/e2e.sh`. Keys are **primitives** (`llm`, `stt`, `tts`,
 `vlm`, `embed`, `image`, `vad`, `rerank`, `segment`). wally picks the engine
 from catalog framework, local path, or plugin priority. `--engine` is an
 override (`WALLY_E2E_ENGINE`), never a required test input.
@@ -15,19 +15,19 @@ override (`WALLY_E2E_ENGINE`), never a required test input.
 
 ```bash
 # Public CI (modelless): skip every modality
-bash scripts/e2e.sh /path/to/wally
+bash scripts/test/e2e.sh /path/to/wally
 
 # Device: discover whatever is already on disk, then run each primitive
 export RUNANYWHERE_HOME=/path/to/home          # already-pulled OSS models
 export WALLY_E2E_MODEL_ROOTS=/path/to/hnpu:/path/to/coreml
-bash scripts/e2e-modalities.sh /path/to/wally
+bash scripts/test/e2e-modalities.sh /path/to/wally
 
 # Or pin one primitive (path or catalog id)
 WALLY_E2E_LLM=/path/to/lfm2_5_230m_HNPU \
 WALLY_E2E_STT=/path/to/whisper_base_HNPU \
 WALLY_E2E_TTS=/path/to/kitten_micro_0_8_HNPU \
 WALLY_E2E_EMBED=/path/to/embeddinggemma_300m_HNPU \
-  bash scripts/e2e-modalities.sh /path/to/wally
+  bash scripts/test/e2e-modalities.sh /path/to/wally
 ```
 
 `WALLY_E2E_AUTO=1` pulls small OSS catalog defaults the **registered** backends

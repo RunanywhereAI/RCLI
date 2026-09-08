@@ -5,8 +5,8 @@ description: Verify a built wally binary against a pinned C++ desktop kit on mac
 
 # Wally e2e
 
-Entry: `scripts/e2e.sh <path-to-wally>`. Always runs `scripts/smoke.sh`, then
-`scripts/e2e-modalities.sh` (engine-agnostic primitives). Public CI leaves
+Entry: `scripts/test/e2e.sh <path-to-wally>`. Always runs `scripts/test/smoke.sh`, then
+`scripts/test/e2e-modalities.sh` (engine-agnostic primitives). Public CI leaves
 modality knobs unset so every round-trip **skips**. Device runs set
 `WALLY_E2E_<MOD>` / `WALLY_E2E_MODEL_ROOTS` / `WALLY_E2E_AUTO=1`. See
 `wally-device-e2e` for ANE/NPU.
@@ -29,7 +29,7 @@ Legacy `WALLY_E2E_MLX_MODEL` / `WALLY_E2E_NEURT_MODEL` / `WALLY_E2E_QHEXRT_MODEL
 are classified by path/id into a primitive (not always image). Do not add new
 engine-named knobs.
 
-`scripts/assert-binary-backends.sh` greps `nm`/`llvm-nm`/`dumpbin`/`strings`
+`scripts/test/assert-binary-backends.sh` greps `nm`/`llvm-nm`/`dumpbin`/`strings`
 for registrar symbols (`raMLXRegisterRuntime`, `rac_plugin_entry_neurt`,
 `rac_plugin_entry_qhexrt`, …) so a backends() listing cannot pass without
 the engine actually being linked into the bottle.
@@ -41,7 +41,7 @@ not make a public OSS bottle fail for missing NeuRT.
 
 ## What "green" means
 
-`scripts/assert-backends.sh` requires every engine the kit actually ships:
+`scripts/test/assert-backends.sh` requires every engine the kit actually ships:
 
 | Condition | Required `wally --json backends` name |
 |---|---|
@@ -81,7 +81,7 @@ GitHub Windows: `GITHUB_WORKSPACE` is `D:\a\...`; msys `tar -C` needs
 
 ## Apple MLX host link (Ninja)
 
-`scripts/bundle-core.sh` merges everything `wally` links into `libwally_bundle.a`
+`scripts/build/bundle-core.sh` merges everything `wally` links into `libwally_bundle.a`
 for SwiftPM.
 
 - Ninja **never** writes `CMakeFiles/wally.dir/link.txt` (Makefiles only).
@@ -93,7 +93,7 @@ for SwiftPM.
 - Ninja lists archives twice; `libtool -static` then fails on duplicate
   members unless you dedupe.
 
-`scripts/build-mlx.sh` must dump the xcodebuild log on failure (`Undefined
+`scripts/build/build-mlx.sh` must dump the xcodebuild log on failure (`Undefined
 symbols` does not contain `error:`). Do not grep bare `error:` — every
 CompileC line contains `-Werror=`. Observed CI `32786359915`: grep
 `error:|Metal|BUILD` left only `clang: error: linker command failed`.
@@ -134,12 +134,12 @@ tools version 6.2.0 but the installed version is 6.1.0`. macos-14 is Swift
 ## Linux
 
 Linux bottles are not a v1 merge blocker. Windows x64 and macOS arm64 are.
-`scripts/e2e-linux.sh` exists for later.
+`scripts/test/e2e-linux.sh` exists for later.
 
 ## Private engines
 
 NeuRT / QHexRT only appear in `backends` when the overlay was applied.
-`scripts/e2e.sh` requires `neurt` / `qhexrt` when
+`scripts/test/e2e.sh` requires `neurt` / `qhexrt` when
 `lib/librac_backend_neurt.a` or `lib/rac_backend_qhexrt.lib` exists — not by
 grepping packaged `HAS_NEURT FALSE` (that stays false; find_package flips it
 when the archive is present). Public CI must pass without overlays. Image gen

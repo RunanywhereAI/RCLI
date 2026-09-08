@@ -11,7 +11,7 @@ import Foundation
 //
 // SwiftPM owns the final link so MLX Metal shader bundles land beside the
 // executable. The C++ objects arrive as linker flags from
-// `scripts/build-mlx.sh` (merged archive + system libs), not as a path listed
+// `scripts/build/build-mlx.sh` (merged archive + system libs), not as a path listed
 // here — SwiftPM caches the manifest and would not notice a rebuilt archive.
 //
 // The Swift MLX runtime is a product of the SDK. Independent clones pin the

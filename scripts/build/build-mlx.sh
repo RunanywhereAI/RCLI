@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Apple shipping binary: CMake `wally-cxx` objects + Swift MLX host → build/wally.
 #
-#   scripts/build-mlx.sh [build-dir]
+#   scripts/build/build-mlx.sh [build-dir]
 #
 # Requires:
 #   - cmake already built the wally target (wally-cxx + link.txt)
@@ -19,7 +19,7 @@ if [[ -z "${KIT}" || ! -d "${KIT}/include" ]]; then
     exit 1
 fi
 
-"${ROOT}/scripts/bundle-core.sh" "${BUILD}"
+"${ROOT}/scripts/build/bundle-core.sh" "${BUILD}"
 
 flags=()
 while IFS= read -r entry; do

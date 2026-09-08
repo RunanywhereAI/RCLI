@@ -260,14 +260,14 @@ wally stt transcribe hello.wav
 
 `wally serve` is macOS and Linux.
 
-Device round-trips are **by modality**, not by engine. `scripts/e2e.sh` always
-runs `scripts/e2e-modalities.sh`; public CI leaves the knobs unset and skips.
+Device round-trips are **by modality**, not by engine. `scripts/test/e2e.sh` always
+runs `scripts/test/e2e-modalities.sh`; public CI leaves the knobs unset and skips.
 On a machine that already has models:
 
 ```bash
 export RUNANYWHERE_HOME=/path/to/home          # already-pulled OSS models
 export WALLY_E2E_MODEL_ROOTS=/path/to/hnpu      # *_HNPU / *_ANE / *.mlmodelc trees
-bash scripts/e2e-modalities.sh /path/to/wally   # no --engine required
+bash scripts/test/e2e-modalities.sh /path/to/wally   # no --engine required
 ```
 
 `WALLY_E2E_LLM`, `WALLY_E2E_STT`, `WALLY_E2E_IMAGE`, … pin one primitive. Catalog
@@ -391,7 +391,7 @@ export WALLY_SDK_SWIFT_PATH=/path/to/runanywhere-sdks
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/path/to/kit
 cmake --build build
-# or: scripts/build-mlx.sh build
+# or: scripts/build/build-mlx.sh build
 ./build/wally version
 ./build/wally backends
 ```

@@ -1,7 +1,7 @@
 # The one place every version, pin, and runner image in this repo lives.
 # CMake reads it directly (cmake/sdk-pin.cmake); the copies that can't read TOML
 # at their own step -- workflow refs and runners, the Homebrew formula, the Swift
-# package pin, CMake's own floor -- are held to it by scripts/check-versions.py,
+# package pin, CMake's own floor -- are held to it by scripts/ci/check-versions.py,
 # so drift fails CI. Format is flat `key = "value"`, one per line: both the CMake
 # and the Python side parse it by regex. Keep it flat.
 

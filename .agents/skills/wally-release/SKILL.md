@@ -46,7 +46,7 @@ verify the label landed (`gh pr view --json labels`).
 
 ## 3. CI bar before merge
 
-Required: macOS product e2e (`scripts/e2e.sh ./build/wally`) and Windows e2e
+Required: macOS product e2e (`scripts/test/e2e.sh ./build/wally`) and Windows e2e
 against the pinned kit. `agents-sync.yml` must pass
 (`scripts/ci/check-agents-sync.sh`).
 
@@ -85,7 +85,7 @@ Expect `wally-$PRODUCT-macos-arm64.tar.gz` (+ `.sha256`) and
 
 If `release.yml` still creates a non-draft release, that is the live product
 cut — confirm asset names before anyone bottles from it. Stamp Formula from
-the macOS sidecar (`scripts/stamp-formula.py`) when that path is wired.
+the macOS sidecar (`scripts/release/stamp-formula.py`) when that path is wired.
 
 ## 6. Overlays after the public cut
 

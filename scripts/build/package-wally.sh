@@ -15,6 +15,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=scripts/lib/common.sh
+source "${ROOT}/scripts/lib/common.sh"
 BUILD="${1:?usage: package-wally.sh <build-dir> <platform-tag> [channel]}"
 PLATFORM="${2:?usage: package-wally.sh <build-dir> <platform-tag> [channel]}"
 # channel: empty/prod for the production bottle, "dev" for the dev-endpoint
@@ -25,12 +27,7 @@ SUFFIX=""
 [[ "${CHANNEL}" == dev ]] && SUFFIX="-dev"
 [[ "${BUILD}" = /* ]] || BUILD="${ROOT}/${BUILD}"
 
-VERSION="${WALLY_VERSION:-}"
-if [[ -z "${VERSION}" ]]; then
-  # versions.toml is the single source; read the product version's flat line.
-  VERSION="$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"([0-9.]+)".*/\1/p' \
-    "${ROOT}/versions.toml" | head -1)"
-fi
+VERSION="${WALLY_VERSION:-$(wally_version)}"
 [[ -n "${VERSION}" ]] || { echo "error: cannot resolve WALLY version from versions.toml" >&2; exit 1; }
 
 KIT="${WALLY_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
@@ -41,7 +38,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
   # The macOS bottle is the Swift MLX host. Never silently ship wally-cxx.
   if [[ ! -x "${BUILD}/wally" ]]; then
     echo "error: macOS bottle requires ${BUILD}/wally (Swift MLX host)." >&2
-    echo "  cmake --build with WALLY_APPLE_MLX_HOST=ON, or scripts/build-mlx.sh" >&2
+    echo "  cmake --build with WALLY_APPLE_MLX_HOST=ON, or scripts/build/build-mlx.sh" >&2
     exit 1
   fi
   BIN="${BUILD}/wally"
@@ -71,7 +68,7 @@ shopt -u nullglob
 if [[ "$(uname -s)" == Darwin ]]; then
   if [[ ! -d "${STAGE}/bin/mlx-swift_Cmlx.bundle" ]]; then
     echo "error: macOS bottle requires mlx-swift_Cmlx.bundle next to wally (Metal shaders)." >&2
-    echo "  cmake --build with WALLY_APPLE_MLX_HOST=ON, or scripts/build-mlx.sh" >&2
+    echo "  cmake --build with WALLY_APPLE_MLX_HOST=ON, or scripts/build/build-mlx.sh" >&2
     exit 1
   fi
 fi

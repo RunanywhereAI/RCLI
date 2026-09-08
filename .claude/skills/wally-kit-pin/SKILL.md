@@ -5,8 +5,8 @@ description: Bump cmake/sdk-pin.cmake to a new published SDK C++ desktop kit (ve
 
 # Wally kit pin
 
-Pin file: `cmake/sdk-pin.cmake`. Fetcher: `scripts/fetch-kit.sh`. Overlay:
-`scripts/fetch-private-pack.sh`. CMake wrapper: `cmake/RunAnywhereSDK.cmake`.
+Pin file: `cmake/sdk-pin.cmake`. Fetcher: `scripts/build/fetch-kit.sh`. Overlay:
+`scripts/build/fetch-private-pack.sh`. CMake wrapper: `cmake/RunAnywhereSDK.cmake`.
 
 Companion: **cpp-desktop-kit** in runanywhere-sdks (what the tarball contains).
 
@@ -79,8 +79,8 @@ gotchas; do not weaken public CI to require overlays.
 ## Verify
 
 ```bash
-bash scripts/fetch-kit.sh macos-arm64 /tmp/kit
+bash scripts/build/fetch-kit.sh macos-arm64 /tmp/kit
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/tmp/kit
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
-WALLY_SDK_KIT=/tmp/kit bash scripts/e2e.sh ./build/wally
+WALLY_SDK_KIT=/tmp/kit bash scripts/test/e2e.sh ./build/wally
 ```

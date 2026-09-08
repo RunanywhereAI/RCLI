@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic tests for scripts/verify-release-assets.py."""
+"""Hermetic tests for scripts/release/verify-release-assets.py."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "verify_release_assets", ROOT / "scripts" / "verify-release-assets.py"
+    "verify_release_assets", ROOT / "scripts" / "release" / "verify-release-assets.py"
 )
 assert SPEC is not None and SPEC.loader is not None
 VERIFY = importlib.util.module_from_spec(SPEC)

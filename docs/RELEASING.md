@@ -49,16 +49,16 @@ llm           ok        HTTP 200    1           1         0
 
 `versions.toml` at the repo root is the single source for every version and pin.
 CMake reads it directly, so `project(wally VERSION …)` and the SDK/IDL/kit pins
-in `cmake/sdk-pin.cmake` come from it and nowhere else. `scripts/package-wally.sh`
+in `cmake/sdk-pin.cmake` come from it and nowhere else. `scripts/build/package-wally.sh`
 and `auto-tag.yml` read the product version from it too.
 
 To cut a release, bump `[product] version` there and nothing else. The copies
 that cannot read TOML at their own step, the Homebrew formula's version and the
 Swift package's exact SDK pin, are checked against it by
-`scripts/check-versions.py`, which the CI distribution job and the local sim
+`scripts/ci/check-versions.py`, which the CI distribution job and the local sim
 both run, so a half-done bump fails rather than ships. The formula's per-platform
 `sha256` lines are still stamped from the real release by
-`scripts/update-tap.sh` / `stamp-formula.py`.
+`scripts/release/update-tap.sh` / `stamp-formula.py`.
 
 ## Published asset contract
 
@@ -73,14 +73,14 @@ sidecars. It does not build or advertise a Linux release:
 
 Each root contains a non-empty `README.md` and `bin/wally` or `bin/wally.exe`.
 Windows DLLs stay beside `bin/wally.exe`. The macOS archive contains the Swift
-MLX host and its resource bundles. `scripts/verify-release-assets.py` verifies
+MLX host and its resource bundles. `scripts/release/verify-release-assets.py` verifies
 the sidecar digest, filename, single-root layout, required files, executable
 mode, duplicate paths, traversal, links, and expansion limits. Packaging jobs
 and the publish job all run it before a release is created.
 
 ## Signing reality and production gates
 
-Credential-free macOS packaging is ad-hoc signed. `scripts/package-wally.sh`
+Credential-free macOS packaging is ad-hoc signed. `scripts/build/package-wally.sh`
 checks that signature and can sign with an already-installed Developer ID
 identity via `WALLY_CODESIGN_IDENTITY` and optional `WALLY_CODESIGN_KEYCHAIN`.
 Set `WALLY_REQUIRE_DEVELOPER_ID=1` to make ad-hoc signing an error. The GitHub
@@ -119,5 +119,5 @@ Homebrew still needs one ownership decision: `install.sh` taps the RCLI repo
 (the GitHub repo keeps its name) under the alias `runanywhereai/wally`, while
 the historical update script targeted a separate `homebrew-tap` repo. Until one
 is declared canonical, pass `WALLY_TAP_REPO`
-explicitly to `scripts/update-tap.sh` and apply the generated formula to the
+explicitly to `scripts/release/update-tap.sh` and apply the generated formula to the
 same tap users install from.
