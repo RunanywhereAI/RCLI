@@ -1,7 +1,7 @@
 /**
  * @file cmd_run.cpp
- * @brief `rcli llm generate|stream`, `rcli vlm generate`, and the terminal
- *        aliases `rcli run` / `rcli chat`.
+ * @brief `wally llm generate|stream`, `wally vlm generate`, and the terminal
+ *        aliases `wally run` / `wally chat`.
  *
  * Canonical SDK flow, all heavy lifting in commons:
  *   rac_model_lifecycle_load_proto(validate_availability=true)  → auto-pulls
@@ -16,7 +16,7 @@
  *   Ctrl-C: rac_llm_cancel_proto from the token callback thread.
  *
  * REPL turns are independent generations (no cross-turn memory yet — that
- * needs a commons chat-session API; tracked in the rcli plan doc).
+ * needs a commons chat-session API; tracked in the wally plan doc).
  */
 
 #include "commands/commands.h"
@@ -24,6 +24,7 @@
 #include <csignal>
 #include <chrono>
 #include <condition_variable>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -50,7 +51,7 @@
 #include "repl/repl.h"
 #include "util/term.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -649,7 +650,7 @@ int run_llm(const GlobalOptions& options, LlmVerb verb, const std::string& promp
 
     std::string effective_prompt = prompt;
     if (effective_prompt.empty() && !term::stdin_is_tty()) {
-        // Piped stdin is the prompt: echo "..." | rcli llm generate -m qwen3
+        // Piped stdin is the prompt: echo "..." | wally llm generate -m qwen3
         effective_prompt = read_piped_prompt();
     }
 
@@ -662,7 +663,11 @@ int run_llm(const GlobalOptions& options, LlmVerb verb, const std::string& promp
                                          : stream_once(options, resolved.model_id,
                                                        effective_prompt, params);
     }
-    if (verb == LlmVerb::Chat) {
+    // The REPL is interactive by nature; --json promises exactly one JSON
+    // document on stdout, which an interactive prompt loop can never keep.
+    // `wally run m "" --json` used to fall through into it anyway and exit 0
+    // with nothing on stdout.
+    if (verb == LlmVerb::Chat && !options.json) {
         return run_repl(options, resolved.model_id, params);
     }
     out::error_line("no prompt given");
@@ -710,7 +715,12 @@ void add_generation_options(CLI::App* cmd, const std::shared_ptr<RunParams>& par
     cmd->add_option("--stop", params->stop_sequences,
                     "Stop as soon as this text is produced (repeat for several)");
     cmd->add_option("--max-output-tokens,--max-tokens", params->max_output_tokens,
-                    "Cap the generated tokens (default 1024)");
+                    "Cap the generated tokens (default 1024)")
+        // Range, not PositiveNumber, for the message alone (mirrors
+        // cmd_bench.cpp's --trials): 0 or negative used to reach the engine
+        // as-is and read as "no cap" — full/whole-context output — instead of
+        // the usage error a nonsensical budget should be.
+        ->check(CLI::Range(1, std::numeric_limits<int32_t>::max()));
     cmd->add_option("--reasoning", params->reasoning,
                     "Turn the model's thinking phase on or off (default on)")
         ->check(CLI::IsMember({"on", "off"}));
@@ -784,4 +794,4 @@ void register_llm_aliases(CLI::App& app, GlobalOptions& options) {
         options, LlmVerb::Chat, ModelArg::Positional);
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

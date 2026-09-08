@@ -5,7 +5,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace rcli::harness {
+namespace wally::harness {
 namespace {
 
 namespace fs = std::filesystem;
@@ -107,4 +107,4 @@ std::vector<LocalModel> LocalModels(const std::string& home) {
     return models;
 }
 
-}  // namespace rcli::harness
+}  // namespace wally::harness

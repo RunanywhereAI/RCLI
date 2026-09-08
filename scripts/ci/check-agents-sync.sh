@@ -101,7 +101,7 @@ if [ ! -d "${DST}" ]; then
   printf 'error: missing skills mirror %s (run --fix)\n' "${DST}" >&2
   exit 1
 fi
-if ! is_tracked "${SRC}/rcli-architecture/SKILL.md" || ! is_tracked "${DST}/rcli-architecture/SKILL.md"; then
+if ! is_tracked "${SRC}/wally-architecture/SKILL.md" || ! is_tracked "${DST}/wally-architecture/SKILL.md"; then
   printf 'error: skill trees must be git-tracked (got ignored? check .gitignore)\n' >&2
   status=1
 fi

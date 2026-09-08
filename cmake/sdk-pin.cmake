@@ -1,21 +1,33 @@
-# Pinned SDK kit this RCLI tree is validated against.
-# Bump together with the SHA-256 sidecars after an SDK release.
+# Pinned SDK kit this WALLY tree is validated against.
 #
-# The IDL pins are copied from the kit's share/runanywhere/SCHEMA_LOCK (which
-# is idl/SCHEMA_LOCK from the SDK). RCLI never runs protoc — a mismatch here
-# means consume a new kit and update this file, not regenerate headers.
+# The values are NOT written here any more. They live in `versions.toml` at the
+# repo root, the single source for every version and pin, and this file reads
+# them so its consumers still see the same WALLY_PINNED_* variables. Bump the
+# pins in versions.toml, not here.
 #
-# 0.20.33 moves the IDL pin to 1.1.1 / ec50b7ca, retiring the 0.20.32 note that
-# held it at 1.1.0. That note was correct for its release: 0.20.32 published via
-# `publish_from_run_id`, reusing artifacts built before the monorepo bumped
-# idl/VERSION for a COMMENT-ONLY .proto edit, so the kit genuinely carried the
-# older lock and pinning 1.1.1 would have failed fetch-kit.sh against the very
-# kit it validates. 0.20.33's kits were built after that bump, so these values
-# are read from the shipped SCHEMA_LOCK rather than carried forward.
-set(RCLI_PINNED_SDK_VERSION "0.20.34")
-set(RCLI_PINNED_IDL_VERSION "1.1.1")
-set(RCLI_PINNED_IDL_SCHEMA_SHA256 "ec50b7ca4beff9fa065c5ae1f12dbbc0c996d8b43e64c44bf350ef86a1fa41aa")
-set(RCLI_PINNED_IDL_PROTOC_VERSION "35.1")
-set(RCLI_PINNED_KIT_SHA256_MACOS_ARM64 "8bf2019b27f10001b33d78338b5dcf78a14977c70fcded3f8a3e0647ca8da188")
-set(RCLI_PINNED_KIT_SHA256_WINDOWS_X64 "d472ada77c67bdf4445cd0ba12cb029e9f9cc3ff09937b18fe8025d5e28e5c6f")
-set(RCLI_PINNED_KIT_SHA256_WINDOWS_ARM64 "4d1984ec8c3867a2fe23ed660e586b5ff8515b31211acf8eff7144dfee9cea22")
+# The IDL pins mirror the kit's share/runanywhere/SCHEMA_LOCK (idl/SCHEMA_LOCK
+# from the SDK). WALLY never runs protoc -- a mismatch means consume a new kit
+# and update versions.toml, not regenerate headers. History on why the IDL pin
+# moved from 1.1.0 to 1.1.1 across 0.20.32/0.20.33 is in versions.toml's [sdk]
+# comment and this file's git log.
+
+# Pull one `key = "value"` out of versions.toml into ${out_var}. Flat format by
+# design, so a regex is enough and CMake needs no TOML parser.
+function(_wally_read_version key out_var)
+    file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../versions.toml" _line
+         REGEX "^[ \t]*${key}[ \t]*=")
+    if(NOT _line)
+        message(FATAL_ERROR "versions.toml is missing '${key}'")
+    endif()
+    list(GET _line 0 _line)
+    string(REGEX REPLACE "^[^\"]*\"([^\"]*)\".*$" "\\1" _value "${_line}")
+    set(${out_var} "${_value}" PARENT_SCOPE)
+endfunction()
+
+_wally_read_version("kit_version" WALLY_PINNED_SDK_VERSION)
+_wally_read_version("idl_version" WALLY_PINNED_IDL_VERSION)
+_wally_read_version("idl_schema_sha256" WALLY_PINNED_IDL_SCHEMA_SHA256)
+_wally_read_version("idl_protoc_version" WALLY_PINNED_IDL_PROTOC_VERSION)
+_wally_read_version("kit_sha256_macos_arm64" WALLY_PINNED_KIT_SHA256_MACOS_ARM64)
+_wally_read_version("kit_sha256_windows_x64" WALLY_PINNED_KIT_SHA256_WINDOWS_X64)
+_wally_read_version("kit_sha256_windows_arm64" WALLY_PINNED_KIT_SHA256_WINDOWS_ARM64)

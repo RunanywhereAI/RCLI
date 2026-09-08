@@ -10,7 +10,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -117,4 +117,4 @@ int ensure_model_ready(const GlobalOptions &options, const std::string &ref,
   return 0;
 }
 
-} // namespace rcli::commands
+} // namespace wally::commands

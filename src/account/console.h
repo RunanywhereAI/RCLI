@@ -1,13 +1,14 @@
-#ifndef RCLI_ACCOUNT_CONSOLE_H
-#define RCLI_ACCOUNT_CONSOLE_H
+#ifndef WALLY_ACCOUNT_CONSOLE_H
+#define WALLY_ACCOUNT_CONSOLE_H
 
 #include <cstdint>
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
-namespace rcli::account {
+namespace wally::account {
 
 struct HttpRequest {
     std::string method;
@@ -19,6 +20,17 @@ struct HttpRequest {
 struct HttpResponse {
     int status = 0;
     std::string body;
+    // Response headers, keys lowercased so a lookup does not have to guess the
+    // server's casing. Populated by the real transport; a mock may leave it
+    // empty.
+    std::map<std::string, std::string> headers;
+
+    // The value of a `Retry-After` header as whole seconds, or -1 when the
+    // header is absent or not a plain delay. The hosted API answers overload
+    // with 429 and this header; a client is expected to wait rather than retry
+    // at once. Only the delta-seconds form is honored: an HTTP-date Retry-After
+    // is valid but never sent by this API, so parsing one would be dead code.
+    int retry_after_seconds() const;
 };
 
 using Transport = std::function<bool(const HttpRequest&, HttpResponse*, std::string*)>;
@@ -165,6 +177,6 @@ bool Refresh(const std::string& console_url, const std::string& refresh_token, G
 bool WhoAmI(const std::string& console_url, const std::string& token, Identity* identity,
             std::string* error);
 
-}  // namespace rcli::account
+}  // namespace wally::account
 
-#endif  // RCLI_ACCOUNT_CONSOLE_H
+#endif  // WALLY_ACCOUNT_CONSOLE_H

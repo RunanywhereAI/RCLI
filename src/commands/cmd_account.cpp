@@ -16,12 +16,13 @@
 #include <sys/wait.h>
 #endif
 
+#include "account/baked_endpoints.h"
 #include "account/console.h"
 #include "account/credentials.h"
 #include "commands/commands.h"
 #include "io/output.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 namespace {
 
 void fail(int status) {
@@ -40,7 +41,18 @@ void fail(int status) {
 /// passes the same rules — the path and request code stay exactly as sent.
 /// The console origin the operator declared, normalised, or empty if none.
 std::string ConsoleWebOrigin() {
-    const char* configured = std::getenv("RCLI_CONSOLE_WEB_URL");
+    const char* configured = std::getenv("WALLY_CONSOLE_WEB_URL");
+    if (configured == nullptr || *configured == '\0') {
+        // rcli-era override, still honored so it doesn't go silently unread
+        // after the wally rename.
+        configured = std::getenv("RCLI_CONSOLE_WEB_URL");
+    }
+    if (configured == nullptr || *configured == '\0') {
+        // A dev build carries its approval console compiled in (see
+        // baked_endpoints.h.in) — empty in production builds, and the env
+        // overrides above always win.
+        configured = WALLY_BAKED_CONSOLE_WEB_ORIGIN;
+    }
     std::string origin;
     if (configured == nullptr || *configured == '\0' ||
         !account::NormalizeConsoleUrl(configured, &origin, nullptr)) {
@@ -139,7 +151,7 @@ bool RefreshSession(const account::ConsoleClient& client, account::Credentials* 
                     std::string* error) {
     if (credentials->refresh_token.empty()) {
         if (error != nullptr) {
-            *error = "the cloud session cannot be refreshed; run `rcli login`";
+            *error = "the cloud session cannot be refreshed; run `wally login`";
         }
         return false;
     }
@@ -256,13 +268,13 @@ int Logout() {
     return 0;
 }
 
-int WhoAmI() {
+int WhoAmI(bool as_json) {
     account::Credentials credentials;
     if (!LoadCredentials(&credentials)) {
         return 1;
     }
     if (!credentials.signed_in()) {
-        out::error_line("not signed in — run `rcli login`");
+        out::error_line("not signed in — run `wally login`");
         return 1;
     }
 
@@ -290,6 +302,19 @@ int WhoAmI() {
         return 1;
     }
 
+    // whoami is identity only, by decision: plan, spend and token usage belong
+    // to `wally usage`, and an e2e guard (tests/test_account_cli.py) fails the
+    // build if any of them leak in here. The README is worded to match.
+    if (as_json) {
+        out::JsonWriter json;
+        json.begin_object()
+            .field("email", identity.email)
+            .field("session", "active")
+            .field("console", credentials.console_url)
+            .end_object();
+        out::result_line(json.str());
+        return 0;
+    }
     char line[220];
     std::snprintf(line, sizeof(line), "%-14s %s", "email", identity.email.c_str());
     out::result_line(line);
@@ -303,7 +328,6 @@ int WhoAmI() {
 }  // namespace
 
 void register_account(CLI::App& app, GlobalOptions& options) {
-    static_cast<void>(options);
     auto no_browser = std::make_shared<bool>(false);
     auto console_url = std::make_shared<std::string>();
     auto* login = app.add_subcommand("login", "sign in through the RunAnywhere console");
@@ -311,14 +335,18 @@ void register_account(CLI::App& app, GlobalOptions& options) {
     login
         ->add_option("--console-url", *console_url,
                      "console API origin (default: " + account::DefaultConsoleUrl() + ")")
-        ->envname("RCLI_CONSOLE_URL");
+        ->envname("WALLY_CONSOLE_URL");
     login->callback([no_browser, console_url] { fail(Login(*console_url, !*no_browser)); });
 
     auto* logout = app.add_subcommand("logout", "revoke and remove the cloud session");
     logout->callback([] { fail(Logout()); });
 
+    auto whoami_json = std::make_shared<bool>(false);
     auto* whoami = app.add_subcommand("whoami", "show the signed-in cloud account");
-    whoami->callback([] { fail(WhoAmI()); });
+    whoami->add_flag("--json", *whoami_json, "machine-readable output");
+    // `wally --json whoami` and `wally whoami --json` mean the same thing; see
+    // the identical fix in register_usage (cmd_usage.cpp).
+    whoami->callback([whoami_json, &options] { fail(WhoAmI(*whoami_json || options.json)); });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

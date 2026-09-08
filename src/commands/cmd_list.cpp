@@ -1,6 +1,6 @@
 /**
  * @file cmd_list.cpp
- * @brief `rcli models list` (alias `rcli list`) — downloaded models by
+ * @brief `wally models list` (alias `wally list`) — downloaded models by
  *        default, the whole catalog with --all.
  *
  * The registry is refreshed with rescan_local so on-disk artifacts pulled by
@@ -24,7 +24,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -108,8 +108,8 @@ int run_list(const GlobalOptions& options, bool show_all) {
 
     if (rows.empty()) {
         out::result_line(show_all ? "no models registered"
-                                  : "no models downloaded — try `rcli list --all` then "
-                                    "`rcli pull <id>`");
+                                  : "no models downloaded — try `wally list --all` then "
+                                    "`wally pull <id>`");
         return 0;
     }
     out::table({"ID", "MODALITY", "BACKEND", "SIZE", "DOWNLOADED"}, rows);
@@ -129,4 +129,4 @@ void configure_models_list(CLI::App* cmd, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

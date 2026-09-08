@@ -1,8 +1,8 @@
-# Build output
-build/
-build-*/
-cmake-build-*/
-dist/
+# Build output (root-anchored so .github/actions/build-wally/ isn't caught).
+/build/
+/build-*/
+/cmake-build-*/
+/dist/
 
 # Shallow SDK checkout used by CI to link the Swift MLX host.
 .deps/
@@ -18,7 +18,7 @@ swift/.build/
 # creates this now; the pattern stays so an old working copy is not committed.
 deps/
 
-# Model weights, in case any land in the tree. rcli keeps them out of the repo,
+# Model weights, in case any land in the tree. wally keeps them out of the repo,
 # under ~/.local/share/runanywhere.
 # Use /models/ (root-level only) to avoid ignoring src/models/ headers
 /models/
@@ -84,3 +84,4 @@ dist/
 
 # Local review notes — never part of the product repo.
 /comments/
+__pycache__/

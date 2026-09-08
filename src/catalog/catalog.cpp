@@ -8,7 +8,7 @@
 #include "io/output.h"
 #include "io/proto.h"
 
-namespace rcli::catalog {
+namespace wally::catalog {
 
 namespace {
 
@@ -1654,7 +1654,7 @@ constexpr CatalogEntry kCatalog[] = {
      v1::MODEL_CATEGORY_EMBEDDING, v1::INFERENCE_FRAMEWORK_ONNX,
      v1::MODEL_FORMAT_ONNX, nullptr, kMiniLmFiles, 2, 90 * MB, 0, false},
 
-    // --- Reranking (llama.cpp cross-encoder; `rcli rerank -m <id>`) ---
+    // --- Reranking (llama.cpp cross-encoder; `wally rerank -m <id>`) ---
     {"bge-reranker-v2-m3-q4_k_m", "bge-reranker",
      "BGE Reranker v2-m3 Q4_K_M (Reranking)", v1::MODEL_CATEGORY_EMBEDDING,
      v1::INFERENCE_FRAMEWORK_LLAMA_CPP, v1::MODEL_FORMAT_GGUF,
@@ -1665,8 +1665,8 @@ constexpr CatalogEntry kCatalog[] = {
     // --- Image generation (CoreML diffusion; Apple only) ---
     // Apple-optimized Stable Diffusion 1.5. Id matches the built-in diffusion
     // model registry (diffusion_model_registry.cpp) and the Swift facade's
-    // canonical `.imageGeneration` model, so `rcli image generate` resolves it
-    // and `rcli list` shows it. The palettized CoreML bundle is a directory of
+    // canonical `.imageGeneration` model, so `wally image generate` resolves it
+    // and `wally list` shows it. The palettized CoreML bundle is a directory of
     // compiled .mlmodelc sub-models served by the `coreml` engine; a
     // pre-fetched bundle can also be passed to `--model` as a local path.
     // The Hugging Face *repo page* is HTML (~160 KB) and is not a model.
@@ -1679,7 +1679,7 @@ constexpr CatalogEntry kCatalog[] = {
      "coreml-stable-diffusion-v1-5-palettized_split_einsum_v2_compiled.zip",
      nullptr, 0, 1500 * MB, 0, false},
     // NeuRT advertises LLM + STT + EMBED + RERANK + VLM + EMBED_IMAGE + DIFFUSION; folder refs (same ModelInfo
-    // path as sd15). Pass a local compiled tree to `--model` — `rcli pull` of a
+    // path as sd15). Pass a local compiled tree to `--model` — `wally pull` of a
     // Hugging Face repo page is HTML, not a bundle.
     {"lfm2_5_230m_ane", "lfm2-230m-ane", "LFM2.5 230M (Apple Neural Engine)",
      v1::MODEL_CATEGORY_LANGUAGE, v1::INFERENCE_FRAMEWORK_COREML,
@@ -1695,7 +1695,7 @@ constexpr CatalogEntry kCatalog[] = {
     // that "loads, undrivable" — its manifest parsed and its encoder graph bound, but the SDK's
     // neurt engine filled no embedding_ops, so nothing could drive it. Gate B on an M4 Max:
     // cosine vs the fp32 gold min 0.9588 / mean 0.9890, relevant ranked above irrelevant in 4/4
-    // gold records. `rcli embed --engine ane --model <local tree>`.
+    // gold records. `wally embed --engine ane --model <local tree>`.
     //
     // ASYMMETRIC: the bundle declares "query: " / "passage: " prefixes and returns a materially
     // different vector per role. Measured here, prefixing correctly moves query-vs-relevant
@@ -1709,9 +1709,9 @@ constexpr CatalogEntry kCatalog[] = {
      0, 0, 0, false},
     // The first ANE RERANK row. Its `score` graph role was outside NeuRT's manifest vocabulary, so
     // the published bundle was rejected before a graph was touched. Gate on an M4 Max: positive
-    // beats negative on 5/5 gold triples, matching the reference. `rcli rerank --engine ane`.
+    // beats negative on 5/5 gold triples, matching the reference. `wally rerank --engine ane`.
     //
-    // Category note: MODEL_CATEGORY_RERANK (value 12) exists and is the right one. RCLI's other
+    // Category note: MODEL_CATEGORY_RERANK (value 12) exists and is the right one. WALLY's other
     // reranker (bge-reranker-v2-m3, above) uses MODEL_CATEGORY_EMBEDDING — a pre-existing
     // inconsistency left alone here rather than changed as a drive-by.
     {"nv_rerankqa_1b_v2_ane", "nv-rerank-ane",
@@ -1723,7 +1723,7 @@ constexpr CatalogEntry kCatalog[] = {
     // The first ANE VLM row. Image + prompt -> text: the runtime runs the vision tower, splices its
     // 256 visual tokens over the prompt's <IMG_CONTEXT> positions, then drives the ordinary chunked
     // text decode. Gate on an M4 Max: reproduced all 3 gold generations EXACTLY, word for word,
-    // including prompt-token counts (274/273/274). `rcli vlm generate --engine ane`.
+    // including prompt-token counts (274/273/274). `wally vlm generate --engine ane`.
     {"internvl3_5_1b_ane", "internvl-1b-ane",
      "InternVL3.5 1B (Apple Neural Engine)",
      v1::MODEL_CATEGORY_MULTIMODAL, v1::INFERENCE_FRAMEWORK_COREML,
@@ -1754,7 +1754,7 @@ constexpr CatalogEntry kCatalog[] = {
      v1::MODEL_CATEGORY_SPEECH_SYNTHESIS, v1::INFERENCE_FRAMEWORK_COREML,
      v1::MODEL_FORMAT_MLPACKAGE,
      // The .zip, NOT the repo root. A bare huggingface.co/<org>/<repo> URL makes
-     // `rcli pull` fetch the repo's HTML PAGE -- 120 KB of markup written to disk
+     // `wally pull` fetch the repo's HTML PAGE -- 120 KB of markup written to disk
      // under the model id, with a cheerful "done 100%". Every other ANE row here
      // still has that shape and is therefore listable but not pullable.
      "https://huggingface.co/runanywhere/Kokoro-82M_ANE/resolve/main/"
@@ -1950,7 +1950,7 @@ constexpr CatalogEntry kCatalog[] = {
     // resolve the same native catalog the Android/Flutter apps use. Folder
     // URLs are registered as ModelInfo (same path as CoreML diffusion) —
     // the QNN context tree is fetched by the QHexRT bundle policy or passed
-    // as a local `*_HNPU` directory to `rcli run`.
+    // as a local `*_HNPU` directory to `wally run`.
     {"lfm2_5_230m", "lfm2-230m-npu", "LFM2.5 230M (Hexagon NPU)",
      v1::MODEL_CATEGORY_LANGUAGE, v1::INFERENCE_FRAMEWORK_QHEXRT,
      v1::MODEL_FORMAT_QNN_CONTEXT,
@@ -1973,7 +1973,7 @@ constexpr CatalogEntry kCatalog[] = {
      false},
     // Non-LLM Hexagon primitives. Ids match engines/qhexrt/qhexrt_model_catalog.cpp.
     // Same folder-URL registration as the LLM rows — pass a local `*_HNPU`
-    // directory; do not expect `rcli pull` to fetch the HF repo HTML.
+    // directory; do not expect `wally pull` to fetch the HF repo HTML.
     {"whisper_base", "whisper-base-npu", "Whisper Base (Hexagon NPU)",
      v1::MODEL_CATEGORY_SPEECH_RECOGNITION, v1::INFERENCE_FRAMEWORK_QHEXRT,
      v1::MODEL_FORMAT_QNN_CONTEXT,
@@ -2019,7 +2019,7 @@ constexpr CatalogEntry kCatalog[] = {
     // .build/checkouts/mlx-swift-lm/Libraries/{MLXLLM,MLXVLM}/*Factory.swift —
     // only "nemotron_h" exists, a different string). Loading either would fail
     // with ModelFactoryError.unsupportedModelType. The GGUF+mmproj rows above
-    // (llama.cpp) remain the way to run these two on rcli.
+    // (llama.cpp) remain the way to run these two on wally.
 };
 
 constexpr size_t kCatalogCount = sizeof(kCatalog) / sizeof(kCatalog[0]);
@@ -2028,12 +2028,12 @@ rac_result_t register_entry(const CatalogEntry &entry) {
   // CoreML bundles (a directory of compiled .mlmodelc sub-models) don't fit the
   // URL / multi-file download-factory grammar, which rejects a bare repo ref.
   // Register the ModelInfo directly so the id resolves in the general registry
-  // (and `rcli list` shows it); the bundle itself is fetched by the diffusion
-  // pipeline or supplied to `rcli image --model <local path>`.
+  // (and `wally list` shows it); the bundle itself is fetched by the diffusion
+  // pipeline or supplied to `wally image --model <local path>`.
   if (entry.framework == v1::INFERENCE_FRAMEWORK_COREML ||
       entry.framework == v1::INFERENCE_FRAMEWORK_QHEXRT) {
     // CoreML bundles and QHexRT HNPU folders don't fit the single-file
-    // download-factory grammar. Register ModelInfo so `rcli list` / `rcli run`
+    // download-factory grammar. Register ModelInfo so `wally list` / `wally run`
     // resolve the id; the tree is fetched by the engine or passed as a local path.
     v1::ModelInfo model;
     model.set_id(entry.id);
@@ -2166,4 +2166,4 @@ rac_result_t register_all() {
   return first_error;
 }
 
-} // namespace rcli::catalog
+} // namespace wally::catalog

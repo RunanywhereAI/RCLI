@@ -7,7 +7,7 @@
 #include "rac/core/rac_audio_utils.h"
 #include "rac/core/rac_types.h"
 
-namespace rcli::wav {
+namespace wally::wav {
 
 namespace {
 
@@ -217,4 +217,4 @@ std::vector<float> to_float(const std::vector<int16_t>& samples) {
     return out;
 }
 
-}  // namespace rcli::wav
+}  // namespace wally::wav

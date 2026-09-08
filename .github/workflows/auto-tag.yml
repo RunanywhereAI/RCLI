@@ -17,7 +17,7 @@ permissions:
 jobs:
   auto-tag:
     if: github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Detect release label on merged PR
         id: label
@@ -57,14 +57,14 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Read version from CMakeLists.txt
+      - name: Read version from versions.toml
         if: steps.label.outputs.should-release == 'true'
         id: version
         run: |
           set -euo pipefail
-          REVIEWED=$(sed -nE 's/^project\(rcli VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | head -1)
+          REVIEWED=$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' versions.toml | head -1)
           if [ -z "$REVIEWED" ]; then
-            echo "::error::Could not read project(rcli VERSION ...) from CMakeLists.txt"
+            echo "::error::Could not read the product version from versions.toml"
             exit 1
           fi
           echo "Reviewed version: $REVIEWED"

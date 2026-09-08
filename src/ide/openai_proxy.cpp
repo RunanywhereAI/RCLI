@@ -18,8 +18,9 @@
 #include "account/console.h"
 #include "account/credentials.h"
 #include "io/output.h"
+#include "net/loopback_auth.h"
 
-namespace rcli::ide {
+namespace wally::ide {
 namespace {
 
 /// Splits `http://host:port/v1` into `http://host:port` and `/v1`.
@@ -46,6 +47,9 @@ struct Runtime {
     std::string prefix;
     std::string api_key;
     std::string model;
+    // The secret the editor must present. Loopback binding keeps the network
+    // out; this keeps another local process out.
+    std::string local_token;
     bool verbose = false;
 };
 
@@ -158,10 +162,10 @@ using Json = nlohmann::json;
 /// something the editor cannot read.
 std::string ChunkSaying(const std::string& message) {
     Json chunk;
-    chunk["id"] = "chatcmpl-rcli";
+    chunk["id"] = "chatcmpl-wally";
     chunk["object"] = "chat.completion.chunk";
     chunk["created"] = 0;
-    chunk["model"] = "rcli";
+    chunk["model"] = "wally";
     Json choice;
     choice["index"] = 0;
     choice["delta"] = Json{{"role", "assistant"}, {"content", message}};
@@ -242,7 +246,7 @@ std::string Normalise(const std::string& frame, bool verbose) {
     return ChunkSaying(message);
 }
 
-/// Points a request at the model rcli is serving, whatever it named.
+/// Points a request at the model wally is serving, whatever it named.
 ///
 /// A stale selection saved in the editor's own settings outlives any change to
 /// the list we advertise, so the name in the request cannot be trusted even
@@ -381,8 +385,8 @@ void Stream(Runtime& runtime, const std::string& body, httplib::Response& respon
                     }
                 }
                 const std::string frame =
-                    "data: {\"id\":\"chatcmpl-rcli\",\"object\":\"chat.completion.chunk\","
-                    "\"created\":0,\"model\":\"rcli\",\"choices\":[{\"index\":0,\"delta\":"
+                    "data: {\"id\":\"chatcmpl-wally\",\"object\":\"chat.completion.chunk\","
+                    "\"created\":0,\"model\":\"wally\",\"choices\":[{\"index\":0,\"delta\":"
                     "{\"role\":\"assistant\",\"content\":\"" + message +
                     "\"},\"finish_reason\":\"stop\"}]}\n\n";
                 sink.write(frame.data(), frame.size());
@@ -412,14 +416,15 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
     }
     runtime->api_key = endpoint.api_key;
     runtime->model = model;
+    runtime->local_token = wally::net::GenerateLoopbackToken();
     runtime->verbose = verbose;
 
     Runtime* raw = runtime.get();
     // Every handler catches. An exception thrown into cpp-httplib takes the
-    // process down with it, and a dead rcli takes the model with it too.
+    // process down with it, and a dead wally takes the model with it too.
     raw->server.Get("/v1/models", [raw](const httplib::Request&, httplib::Response& response) {
         try {
-            // Not forwarded. The one model rcli was asked to serve is the one
+            // Not forwarded. The one model wally was asked to serve is the one
             // offered, so there is nothing in the picker that cannot answer.
             Json entry;
             entry["id"] = raw->model;
@@ -436,6 +441,20 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
 
     raw->server.Post("/v1/chat/completions",
                      [raw](const httplib::Request& request, httplib::Response& response) {
+                         // This endpoint spends the signed-in user's credit, so
+                         // it serves only the editor wally configured. Bearer
+                         // token, from the provider key stored in the IDE.
+                         std::string presented;
+                         const std::string authorization = request.get_header_value("Authorization");
+                         constexpr const char* kBearer = "Bearer ";
+                         if (authorization.rfind(kBearer, 0) == 0) {
+                             presented = authorization.substr(std::string(kBearer).size());
+                         }
+                         if (!wally::net::ConstantTimeEquals(presented, raw->local_token)) {
+                             Fail(response, 401,
+                                  "this local endpoint only serves the editor wally configured");
+                             return;
+                         }
                          try {
                              const std::string body = Retarget(*raw, request.body);
                              // The editor decides whether to stream; we only
@@ -453,6 +472,14 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
                                  return;
                              }
                              response.status = reply->status;
+                             // An overloaded upstream answers 429 with a
+                             // Retry-After the wrapped tool is expected to back
+                             // off on. httplib drops response headers unless we
+                             // copy them, so forward this one explicitly.
+                             if (reply->status == 429 && reply->has_header("Retry-After")) {
+                                 response.set_header("Retry-After",
+                                                     reply->get_header_value("Retry-After"));
+                             }
                              response.set_content(reply->body, "application/json");
                          } catch (const std::exception& error) {
                              Fail(response, 500, error.what());
@@ -475,6 +502,7 @@ bool StartProxy(const harness::Endpoint& endpoint, const std::string& model, int
 
     proxy->running = true;
     proxy->base_url = "http://127.0.0.1:" + std::to_string(bound) + "/v1";
+    proxy->auth_token = raw->local_token;
     return true;
 }
 
@@ -492,4 +520,4 @@ void StopProxy(Proxy* proxy) {
     }
 }
 
-}  // namespace rcli::ide
+}  // namespace wally::ide

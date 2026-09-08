@@ -8,7 +8,7 @@
 #include "io/output.h"
 #include "util/term.h"
 
-namespace rcli::progress {
+namespace wally::progress {
 
 namespace {
 
@@ -183,4 +183,4 @@ void DownloadProgressScope::callback(const uint8_t* proto_bytes, size_t proto_si
     }
 }
 
-}  // namespace rcli::progress
+}  // namespace wally::progress

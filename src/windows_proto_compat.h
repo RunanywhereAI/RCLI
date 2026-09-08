@@ -1,7 +1,7 @@
-#ifndef RCLI_WINDOWS_PROTO_COMPAT_H
-#define RCLI_WINDOWS_PROTO_COMPAT_H
+#ifndef WALLY_WINDOWS_PROTO_COMPAT_H
+#define WALLY_WINDOWS_PROTO_COMPAT_H
 
-// Force-included ahead of every rcli translation unit on Windows (see the CLI
+// Force-included ahead of every wally translation unit on Windows (see the CLI
 // CMakeLists). <winnt.h> — pulled in via <windows.h> by Abseil/protobuf headers
 // the CLI transitively includes — defines ERROR_SEVERITY_WARNING and
 // ERROR_SEVERITY_ERROR as preprocessor macros. Those clobber the identically
@@ -25,4 +25,4 @@
 #undef ERROR_SEVERITY_ERROR
 #endif  // _WIN32
 
-#endif  // RCLI_WINDOWS_PROTO_COMPAT_H
+#endif  // WALLY_WINDOWS_PROTO_COMPAT_H

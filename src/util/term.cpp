@@ -14,7 +14,7 @@
 #include <unistd.h>
 #endif
 
-namespace rcli::term {
+namespace wally::term {
 
 bool stdout_is_tty() {
 #if defined(_WIN32)
@@ -59,4 +59,4 @@ bool color_enabled() {
     return stderr_is_tty() && std::getenv("NO_COLOR") == nullptr;
 }
 
-}  // namespace rcli::term
+}  // namespace wally::term

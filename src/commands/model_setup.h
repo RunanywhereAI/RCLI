@@ -2,20 +2,20 @@
  * @file model_setup.h
  * @brief Shared ensure-downloaded + resolve-paths step for speech commands.
  *
- * Resolves a model ref, pulls it when missing (same flow as `rcli pull`), and
+ * Resolves a model ref, pulls it when missing (same flow as `wally pull`), and
  * resolves the on-disk artifact paths through commons'
  * rac_model_lifecycle_resolve_paths_proto — no engine load, no path guessing
  * in the CLI.
  */
 
-#ifndef RCLI_COMMANDS_MODEL_SETUP_H
-#define RCLI_COMMANDS_MODEL_SETUP_H
+#ifndef WALLY_COMMANDS_MODEL_SETUP_H
+#define WALLY_COMMANDS_MODEL_SETUP_H
 
 #include <string>
 
 #include "bootstrap.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 struct ResolvedModelPaths {
     std::string model_id;
@@ -37,6 +37,6 @@ int ensure_model_ready(const GlobalOptions& options, const std::string& ref,
  */
 bool refresh_registry(std::string* error);
 
-}  // namespace rcli::commands
+}  // namespace wally::commands
 
-#endif  // RCLI_COMMANDS_MODEL_SETUP_H
+#endif  // WALLY_COMMANDS_MODEL_SETUP_H

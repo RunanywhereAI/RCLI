@@ -1,6 +1,6 @@
 /**
  * @file cmd_pull.cpp
- * @brief `rcli models download <model|hf.co/...|url>` (alias `rcli pull`) —
+ * @brief `wally models download <model|hf.co/...|url>` (alias `wally pull`) —
  *        download via the commons orchestrator: plan → start → progress
  *        callback → terminal state.
  *
@@ -30,7 +30,7 @@
 #include "io/proto.h"
 #include "progress/progress_bar.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -86,7 +86,7 @@ int pull_model_flow(const GlobalOptions &options, const std::string &model_id) {
 
   // bootstrap() registers the catalog; it does not rescan what is on disk. So
   // registry_status() below can still read DOWNLOADED for a model whose files
-  // were deleted since, and `rcli pull` would report success without fetching
+  // were deleted since, and `wally pull` would report success without fetching
   // anything. A refresh failure is not fatal here: the download path that
   // follows is the fallback, and refusing to pull because a rescan failed would
   // be worse than pulling something already present.
@@ -324,4 +324,4 @@ void configure_models_download(CLI::App *cmd, GlobalOptions &options) {
   });
 }
 
-} // namespace rcli::commands
+} // namespace wally::commands

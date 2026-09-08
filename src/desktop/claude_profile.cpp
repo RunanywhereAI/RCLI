@@ -8,7 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace rcli::desktop {
+namespace wally::desktop {
 namespace {
 
 using Json = nlohmann::json;
@@ -230,4 +230,4 @@ bool GatewayApplied() {
     return meta.value("appliedId", std::string()) == kProfileID;
 }
 
-}  // namespace rcli::desktop
+}  // namespace wally::desktop

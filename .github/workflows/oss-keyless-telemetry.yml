@@ -1,8 +1,8 @@
 # =============================================================================
-# OSS keyless telemetry gate — rcli development → public staging backend
+# OSS keyless telemetry gate — wally development → public staging backend
 # =============================================================================
 # Primary CI for the open-source contract: consume a published C++ desktop kit,
-# build rcli, and keyless-blast all 12 modalities at the staging backend
+# build wally, and keyless-blast all 12 modalities at the staging backend
 # (PUBLIC org). No API key. Staging origin comes from repo secrets/vars —
 # not hardcoded hosts.
 #
@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   keyless-staging-blast:
-    name: rcli keyless → staging backend
+    name: wally keyless → staging backend
     runs-on: macos-14
     timeout-minutes: 60
     steps:
@@ -51,7 +51,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Fetch kit + build rcli + keyless blast
+      - name: Fetch kit + build wally + keyless blast
         if: steps.origin.outputs.skip != 'true'
         env:
           STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}

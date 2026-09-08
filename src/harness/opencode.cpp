@@ -21,7 +21,7 @@
 #include "account/credentials.h"
 #include "io/output.h"
 
-namespace rcli::harness {
+namespace wally::harness {
 namespace {
 
 constexpr const char* kOpenCodeConfigVariable = "OPENCODE_CONFIG_CONTENT";
@@ -170,7 +170,7 @@ int LaunchOpenCodeCloud(const std::string& model, const std::vector<std::string>
         return 1;
     }
     if (!credentials.signed_in()) {
-        out::error_line("not signed in - run `rcli login`");
+        out::error_line("not signed in - run `wally login`");
         return 1;
     }
     if (!VerifyCloudSession(console, &credentials, nullptr, &error)) {
@@ -195,4 +195,4 @@ int LaunchOpenCodeCloud(const std::string& model, const std::vector<std::string>
     return LaunchOpenCodeCloud(model, arguments, console, Spawn);
 }
 
-}  // namespace rcli::harness
+}  // namespace wally::harness

@@ -1,11 +1,12 @@
 #include "io/output.h"
 
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 
 #include "rac/core/rac_error.h"
 
-namespace rcli::out {
+namespace wally::out {
 
 std::string json_escape(const std::string& value) {
     std::string escaped;
@@ -106,9 +107,17 @@ JsonWriter& JsonWriter::field(const std::string& key, int64_t value) {
 
 JsonWriter& JsonWriter::field(const std::string& key, double value) {
     comma();
+    buffer_ += '"' + json_escape(key) + "\":";
+    // NaN and Infinity have no JSON literal; an engine that doesn't compute a
+    // metric (e.g. sherpa's STT confidence) hands back a raw NaN, and %g would
+    // print it verbatim as the bareword `nan` — invalid JSON on every call.
+    if (!std::isfinite(value)) {
+        buffer_ += "null";
+        return *this;
+    }
     char buf[48];
     std::snprintf(buf, sizeof(buf), "%g", value);
-    buffer_ += '"' + json_escape(key) + "\":" + buf;
+    buffer_ += buf;
     return *this;
 }
 
@@ -138,6 +147,10 @@ JsonWriter& JsonWriter::value(int64_t value) {
 
 JsonWriter& JsonWriter::value(double value) {
     comma();
+    if (!std::isfinite(value)) {
+        buffer_ += "null";
+        return *this;
+    }
     char buf[48];
     std::snprintf(buf, sizeof(buf), "%g", value);
     buffer_ += buf;
@@ -218,4 +231,4 @@ void table(const std::vector<std::string>& header,
     }
 }
 
-}  // namespace rcli::out
+}  // namespace wally::out

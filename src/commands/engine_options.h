@@ -1,17 +1,17 @@
 /**
  * @file engine_options.h
- * @brief Shared parsing for rcli engine/framework hints.
+ * @brief Shared parsing for wally engine/framework hints.
  */
 
-#ifndef RCLI_COMMANDS_ENGINE_OPTIONS_H
-#define RCLI_COMMANDS_ENGINE_OPTIONS_H
+#ifndef WALLY_COMMANDS_ENGINE_OPTIONS_H
+#define WALLY_COMMANDS_ENGINE_OPTIONS_H
 
 #include <string>
 
 #include "model_types.pb.h"
 #include "catalog/model_ref.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 struct EngineHintResolution {
     runanywhere::v1::InferenceFramework framework =
@@ -26,6 +26,6 @@ bool parse_engine_hint(const std::string& engine,
 bool resolve_engine_hint(const std::string& engine, EngineHintResolution* out_resolution,
                          std::string* error);
 
-}  // namespace rcli::commands
+}  // namespace wally::commands
 
-#endif  // RCLI_COMMANDS_ENGINE_OPTIONS_H
+#endif  // WALLY_COMMANDS_ENGINE_OPTIONS_H

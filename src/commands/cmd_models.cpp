@@ -1,6 +1,6 @@
 /**
  * @file cmd_models.cpp
- * @brief `rcli models …` — the model-lifecycle namespace from the public API
+ * @brief `wally models …` — the model-lifecycle namespace from the public API
  *        spec (list, get, register, download, delete, load, unload, state).
  *
  * list / get / download / delete reuse the configure_* functions owned by
@@ -34,7 +34,7 @@
 #include "io/proto.h"
 #include "progress/progress_bar.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -412,7 +412,7 @@ void register_models(CLI::App& app, GlobalOptions& options) {
 void register_models_aliases(CLI::App& app, GlobalOptions& options) {
     // CLI11's help banner always names the subcommand's primary registered
     // name, never the alias actually typed (App::get_display_name() ignores
-    // it) — so with "list" primary, `rcli ls --help` rendered "Usage: rcli
+    // it) — so with "list" primary, `wally ls --help` rendered "Usage: wally
     // list [OPTIONS]". Registering the shorter name as primary matches `rm`
     // below, which already makes the same call for the same reason.
     CLI::App* list = app.add_subcommand("ls", "List models (alias of `models list`)");
@@ -429,4 +429,4 @@ void register_models_aliases(CLI::App& app, GlobalOptions& options) {
     configure_models_delete(remove, options);
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

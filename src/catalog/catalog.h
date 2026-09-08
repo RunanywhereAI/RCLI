@@ -12,8 +12,8 @@
  * re-register their catalogs on every launch the same way).
  */
 
-#ifndef RCLI_CATALOG_CATALOG_H
-#define RCLI_CATALOG_CATALOG_H
+#ifndef WALLY_CATALOG_CATALOG_H
+#define WALLY_CATALOG_CATALOG_H
 
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +23,7 @@
 #include "model_types.pb.h"
 #include "rac/core/rac_types.h"
 
-namespace rcli::catalog {
+namespace wally::catalog {
 
 struct CatalogFile {
   const char *url;
@@ -65,6 +65,6 @@ std::vector<std::string> suggestions(const std::string &input, size_t max);
  */
 rac_result_t register_all();
 
-} // namespace rcli::catalog
+} // namespace wally::catalog
 
-#endif // RCLI_CATALOG_CATALOG_H
+#endif // WALLY_CATALOG_CATALOG_H

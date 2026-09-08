@@ -1,6 +1,6 @@
 /**
  * @file cmd_auth.cpp
- * @brief `rcli auth login` — real control-plane handshake.
+ * @brief `wally auth login` — real control-plane handshake.
  *
  * Runs the canonical staging/production auth sequence against the configured
  * backend (--base-url/--api-key/--environment or their RUNANYWHERE_* env
@@ -19,7 +19,7 @@
 
 #include "io/output.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -120,4 +120,4 @@ void register_auth(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

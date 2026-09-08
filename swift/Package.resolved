@@ -1,5 +1,5 @@
 {
-  "originHash" : "9ec40429b727a2dbc9dfa215154f7b4eaebe18efe98501d496078383a93b3a98",
+  "originHash" : "09188216ea12a84d6b8fd68c13caba30ed63ab44062bf5e249c37b478eb6af7c",
   "pins" : [
     {
       "identity" : "devicekit",
@@ -56,12 +56,21 @@
       }
     },
     {
+      "identity" : "runanywhere-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/RunanywhereAI/runanywhere-swift.git",
+      "state" : {
+        "revision" : "3626ecd3db1d33aa3411895bc80f87fc821eaa1e",
+        "version" : "0.20.25"
+      }
+    },
+    {
       "identity" : "swift-asn1",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1.git",
       "state" : {
-        "revision" : "a9a5efd40eaf558a2bcd48d64b1d1646be686008",
-        "version" : "1.7.1"
+        "revision" : "d9a5b37470adc940d22c3bcd5ca6953a516b727f",
+        "version" : "1.7.2"
       }
     },
     {
@@ -87,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-huggingface.git",
       "state" : {
-        "revision" : "b721959445b617d0bf03910b2b4aced345fd93bf",
-        "version" : "0.9.0"
+        "revision" : "9ebe9cb568ff9ebe2f1bcd3ae7d925fbb45ec8d2",
+        "version" : "0.10.0"
       }
     },
     {
@@ -132,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers",
       "state" : {
-        "revision" : "2fa33e1f5e7131a7fc64c28e6d161dcec0d24820",
-        "version" : "1.3.3"
+        "revision" : "c21fdcde390313a6d98d8e33a346f2c3486c3ab0",
+        "version" : "1.3.4"
       }
     },
     {

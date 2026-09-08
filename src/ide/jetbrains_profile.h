@@ -1,5 +1,5 @@
-#ifndef RCLI_IDE_JETBRAINS_PROFILE_H
-#define RCLI_IDE_JETBRAINS_PROFILE_H
+#ifndef WALLY_IDE_JETBRAINS_PROFILE_H
+#define WALLY_IDE_JETBRAINS_PROFILE_H
 
 #include <string>
 
@@ -23,14 +23,14 @@
 /// and the enable flag beside them.
 ///
 /// None of this needs a JetBrains AI subscription. BYOK is the supported path.
-namespace rcli::ide {
+namespace wally::ide {
 
 /// The port the local server is asked for when serving a JetBrains IDE.
 ///
 /// Fixed on purpose. The IDE reads its base URL once at startup, from a file
 /// written before it launches, so a port that moved between runs would leave
-/// that file naming something dead every time rcli exited first. Asking for the
-/// same one keeps the configuration true, and a second rcli holding it only
+/// that file naming something dead every time wally exited first. Asking for the
+/// same one keeps the configuration true, and a second wally holding it only
 /// costs this run a rewrite.
 constexpr int kProviderPort = 11636;
 
@@ -68,6 +68,6 @@ std::string ConfigDirectory(const Product& product);
 /// The application bundle's path, or empty when the IDE is not installed.
 std::string BundlePath(const Product& product);
 
-}  // namespace rcli::ide
+}  // namespace wally::ide
 
-#endif  // RCLI_IDE_JETBRAINS_PROFILE_H
+#endif  // WALLY_IDE_JETBRAINS_PROFILE_H

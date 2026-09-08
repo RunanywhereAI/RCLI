@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
-namespace rcli::commands {
+namespace wally::commands {
 
 bool parse_engine_hint(const std::string& engine,
                        runanywhere::v1::InferenceFramework* out_framework,
@@ -75,4 +75,4 @@ bool resolve_engine_hint(const std::string& engine, EngineHintResolution* out_re
     return true;
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

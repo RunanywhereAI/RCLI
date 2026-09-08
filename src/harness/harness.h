@@ -1,5 +1,5 @@
-#ifndef RCLI_HARNESS_HARNESS_H
-#define RCLI_HARNESS_HARNESS_H
+#ifndef WALLY_HARNESS_HARNESS_H
+#define WALLY_HARNESS_HARNESS_H
 
 #include <string>
 #include <vector>
@@ -15,7 +15,7 @@
 /// model the URL is a server this process starts and stops; for an upstream one
 /// it is the provider's own. That is the same shape Ollama uses, and it is why
 /// a harness needs no plugin to work with us.
-namespace rcli::harness {
+namespace wally::harness {
 
 /// Where a model can be reached over HTTP, and whether we are serving it.
 struct Endpoint {
@@ -37,8 +37,8 @@ struct Endpoint {
 bool ModelIdIsSafe(const std::string& id);
 
 /// Confirms a cloud session is real before it is used to route a live editor
-/// or agent session: refreshes an expired token first (the same dance `rcli
-/// usage` uses), then calls the console's identity endpoint the way `rcli
+/// or agent session: refreshes an expired token first (the same dance `wally
+/// usage` uses), then calls the console's identity endpoint the way `wally
 /// whoami` does. A non-empty `access_token` alone — `Credentials::signed_in()`
 /// — proves nothing: it is a local, offline check that a hand-written
 /// credentials.json satisfies trivially.
@@ -74,10 +74,10 @@ void Release(const Endpoint& endpoint);
 /// exit code. Blocks until the tool exits, then stops anything it started.
 ///
 /// An empty `model` uses whatever the tool is already configured for, which
-/// makes `rcli opencode` a plain passthrough.
+/// makes `wally opencode` a plain passthrough.
 int Launch(const std::string& tool, const std::string& model,
            const std::vector<std::string>& args);
 
-}  // namespace rcli::harness
+}  // namespace wally::harness
 
-#endif  // RCLI_HARNESS_HARNESS_H
+#endif  // WALLY_HARNESS_HARNESS_H

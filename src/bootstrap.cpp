@@ -3,7 +3,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 #if !defined(_WIN32)
 #include <unistd.h>
@@ -35,19 +37,19 @@
 #include "device_info.h"
 #include "io/output.h"
 
-#if defined(RCLI_HAS_LLAMACPP)
+#if defined(WALLY_HAS_LLAMACPP)
 #include "rac/backends/rac_llm_llamacpp.h"
 #endif
-#if defined(RCLI_HAS_ONNX)
+#if defined(WALLY_HAS_ONNX)
 #include "rac/plugin/rac_plugin_entry_onnx.h"
 #endif
-#if defined(RCLI_HAS_SHERPA)
+#if defined(WALLY_HAS_SHERPA)
 #include "rac/plugin/rac_plugin_entry_sherpa.h"
 #endif
-#if defined(RCLI_HAS_MLX)
+#if defined(WALLY_HAS_MLX)
 #include "rac/backends/rac_mlx.h"
 #endif
-#if defined(RCLI_HAS_NEURT)
+#if defined(WALLY_HAS_NEURT)
 // The neurt engine (Apple-only: ANE LLM + CoreML diffusion) has no dedicated
 // rac_backend_neurt_register() fn; register its plugin entry directly. This
 // call also keeps the static rac_backend_neurt archive linked (references
@@ -55,11 +57,11 @@
 #include "rac/plugin/rac_plugin_entry.h"
 #include "rac/plugin/rac_plugin_entry_neurt.h"
 #endif
-#if defined(RCLI_HAS_QHEXRT)
+#if defined(WALLY_HAS_QHEXRT)
 extern "C" rac_result_t rac_backend_qhexrt_register(void);
 #endif
 
-namespace rcli {
+namespace wally {
 
 namespace {
 
@@ -76,9 +78,23 @@ rac_log_level_t log_level_for(const GlobalOptions &options) {
     return RAC_LOG_DEBUG;
   }
   // Quiet by default (like ollama): SDK internals only surface at ERROR.
-  // rcli prints its own user-facing status/progress lines on stderr.
+  // wally prints its own user-facing status/progress lines on stderr.
   return RAC_LOG_ERROR;
 }
+
+#if defined(WALLY_HAS_LLAMACPP)
+// ggml/llama.cpp prints its backend and Metal init straight to stderr, outside
+// rac_logger's gate, so --quiet never reached it. Route each line back through
+// the logger at ggml's own level: the default ERROR floor and --quiet then
+// drop it like any other SDK log, and --verbose still shows it. Only compiled
+// where llama.cpp is linked -- windows-arm64's kit ships no llamacpp backend,
+// so rac_llamacpp_set_log_callback isn't a symbol there.
+void route_ggml_log(rac_log_level_t level, const char *message, void *) {
+  if (message != nullptr && level >= rac_logger_get_min_level()) {
+    rac_logger_logf(level, "LLM.LlamaCpp.GGML", nullptr, "%s", message);
+  }
+}
+#endif
 
 std::string first_env_value(const char *first, const char *second,
                             const char *third) {
@@ -238,11 +254,11 @@ void initialize_sdk_metadata(const Connection &connection) {
   sdk_config.base_url = effective_base_url.c_str();
   sdk_config.device_id = device_id[0] != '\0' ? device_id : "";
   sdk_config.platform = desktop_platform();
-  sdk_config.sdk_version = RCLI_VERSION;
+  sdk_config.sdk_version = WALLY_VERSION;
   sdk_config.client_info.sdk_binding = "cli";
-  sdk_config.client_info.app_identifier = "ai.runanywhere.rcli";
+  sdk_config.client_info.app_identifier = "ai.runanywhere.wally";
   sdk_config.client_info.app_name = "RunAnywhere CLI";
-  sdk_config.client_info.app_version = RCLI_VERSION;
+  sdk_config.client_info.app_version = WALLY_VERSION;
   sdk_config.client_info.app_build = nullptr;
   sdk_config.client_info.locale = locale.empty() ? nullptr : locale.c_str();
   sdk_config.client_info.timezone = timezone.empty() ? nullptr : timezone.c_str();
@@ -258,7 +274,7 @@ void initialize_sdk_metadata(const Connection &connection) {
 // rac_telemetry_manager_set_http_callback (user_data = the manager) so the
 // outcome is reported back through rac_telemetry_manager_http_complete. Mirrors
 // the control-plane POST performed by commons' auth path.
-void rcli_telemetry_http_callback(void *user_data, const char *endpoint,
+void wally_telemetry_http_callback(void *user_data, const char *endpoint,
                                   const char *json_body, size_t json_length,
                                   rac_bool_t requires_auth) {
   auto *manager = static_cast<rac_telemetry_manager_t *>(user_data);
@@ -329,13 +345,13 @@ void rcli_telemetry_http_callback(void *user_data, const char *endpoint,
   }
   if (!ok) {
     // Surface the exact backend rejection (status + response body) so schema
-    // mismatches (e.g. strict extra_forbidden 422s) are diagnosable from rcli.
+    // mismatches (e.g. strict extra_forbidden 422s) are diagnosable from wally.
     out::status_line(std::string("telemetry POST ") + (endpoint ? endpoint : "?") +
                      " -> rc=" + out::describe_result(rc) +
                      " http=" + std::to_string(response.status) +
                      " body=" + (body.empty() ? "(empty)" : body));
     // DEBUG: dump the exact request JSON so a malformed offset can be inspected.
-    if (const char *dump = std::getenv("RCLI_TELEMETRY_DUMP");
+    if (const char *dump = std::getenv("WALLY_TELEMETRY_DUMP");
         dump != nullptr && dump[0] != '\0' && json_body != nullptr) {
       if (FILE *fp = std::fopen(dump, "ab")) {
         std::fwrite(json_body, 1, json_length, fp);
@@ -388,14 +404,14 @@ void initialize_telemetry_auth(const Connection &connection) {
 
   // Create + register the telemetry sink BEFORE Phase 2 so its flush has a sink
   // and events emitted during subsequent commands are tracked. Delivery runs
-  // through rcli_telemetry_http_callback over the desktop HTTP transport; the
+  // through wally_telemetry_http_callback over the desktop HTTP transport; the
   // terminal batch flushes in rac_shutdown() during teardown.
   g_telemetry_manager = rac_telemetry_manager_create(
       connection.environment, device_id[0] != '\0' ? device_id : "",
-      desktop_platform(), RCLI_VERSION);
+      desktop_platform(), WALLY_VERSION);
   if (g_telemetry_manager != nullptr) {
     rac_telemetry_manager_set_http_callback(
-        g_telemetry_manager, rcli_telemetry_http_callback, g_telemetry_manager);
+        g_telemetry_manager, wally_telemetry_http_callback, g_telemetry_manager);
     rac_events_set_telemetry_sink(g_telemetry_manager);
   }
 
@@ -407,7 +423,7 @@ void initialize_telemetry_auth(const Connection &connection) {
     phase1.set_device_id(device_id);
   }
   phase1.set_platform(desktop_platform());
-  phase1.set_sdk_version(RCLI_VERSION);
+  phase1.set_sdk_version(WALLY_VERSION);
 
   std::string phase1_bytes;
   if (!phase1.SerializeToString(&phase1_bytes)) {
@@ -549,6 +565,20 @@ rac_result_t bootstrap(const GlobalOptions &options, Bootstrapped *out) {
   }
 
   if (!g_bootstrapped) {
+    // rac_model_paths_set_base_dir happily creates <home>/Models on first use,
+    // which is right for the real default — but an explicit --home that
+    // doesn't exist is far more often a typo than a fresh directory someone
+    // wants populated from nothing, and the only symptom otherwise is a
+    // catalog that looks empty with no explanation at all.
+    if (!options.home_override.empty()) {
+      std::error_code exists_ec;
+      if (!std::filesystem::exists(home, exists_ec)) {
+        out::status_line("warning: --home '" + home +
+                         "' does not exist yet; it will be created empty "
+                         "(pass the right path, or `wally pull` into this one)");
+      }
+    }
+
     rac_result_t rc = rac_desktop_adapter_init(nullptr, &g_adapter);
     if (rc != RAC_SUCCESS) {
       out::error_line("desktop adapter init failed: " +
@@ -570,11 +600,14 @@ rac_result_t bootstrap(const GlobalOptions &options, Bootstrapped *out) {
     const rac_log_level_t log_level = log_level_for(options);
     rac_logger_set_stderr_always(RAC_FALSE);
     rac_logger_set_min_level(log_level);
+#if defined(WALLY_HAS_LLAMACPP)
+    rac_llamacpp_set_log_callback(route_ggml_log, nullptr);
+#endif
 
     rac_config_t config = {};
     config.platform_adapter = &g_adapter;
     config.log_level = log_level;
-    config.log_tag = "rcli";
+    config.log_tag = "wally";
     rc = rac_init(&config);
     if (rc != RAC_SUCCESS) {
       out::error_line("rac_init failed: " + out::describe_result(rc));
@@ -599,36 +632,41 @@ rac_result_t bootstrap(const GlobalOptions &options, Bootstrapped *out) {
 
     initialize_telemetry_auth(connection);
 
-#if defined(RCLI_HAS_LLAMACPP)
+#if defined(WALLY_HAS_LLAMACPP)
     if (rac_backend_llamacpp_register() != RAC_SUCCESS) {
       out::status_line("warning: llamacpp backend failed to register");
     }
 #endif
-#if defined(RCLI_HAS_ONNX)
+#if defined(WALLY_HAS_ONNX)
     if (rac_backend_onnx_register() != RAC_SUCCESS) {
       out::status_line("warning: onnx backend failed to register");
     }
 #endif
-#if defined(RCLI_HAS_SHERPA)
+#if defined(WALLY_HAS_SHERPA)
     if (rac_backend_sherpa_register() != RAC_SUCCESS) {
       out::status_line("warning: sherpa backend failed to register");
     }
 #endif
-#if defined(RCLI_HAS_MLX)
+#if defined(WALLY_HAS_MLX)
+    // A C++-only host (wally-cxx) links the MLX plugin from the kit but provides
+    // no MLX runtime callbacks, so availability is false by design. That is the
+    // normal state for that build, not a warning — note it only under --verbose.
+    // A host that DOES provide the runtime and still fails to register is a real
+    // problem and always warns.
     if (rac_mlx_is_available() != RAC_TRUE) {
-      out::status_line(
-          "warning: mlx backend requires MLX runtime callbacks; skipping registration");
+      if (options.verbose) {
+        out::status_line("mlx runtime callbacks not provided; skipping MLX backend");
+      }
     } else if (rac_backend_mlx_register() != RAC_SUCCESS) {
-      out::status_line(
-          "warning: mlx backend requires MLX runtime callbacks; backend failed to register");
+      out::status_line("warning: mlx backend failed to register");
     }
 #endif
-#if defined(RCLI_HAS_NEURT)
+#if defined(WALLY_HAS_NEURT)
     if (rac_plugin_register(rac_plugin_entry_neurt()) != RAC_SUCCESS) {
       out::status_line("warning: neurt (Apple Neural Engine) backend failed to register");
     }
 #endif
-#if defined(RCLI_HAS_QHEXRT)
+#if defined(WALLY_HAS_QHEXRT)
     if (rac_backend_qhexrt_register() != RAC_SUCCESS) {
       out::status_line("warning: qhexrt (Qualcomm Hexagon NPU) backend failed to register");
     }
@@ -670,4 +708,4 @@ void shutdown() {
 
 rac_telemetry_manager_t *active_telemetry_manager() { return g_telemetry_manager; }
 
-} // namespace rcli
+} // namespace wally

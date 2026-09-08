@@ -1,6 +1,6 @@
 /**
  * @file cmd_telemetry.cpp
- * @brief `rcli telemetry emit|blast` — model-free control-plane telemetry.
+ * @brief `wally telemetry emit|blast` — model-free control-plane telemetry.
  *
  * Drives the real commons telemetry pipeline end-to-end: payloads are queued
  * with rac_telemetry_manager_track, batched + serialized by commons
@@ -35,11 +35,11 @@
 #include "io/output.h"
 #include "net/control_plane.h"
 
-#ifndef RCLI_VERSION
-#define RCLI_VERSION "0.0.0-dev"
+#ifndef WALLY_VERSION
+#define WALLY_VERSION "0.0.0-dev"
 #endif
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -258,7 +258,7 @@ bool run_telemetry_session(const GlobalOptions& options, FlushReport* report, Tr
     const char* device_id = rac_state_get_device_id();
     rac_telemetry_manager_t* manager = rac_telemetry_manager_create(
         rac_state_get_environment(), device_id != nullptr ? device_id : "", net::platform_name(),
-        RCLI_VERSION);
+        WALLY_VERSION);
     if (manager == nullptr) {
         out::error_line("telemetry manager creation failed");
         return false;
@@ -509,4 +509,4 @@ void register_telemetry(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

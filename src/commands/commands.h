@@ -4,7 +4,7 @@
  *
  * The command surface mirrors the SDK public API spec
  * (thoughts/shared/plans/public_api_spec.md): a namespace per modality and the
- * spec's verb under it (`rcli llm generate`, `rcli models download`, …), with
+ * spec's verb under it (`wally llm generate`, `wally models download`, …), with
  * option names in kebab-case (`--max-output-tokens`, `--top-p`).
  *
  * Each register_* attaches a CLI11 subcommand whose callback performs:
@@ -21,14 +21,19 @@
  * to the process exit code (0 ok, 1 runtime error, 2 usage error).
  */
 
-#ifndef RCLI_COMMANDS_COMMANDS_H
-#define RCLI_COMMANDS_COMMANDS_H
+#ifndef WALLY_COMMANDS_COMMANDS_H
+#define WALLY_COMMANDS_COMMANDS_H
+
+#include <cstdint>
+#include <map>
+#include <set>
+#include <string>
 
 #include <CLI11.hpp>
 
 #include "bootstrap.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 // --- Feature namespaces (spec verb grammar) --------------------------------
 void register_llm(CLI::App& app, GlobalOptions& options);
@@ -54,7 +59,23 @@ void register_models_aliases(CLI::App& app, GlobalOptions& options);  // list, p
 // --- Infrastructure --------------------------------------------------------
 void register_version(CLI::App& app, GlobalOptions& options);
 void register_info(CLI::App& app, GlobalOptions& options);
+void register_about(CLI::App& app, GlobalOptions& options);
 void register_backends(CLI::App& app, GlobalOptions& options);
+
+/** One registered engine, folded across every primitive it advertises. */
+struct EngineRow {
+    std::string display_name;
+    std::string version;
+    int32_t priority = 0;
+    std::set<std::string> primitives;
+};
+
+/**
+ * Snapshot of every registered inference backend, keyed by engine name.
+ * Assumes bootstrap() has already run so the plugin registry is populated —
+ * shared by `wally backends` and `wally about`.
+ */
+std::map<std::string, EngineRow> collect_backend_rows();
 void register_serve(CLI::App& app, GlobalOptions& options);
 void register_bench(CLI::App& app, GlobalOptions& options);
 void register_auth(CLI::App& app, GlobalOptions& options);
@@ -97,7 +118,7 @@ int pull_model_flow(const GlobalOptions& options, const std::string& model_id);
 
 /**
  * Attach the spec verb name to a namespace whose options live on the namespace
- * itself (`rcli stt transcribe --input a.wav` and `rcli stt --input a.wav` are
+ * itself (`wally stt transcribe --input a.wav` and `wally stt --input a.wav` are
  * the same command). The verb is a grammar marker: CLI11 fallthrough hands its
  * options to the parent, and the parent owns the single callback.
  */
@@ -108,6 +129,6 @@ inline CLI::App* add_verb_alias(CLI::App* ns, const std::string& verb,
     return verb_app;
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands
 
-#endif  // RCLI_COMMANDS_COMMANDS_H
+#endif  // WALLY_COMMANDS_COMMANDS_H

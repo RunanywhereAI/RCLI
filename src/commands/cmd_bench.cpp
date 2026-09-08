@@ -1,6 +1,6 @@
 /**
  * @file cmd_bench.cpp
- * @brief `rcli bench [model]` — auto-benchmark installed models, like the
+ * @brief `wally bench [model]` — auto-benchmark installed models, like the
  *        Android app's benchmark screen.
  *
  * With no model argument it enumerates every downloaded, non-built-in model
@@ -29,10 +29,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "catalog/model_ref.h"
@@ -50,7 +52,7 @@
 #include "rac/features/vlm/rac_vlm_service.h"
 #include "rac/infrastructure/model_management/rac_model_registry.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -650,7 +652,7 @@ int run_bench(const GlobalOptions& options, const std::string& model_ref_arg, in
     // bundle directory, an HF ref or a URL all work here too. collect_models
     // only ever scans the registry, so without this an unregistered ref — which
     // is what a freshly staged bundle on disk is — reported "not a downloaded
-    // benchmarkable model" even though `rcli run` could load it fine.
+    // benchmarkable model" even though `wally run` could load it fine.
     std::string only_model = model_ref_arg;
     if (!model_ref_arg.empty()) {
         model_ref::Resolved resolved;
@@ -671,14 +673,36 @@ int run_bench(const GlobalOptions& options, const std::string& model_ref_arg, in
     }
     if (models.empty()) {
         out::error_line(only_model.empty()
-                            ? "no downloaded models to benchmark (pull one with `rcli pull`)"
+                            ? "no downloaded models to benchmark (pull one with `wally pull`)"
                             : "model '" + only_model + "' is not a downloaded benchmarkable model");
         return 1;
     }
 
+    // `--vlm-image`'s default is a path inside the wally source tree
+    // (docs/gifs/...), so it silently doesn't exist for anyone benchmarking an
+    // installed binary from any other cwd. Checked once, outside the loop: the
+    // llama.cpp load failure it otherwise causes reports "Input is invalid"
+    // with the real cause buried in the engine's own stderr lines above it.
+    std::error_code vlm_image_ec;
+    const bool vlm_image_exists = std::filesystem::exists(vlm_image, vlm_image_ec);
+
     std::vector<BenchRow> rows;
     for (const BenchModel& model : models) {
         for (const Scenario& scenario : scenarios_for(model.modality)) {
+            if (model.modality == Modality::kVlm && !vlm_image_exists) {
+                BenchRow row;
+                row.model_id = model.id;
+                row.modality = model.modality;
+                row.scenario = scenario.label;
+                row.trials = trials;
+                row.error = "VLM sample image not found: '" + vlm_image +
+                            "' (pass --vlm-image <path>; the built-in default only "
+                            "resolves from inside the wally source tree)";
+                out::status_line(std::string("skipping ") + modality_label(model.modality) + " " +
+                                 model.id + " — " + scenario.label + ": " + row.error);
+                rows.push_back(row);
+                continue;
+            }
             out::status_line(std::string("benchmarking ") + modality_label(model.modality) + " " +
                              model.id + " — " + scenario.label + " (" + std::to_string(trials) +
                              " trials)");
@@ -783,4 +807,4 @@ void register_bench(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

@@ -5,13 +5,13 @@
 #include <iostream>
 #include <system_error>
 
-#if !defined(RCLI_NO_LINENOISE)
+#if !defined(WALLY_NO_LINENOISE)
 extern "C" {
 #include <linenoise.h>
 }
 #endif
 
-namespace rcli::repl {
+namespace wally::repl {
 
 namespace {
 // MSVC's <filesystem>/<fstream> decode a narrow std::string through the ANSI
@@ -26,7 +26,7 @@ LineEditor::LineEditor(std::string history_path) : history_path_(std::move(histo
     if (!history_path_.empty()) {
         std::error_code ec;
         std::filesystem::create_directories(utf8_path(history_path_).parent_path(), ec);
-#if !defined(RCLI_NO_LINENOISE)
+#if !defined(WALLY_NO_LINENOISE)
         linenoiseHistoryLoad(history_path_.c_str());
         linenoiseHistorySetMaxLen(512);
 #endif
@@ -34,7 +34,7 @@ LineEditor::LineEditor(std::string history_path) : history_path_(std::move(histo
 }
 
 LineEditor::~LineEditor() {
-#if !defined(RCLI_NO_LINENOISE)
+#if !defined(WALLY_NO_LINENOISE)
     if (!history_path_.empty()) {
         linenoiseHistorySave(history_path_.c_str());
     }
@@ -42,7 +42,7 @@ LineEditor::~LineEditor() {
 }
 
 bool LineEditor::read_line(const std::string& prompt, std::string* out_line) {
-#if defined(RCLI_NO_LINENOISE)
+#if defined(WALLY_NO_LINENOISE)
     std::cerr << prompt;
     std::cerr.flush();
     return static_cast<bool>(std::getline(std::cin, *out_line));
@@ -59,7 +59,7 @@ bool LineEditor::read_line(const std::string& prompt, std::string* out_line) {
 
 void LineEditor::add_history(const std::string& line) {
     if (!line.empty()) {
-#if defined(RCLI_NO_LINENOISE)
+#if defined(WALLY_NO_LINENOISE)
         if (!history_path_.empty()) {
             std::ofstream history(utf8_path(history_path_), std::ios::app);
             history << line << '\n';
@@ -70,4 +70,4 @@ void LineEditor::add_history(const std::string& line) {
     }
 }
 
-}  // namespace rcli::repl
+}  // namespace wally::repl

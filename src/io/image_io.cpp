@@ -3,7 +3,7 @@
  * @brief RGBA → PNG encoder (stored/uncompressed DEFLATE, zero dependencies).
  *
  * The commons CoreML diffusion engine returns raw RGBA pixel data. To honour
- * `rcli image ... --out foo.png` we wrap those pixels in a valid PNG container.
+ * `wally image ... --out foo.png` we wrap those pixels in a valid PNG container.
  * We avoid pulling libpng/zlib into the CLI by emitting the IDAT as a zlib
  * stream built from *stored* DEFLATE blocks (BTYPE=00). The file is larger than
  * a compressed PNG but is byte-for-byte valid per the PNG/zlib/DEFLATE specs.
@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-namespace rcli::image {
+namespace wally::image {
 
 namespace {
 
@@ -254,4 +254,4 @@ bool read_ppm(const std::string& path, RgbImage* out, std::string* error) {
     return true;
 }
 
-}  // namespace rcli::image
+}  // namespace wally::image

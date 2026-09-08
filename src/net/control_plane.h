@@ -1,8 +1,8 @@
 /**
  * @file control_plane.h
- * @brief Control-plane network wiring for rcli (auth, device, telemetry HTTP).
+ * @brief Control-plane network wiring for wally (auth, device, telemetry HTTP).
  *
- * rcli is the 6th consumer of runanywhere-commons and plays the same role the
+ * wally is the 6th consumer of runanywhere-commons and plays the same role the
  * Swift/Kotlin/Flutter/RN/Web bridges play for the control plane. This module
  * drives the canonical commons entry points (rac_auth_* +
  * rac_sdk_init_phase2_proto); bootstrap.cpp installs platform callbacks through
@@ -12,15 +12,15 @@
  * Requires bootstrap() (rac_init + curl transport + rac_state) to have run.
  */
 
-#ifndef RCLI_NET_CONTROL_PLANE_H
-#define RCLI_NET_CONTROL_PLANE_H
+#ifndef WALLY_NET_CONTROL_PLANE_H
+#define WALLY_NET_CONTROL_PLANE_H
 
 #include <cstdint>
 #include <string>
 
 #include "rac/core/rac_types.h"
 
-namespace rcli::net {
+namespace wally::net {
 
 /** "macos" / "linux" / "windows" — the X-Platform header + auth payload value. */
 const char* platform_name();
@@ -83,6 +83,6 @@ struct LoginSummary {
  */
 rac_result_t login(LoginSummary* out, std::string* error);
 
-}  // namespace rcli::net
+}  // namespace wally::net
 
-#endif  // RCLI_NET_CONTROL_PLANE_H
+#endif  // WALLY_NET_CONTROL_PLANE_H

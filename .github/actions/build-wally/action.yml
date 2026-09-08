@@ -1,0 +1,71 @@
+name: Build wally
+description: >-
+  Configure, build, and optionally package a wally bottle from a pinned C++
+  desktop kit. The configure→build sequence is identical across ci.yml and
+  release.yml and every platform; this is the one place it lives. The dev/prod
+  bake is read from the WALLY_BAKED_CONSOLE_* environment the caller sets (empty
+  for prod), so nothing endpoint-shaped is passed here.
+
+inputs:
+  platform:
+    description: macos-arm64 | linux-x64 | windows-x64 | windows-arm64
+    required: true
+  kit-dir:
+    description: Path to the fetched kit (CMAKE_PREFIX_PATH).
+    required: true
+  variant:
+    description: prod | dev — only affects the packaged filename (-dev).
+    required: false
+    default: prod
+  package:
+    description: 'true to also produce the release bottle; false to only build.'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Configure + build (${{ inputs.variant }})
+      shell: bash
+      run: |
+        set -euo pipefail
+        prefix="${{ inputs.kit-dir }}"
+        # Windows ninja wants a forward-slash prefix.
+        if command -v cygpath >/dev/null 2>&1; then prefix="$(cygpath -m "$prefix")"; fi
+        extra=()
+        # Linux links the product but not the header-only-httplib test exes.
+        [[ "${{ inputs.platform }}" == linux-x64 ]] && extra+=(-DBUILD_TESTING=OFF)
+        # Compiler cache is best-effort: use whichever the caller's cache step
+        # installed (ccache, or sccache for MSVC), never fail the build for its
+        # absence.
+        if command -v ccache >/dev/null 2>&1; then
+          extra+=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+        elif command -v sccache >/dev/null 2>&1; then
+          extra+=(-DCMAKE_CXX_COMPILER_LAUNCHER=sccache)
+        fi
+        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "${extra[@]}" \
+          -DCMAKE_PREFIX_PATH="$prefix"
+        case "${{ inputs.platform }}" in
+          macos-arm64) cmake --build build -j "$(sysctl -n hw.logicalcpu)" ;;
+          linux-x64)   cmake --build build --target wally -j "$(nproc)" ;;
+          *)           cmake --build build --config Release ;;
+        esac
+
+    - name: Package (${{ inputs.variant }})
+      if: ${{ inputs.package == 'true' }}
+      shell: bash
+      env:
+        WALLY_SDK_KIT: ${{ inputs.kit-dir }}
+      run: |
+        set -euo pipefail
+        ver="${WALLY_VERSION#v}"
+        case "${{ inputs.platform }}" in
+          macos-arm64)
+            WALLY_VERSION="$ver" bash scripts/build/package-wally.sh build macos-arm64 "${{ inputs.variant }}" ;;
+          linux-x64)
+            WALLY_VERSION="$ver" bash scripts/build/package-wally.sh build linux-x86_64 "${{ inputs.variant }}" ;;
+          windows-x64)
+            pwsh -File scripts/build/package-wally-windows.ps1 -BuildDir build -Version "$ver" -KitDir "${{ inputs.kit-dir }}" -Channel "${{ inputs.variant }}" ;;
+          windows-arm64)
+            pwsh -File scripts/build/package-wally-windows.ps1 -BuildDir build -Version "$ver" -KitDir "${{ inputs.kit-dir }}" -Platform windows-arm64 -Channel "${{ inputs.variant }}" ;;
+        esac

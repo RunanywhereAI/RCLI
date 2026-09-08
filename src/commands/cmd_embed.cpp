@@ -1,6 +1,6 @@
 /**
  * @file cmd_embed.cpp
- * @brief `rcli embed [input]` — text embeddings via the commons lifecycle path.
+ * @brief `wally embed [input]` — text embeddings via the commons lifecycle path.
  */
 
 #include "commands/commands.h"
@@ -24,7 +24,7 @@
 #include "io/proto.h"
 #include "progress/progress_bar.h"
 
-namespace rcli::commands {
+namespace wally::commands {
 
 namespace {
 
@@ -305,4 +305,4 @@ void register_embed(CLI::App& app, GlobalOptions& options) {
     });
 }
 
-}  // namespace rcli::commands
+}  // namespace wally::commands

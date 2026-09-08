@@ -15,16 +15,28 @@ permissions:
   contents: write
 
 env:
-  RCLI_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  WALLY_VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
+# Every platform builds two bottles from one kit: `prod` (empty bake -> the
+# production console defaults in credentials.cpp) and `dev` (dev console
+# endpoints baked from the WALLY_DEV_* repo variables, so a dev build targets
+# the dev backend with no env vars). The bake reaches the configure step as
+# environment only — never on the command line, never in committed source. The
+# configure→build→package sequence lives in .github/actions/build-wally; e2e
+# runs on the binary it produced, so the bottle is built exactly once.
 jobs:
   macos:
-    # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is
-    # Xcode 16.4 / Swift 6.1; macos-14 is Xcode 15 / Swift 5.10.
+    # SDK Package.swift is swift-tools-version 6.2 (Xcode 26).
     runs-on: macos-26
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
     env:
-      RCLI_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
+      WALLY_SDK_SWIFT_PATH: ${{ github.workspace }}/.deps/runanywhere-sdks
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,39 +50,54 @@ jobs:
           path: .deps/runanywhere-sdks
       - name: Install ninja
         run: brew install ninja
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d
+        with:
+          key: ccache-release-macos-arm64
+      - name: Cache kit
+        id: kit
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: kit
+          key: kit-macos-arm64-${{ hashFiles('versions.toml') }}
       - name: Download C++ desktop kit
+        if: steps.kit.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash scripts/fetch-kit.sh macos-arm64 "${GITHUB_WORKSPACE}/kit"
-      - name: Configure + build
-        run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/kit"
-          cmake --build build -j "$(sysctl -n hw.logicalcpu)"
+          bash scripts/build/fetch-kit.sh macos-arm64 "${GITHUB_WORKSPACE}/kit"
+      - uses: ./.github/actions/build-wally
+        with:
+          platform: macos-arm64
+          kit-dir: ${{ github.workspace }}/kit
+          variant: ${{ matrix.variant }}
+          package: 'true'
       - name: Product e2e
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli
-      - name: Package
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/test/e2e.sh ./build/wally
+      - name: Verify archive
         run: |
-          VERSION="${RCLI_VERSION#v}"
-          RCLI_VERSION="${VERSION}" RCLI_SDK_KIT="${GITHUB_WORKSPACE}/kit" \
-            bash scripts/package-rcli.sh build macos-arm64
-          python3 scripts/verify-release-assets.py \
-            "dist/rcli-${VERSION}-macos-arm64.tar.gz" \
-            "dist/rcli-${VERSION}-macos-arm64.tar.gz.sha256"
+          VERSION="${WALLY_VERSION#v}"
+          suffix=""; [ "${{ matrix.variant }}" = dev ] && suffix="-dev"
+          python3 scripts/release/verify-release-assets.py \
+            "dist/wally-${VERSION}-macos-arm64${suffix}.tar.gz" \
+            "dist/wally-${VERSION}-macos-arm64${suffix}.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-macos-arm64
-          path: dist/rcli-*-macos-arm64.tar.gz*
+          name: wally-macos-arm64-${{ matrix.variant }}
+          path: dist/wally-*-macos-arm64*.tar.gz*
 
   windows-arm64:
-    # install.ps1 already prefers rcli-<ver>-windows-arm64.zip and warns when it
-    # is absent; until this job existed the preferred path could never be taken
-    # and every Windows-on-ARM user silently got the emulated x64 build.
     runs-on: windows-11-arm
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
+    env:
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,40 +106,46 @@ jobs:
         with:
           arch: arm64
       - uses: seanmiddleditch/gha-setup-ninja@master
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d
+        with:
+          key: ccache-release-windows-arm64
+          variant: sccache
+      - name: Cache kit
+        id: kit
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: kit
+          key: kit-windows-arm64-${{ hashFiles('versions.toml') }}
       - name: Download C++ desktop kit
+        if: steps.kit.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/fetch-kit.sh windows-arm64 "${GITHUB_WORKSPACE}/kit"
-      - name: Configure + build
-        shell: bash
-        run: |
-          prefix="${GITHUB_WORKSPACE}/kit"
-          if command -v cygpath >/dev/null 2>&1; then
-            prefix="$(cygpath -m "$prefix")"
-          fi
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
-          cmake --build build --config Release
+          bash scripts/build/fetch-kit.sh windows-arm64 "${GITHUB_WORKSPACE}/kit"
+      - uses: ./.github/actions/build-wally
+        with:
+          platform: windows-arm64
+          kit-dir: ${{ github.workspace }}/kit
+          variant: ${{ matrix.variant }}
+          package: 'true'
       - name: Product e2e
         shell: bash
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli.exe
-      - name: Package
-        shell: pwsh
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/test/e2e.sh ./build/wally.exe
+      - name: Verify archive
+        shell: bash
         run: |
-          $ver = $env:RCLI_VERSION.TrimStart('v')
-          $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
-          $env:RCLI_SDK_KIT = $kit
-          & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit -Platform windows-arm64
-          python scripts/verify-release-assets.py `
-            "dist/rcli-$ver-windows-arm64.zip" `
-            "dist/rcli-$ver-windows-arm64.zip.sha256"
+          ver="${WALLY_VERSION#v}"
+          suffix=""; [ "${{ matrix.variant }}" = dev ] && suffix="-dev"
+          python scripts/release/verify-release-assets.py \
+            "dist/wally-$ver-windows-arm64$suffix.zip" \
+            "dist/wally-$ver-windows-arm64$suffix.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-windows-arm64
+          name: wally-windows-arm64-${{ matrix.variant }}
           path: |
             dist/*.zip
             dist/*.zip.sha256
@@ -121,55 +154,122 @@ jobs:
   windows:
     runs-on: windows-2022
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
+    env:
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d
+        with:
+          key: ccache-release-windows-x64
+          variant: sccache
+      - name: Cache kit
+        id: kit
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: kit
+          key: kit-windows-x64-${{ hashFiles('versions.toml') }}
       - name: Download C++ desktop kit
+        if: steps.kit.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/fetch-kit.sh windows-x64 "${GITHUB_WORKSPACE}/kit"
-      - name: Configure + build
-        shell: bash
-        run: |
-          prefix="${GITHUB_WORKSPACE}/kit"
-          if command -v cygpath >/dev/null 2>&1; then
-            prefix="$(cygpath -m "$prefix")"
-          fi
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
-          cmake --build build --config Release
+          bash scripts/build/fetch-kit.sh windows-x64 "${GITHUB_WORKSPACE}/kit"
+      - uses: ./.github/actions/build-wally
+        with:
+          platform: windows-x64
+          kit-dir: ${{ github.workspace }}/kit
+          variant: ${{ matrix.variant }}
+          package: 'true'
       - name: Product e2e
         shell: bash
         env:
-          RCLI_SDK_KIT: ${{ github.workspace }}/kit
-        run: bash scripts/e2e.sh ./build/rcli.exe
-      - name: Package
-        shell: pwsh
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/test/e2e.sh ./build/wally.exe
+      - name: Verify archive
+        shell: bash
         run: |
-          $ver = $env:RCLI_VERSION.TrimStart('v')
-          $kit = Join-Path $env:GITHUB_WORKSPACE "kit"
-          $env:RCLI_SDK_KIT = $kit
-          & powershell -File scripts/package-rcli-windows.ps1 -BuildDir build -Version $ver -KitDir $kit
-          python scripts/verify-release-assets.py `
-            "dist/rcli-$ver-windows-x86_64.zip" `
-            "dist/rcli-$ver-windows-x86_64.zip.sha256"
-      # Zip only. onnxruntime.dll lives next to rcli.exe *inside* the archive;
-      # uploading the loose DLL/exe made them look like first-class release assets.
+          ver="${WALLY_VERSION#v}"
+          suffix=""; [ "${{ matrix.variant }}" = dev ] && suffix="-dev"
+          python scripts/release/verify-release-assets.py \
+            "dist/wally-$ver-windows-x86_64$suffix.zip" \
+            "dist/wally-$ver-windows-x86_64$suffix.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-windows-x64
+          name: wally-windows-x64-${{ matrix.variant }}
           path: |
             dist/*.zip
             dist/*.zip.sha256
           if-no-files-found: error
 
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [prod, dev]
+    env:
+      WALLY_BAKED_CONSOLE_API_URL: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_API_URL || '' }}
+      WALLY_BAKED_CONSOLE_WEB_ORIGIN: ${{ matrix.variant == 'dev' && vars.WALLY_DEV_CONSOLE_WEB_ORIGIN || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake libcurl4-openssl-dev
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d
+        with:
+          key: ccache-release-linux-x64
+      - name: Cache kit
+        id: kit
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: kit
+          key: kit-linux-x64-${{ hashFiles('versions.toml') }}
+      - name: Download C++ desktop kit
+        if: steps.kit.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/build/fetch-kit.sh linux-x64 "${GITHUB_WORKSPACE}/kit"
+      - uses: ./.github/actions/build-wally
+        with:
+          platform: linux-x64
+          kit-dir: ${{ github.workspace }}/kit
+          variant: ${{ matrix.variant }}
+          package: 'true'
+      - name: Product e2e
+        env:
+          WALLY_SDK_KIT: ${{ github.workspace }}/kit
+        run: bash scripts/test/e2e.sh ./build/wally
+      - name: Verify archive
+        run: |
+          VERSION="${WALLY_VERSION#v}"
+          suffix=""; [ "${{ matrix.variant }}" = dev ] && suffix="-dev"
+          python3 scripts/release/verify-release-assets.py \
+            "dist/wally-${VERSION}-linux-x86_64${suffix}.tar.gz" \
+            "dist/wally-${VERSION}-linux-x86_64${suffix}.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wally-linux-x86_64-${{ matrix.variant }}
+          path: dist/wally-*-linux-x86_64*.tar.gz*
+
   publish:
-    needs: [macos, windows, windows-arm64]
+    needs: [macos, windows, windows-arm64, linux]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -182,31 +282,38 @@ jobs:
       - name: Verify release archives
         run: |
           set -euo pipefail
-          VERSION="${RCLI_VERSION#v}"
-          python3 scripts/verify-release-assets.py \
-            "artifacts/rcli-${VERSION}-macos-arm64.tar.gz" \
-            "artifacts/rcli-${VERSION}-macos-arm64.tar.gz.sha256"
-          python3 scripts/verify-release-assets.py \
-            "artifacts/rcli-${VERSION}-windows-x86_64.zip" \
-            "artifacts/rcli-${VERSION}-windows-x86_64.zip.sha256"
-          python3 scripts/verify-release-assets.py \
-            "artifacts/rcli-${VERSION}-windows-arm64.zip" \
-            "artifacts/rcli-${VERSION}-windows-arm64.zip.sha256"
+          VERSION="${WALLY_VERSION#v}"
+          # Both bottles of every platform: prod (no suffix) and dev (-dev).
+          for suffix in "" "-dev"; do
+            python3 scripts/release/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-macos-arm64${suffix}.tar.gz" \
+              "artifacts/wally-${VERSION}-macos-arm64${suffix}.tar.gz.sha256"
+            python3 scripts/release/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-windows-x86_64${suffix}.zip" \
+              "artifacts/wally-${VERSION}-windows-x86_64${suffix}.zip.sha256"
+            python3 scripts/release/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-windows-arm64${suffix}.zip" \
+              "artifacts/wally-${VERSION}-windows-arm64${suffix}.zip.sha256"
+            python3 scripts/release/verify-release-assets.py \
+              "artifacts/wally-${VERSION}-linux-x86_64${suffix}.tar.gz" \
+              "artifacts/wally-${VERSION}-linux-x86_64${suffix}.tar.gz.sha256"
+          done
       - name: Generate Homebrew formula update
         run: |
           set -euo pipefail
-          VERSION="${RCLI_VERSION#v}"
-          sidecar="artifacts/rcli-${VERSION}-macos-arm64.tar.gz.sha256"
+          VERSION="${WALLY_VERSION#v}"
+          # Homebrew ships the production bottle; the dev bottle is not tapped.
+          sidecar="artifacts/wally-${VERSION}-macos-arm64.tar.gz.sha256"
           digest=$(awk 'NF == 2 { print $1 }' "$sidecar")
           [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
-          python3 scripts/stamp-formula.py "$VERSION" "macos-arm64=${digest}"
-          ruby -c Formula/rcli.rb
+          python3 scripts/release/stamp-formula.py "$VERSION" "macos-arm64=${digest}"
+          ruby -c Formula/wally.rb
           mkdir -p release-metadata
-          cp Formula/rcli.rb release-metadata/rcli.rb
+          cp Formula/wally.rb release-metadata/wally.rb
       - uses: actions/upload-artifact@v4
         with:
-          name: rcli-homebrew-formula
-          path: release-metadata/rcli.rb
+          name: wally-homebrew-formula
+          path: release-metadata/wally.rb
           if-no-files-found: error
       - name: Create the release
         uses: softprops/action-gh-release@v2
@@ -214,10 +321,10 @@ jobs:
           tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
           name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', github.event.inputs.version) }}
           files: |
-            artifacts/rcli-*.tar.gz
-            artifacts/rcli-*.tar.gz.sha256
-            artifacts/rcli-*.zip
-            artifacts/rcli-*.zip.sha256
+            artifacts/wally-*.tar.gz
+            artifacts/wally-*.tar.gz.sha256
+            artifacts/wally-*.zip
+            artifacts/wally-*.zip.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true
         env:

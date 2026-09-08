@@ -1,5 +1,7 @@
 #include "account/credentials.h"
 
+#include "account/baked_endpoints.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -30,7 +32,7 @@
 #include <sys/types.h>
 #endif
 
-namespace rcli::account {
+namespace wally::account {
 namespace {
 
 namespace fs = std::filesystem;
@@ -91,6 +93,22 @@ std::string Env(const char* name) {
     return value != nullptr ? std::string(value) : std::string();
 }
 
+/// `name` (the current, documented variable) wins whenever it's set. `legacy`
+/// is read only when `name` is unset, so an installed rcli-era override still
+/// works after the wally rename — with a one-line notice, since it's a name
+/// nobody should be setting a year from now.
+std::string EnvWithLegacyFallback(const char* name, const char* legacy) {
+    std::string value = Env(name);
+    if (!value.empty()) {
+        return value;
+    }
+    std::string legacy_value = Env(legacy);
+    if (!legacy_value.empty()) {
+        std::fprintf(stderr, "warning: %s is deprecated, use %s instead\n", legacy, name);
+    }
+    return legacy_value;
+}
+
 std::string Lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -109,6 +127,33 @@ struct ParsedUrl {
     std::string suffix;
     bool bracketed = false;
 };
+
+/// Reduces a console URL's path to the prefix every endpoint hangs off, or
+/// fails if it is not one.
+///
+/// A console is not always at the root of its host. Development is reached at
+/// `https://inference.runanywhere.ai/api-dev`, where the load balancer strips
+/// the prefix and forwards to the dev control plane; the same host without it
+/// is production. Refusing the path -- which this did until it was found --
+/// leaves no way to name the dev console at all, so `--console-url` had to be
+/// given the backend's own Cloud Run hostname, which bypasses the load balancer
+/// and therefore reaches different code than any real client does.
+///
+/// A query or fragment is still refused. Every caller builds an endpoint by
+/// appending to this string, and `?a=1` + `/v1/me` is not a URL.
+bool NormalizeBasePath(const std::string& suffix, std::string* base_path) {
+    if (suffix.empty() || suffix == "/") {
+        base_path->clear();
+        return true;
+    }
+    if (suffix.front() != '/' || suffix.find_first_of("?#") != std::string::npos ||
+        suffix.find("//") != std::string::npos || suffix.find("/.") != std::string::npos ||
+        suffix.size() > 256) {
+        return false;
+    }
+    *base_path = suffix.back() == '/' ? suffix.substr(0, suffix.size() - 1) : suffix;
+    return true;
+}
 
 bool ValidPort(const std::string& port) {
     if (port.empty()) {
@@ -281,7 +326,7 @@ bool Protect(const std::string& plaintext, std::vector<unsigned char>* protected
     DATA_BLOB input{static_cast<DWORD>(plaintext.size()),
                     reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data()))};
     DATA_BLOB output{};
-    if (!CryptProtectData(&input, L"RunAnywhere RCLI cloud session", nullptr, nullptr, nullptr,
+    if (!CryptProtectData(&input, L"RunAnywhere Wally cloud session", nullptr, nullptr, nullptr,
                           CRYPTPROTECT_UI_FORBIDDEN, &output)) {
         if (error != nullptr) {
             *error = "Windows could not protect the cloud session";
@@ -515,20 +560,40 @@ bool WriteDocument(const std::string& path, const std::string& document, std::st
 }  // namespace
 
 std::string DefaultConsoleUrl() {
-    const std::string configured = Env("RCLI_CONSOLE_URL");
-    return configured.empty() ? kProductionConsoleApi : configured;
+    const std::string configured = EnvWithLegacyFallback("WALLY_CONSOLE_URL", "RCLI_CONSOLE_URL");
+    if (!configured.empty()) {
+        return configured;
+    }
+    // A dev build carries its control plane compiled in (see
+    // baked_endpoints.h.in): the env override above still wins, production
+    // builds generate an empty macro and fall through unchanged.
+    if (WALLY_BAKED_CONSOLE_API_URL[0] != '\0') {
+        return WALLY_BAKED_CONSOLE_API_URL;
+    }
+    return kProductionConsoleApi;
 }
 
 std::vector<std::string> TrustedBrowserOrigins(const std::string& console_url) {
     // An operator who declared one has said which console they trust, and that
     // is then the only one.
-    const std::string declared = Env("RCLI_CONSOLE_WEB_URL");
+    const std::string declared = EnvWithLegacyFallback("WALLY_CONSOLE_WEB_URL", "RCLI_CONSOLE_WEB_URL");
     std::string normalized;
     if (!declared.empty() && NormalizeConsoleUrl(declared, &normalized, nullptr)) {
         return {normalized};
     }
     if (console_url == kProductionConsoleApi) {
         return {std::begin(kProductionConsoleWeb), std::end(kProductionConsoleWeb)};
+    }
+    // A dev build that baked its control plane also baked which browser
+    // console may approve sign-ins for it (a local console on loopback,
+    // typically). Trust holds pairwise: the baked web origin is honored only
+    // while talking to the baked API, never for an arbitrary --base-url.
+    if (WALLY_BAKED_CONSOLE_WEB_ORIGIN[0] != '\0' &&
+        console_url == std::string(WALLY_BAKED_CONSOLE_API_URL)) {
+        std::string baked_web;
+        if (NormalizeConsoleUrl(WALLY_BAKED_CONSOLE_WEB_ORIGIN, &baked_web, nullptr)) {
+            return {baked_web, console_url};
+        }
     }
     // Anything else — a dev console, a loopback stub — is trusted only at its
     // own origin. That is the rule that held before, and it is the safe answer
@@ -547,14 +612,17 @@ bool BrowserUrlIsTrusted(const std::string& url, const std::vector<std::string>&
 
 bool NormalizeConsoleUrl(const std::string& input, std::string* normalized, std::string* error) {
     ParsedUrl parsed;
-    if (!ParseUrl(input, false, &parsed)) {
+    std::string base_path;
+    if (!ParseUrl(input, true, &parsed) || !NormalizeBasePath(parsed.suffix, &base_path)) {
         if (error != nullptr) {
-            *error = "console URL must be an HTTPS origin, or HTTP on exact loopback";
+            *error =
+                "console URL must be an HTTPS origin with an optional path, "
+                "or HTTP on exact loopback";
         }
         return false;
     }
     if (normalized != nullptr) {
-        *normalized = RenderOrigin(parsed);
+        *normalized = RenderOrigin(parsed) + base_path;
     }
     return true;
 }
@@ -567,7 +635,9 @@ bool BrowserUrlIsSafe(const std::string& url) {
 bool BrowserUrlMatchesConsole(const std::string& url, const std::string& console_url) {
     ParsedUrl browser;
     ParsedUrl console;
-    return ParseUrl(url, true, &browser) && ParseUrl(console_url, false, &console) &&
+    // Origins, not full URLs: a console's base path says where its API lives,
+    // and says nothing about which pages on that host may approve a sign-in.
+    return ParseUrl(url, true, &browser) && ParseUrl(console_url, true, &console) &&
            RenderOrigin(browser) == RenderOrigin(console);
 }
 
@@ -582,20 +652,20 @@ bool SessionTokenIsSafe(const std::string& token) {
 }
 
 std::string ProfileDirectory() {
-    const std::string override_dir = Env("RCLI_PROFILE_DIR");
+    const std::string override_dir = EnvWithLegacyFallback("WALLY_PROFILE_DIR", "RCLI_PROFILE_DIR");
     if (!override_dir.empty()) {
         return override_dir;
     }
 #if defined(_WIN32)
     const std::string home = HomeDirectory();
-    return home.empty() ? std::string() : home + "/RunAnywhere/RCLI";
+    return home.empty() ? std::string() : home + "/RunAnywhere/Wally";
 #else
     const std::string xdg = Env("XDG_CONFIG_HOME");
     if (!xdg.empty()) {
-        return xdg + "/rcli";
+        return xdg + "/wally";
     }
     const std::string home = HomeDirectory();
-    return home.empty() ? std::string() : home + "/.config/rcli";
+    return home.empty() ? std::string() : home + "/.config/wally";
 #endif
 }
 
@@ -736,4 +806,4 @@ bool Clear(std::string* error) {
     return true;
 }
 
-}  // namespace rcli::account
+}  // namespace wally::account

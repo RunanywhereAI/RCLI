@@ -1,10 +1,10 @@
-#ifndef RCLI_ACCOUNT_CREDENTIALS_H
-#define RCLI_ACCOUNT_CREDENTIALS_H
+#ifndef WALLY_ACCOUNT_CREDENTIALS_H
+#define WALLY_ACCOUNT_CREDENTIALS_H
 
 #include <string>
 #include <vector>
 
-namespace rcli::account {
+namespace wally::account {
 
 struct Credentials {
     std::string console_url;
@@ -19,7 +19,7 @@ struct Credentials {
     }
 };
 
-/// The console API used when neither a login flag nor RCLI_CONSOLE_URL is set.
+/// The console API used when neither a login flag nor WALLY_CONSOLE_URL is set.
 /// This is the control plane — `/auth/cli/*`, `/v1/me`, `/v1/cli/*` — and it is
 /// not the host a person approves a sign-in on. See `TrustedBrowserOrigin`.
 std::string DefaultConsoleUrl();
@@ -31,7 +31,7 @@ std::string DefaultConsoleUrl();
 /// shipped case — so the origin check ran against nothing and the approval URL
 /// the server sent was taken on trust.
 ///
-/// Three answers, in order. `RCLI_CONSOLE_WEB_URL` alone when an operator
+/// Three answers, in order. `WALLY_CONSOLE_WEB_URL` alone when an operator
 /// declared one. The deployed console's origins when `console_url` is the
 /// deployed API, because those are different hosts from the API and demanding
 /// the API's own origin refuses every real sign-in. Otherwise `console_url`
@@ -70,6 +70,6 @@ Credentials Load();
 bool Save(const Credentials& credentials, std::string* error);
 bool Clear(std::string* error);
 
-}  // namespace rcli::account
+}  // namespace wally::account
 
-#endif  // RCLI_ACCOUNT_CREDENTIALS_H
+#endif  // WALLY_ACCOUNT_CREDENTIALS_H

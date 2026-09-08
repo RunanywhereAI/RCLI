@@ -1,6 +1,6 @@
-# Contributing to rcli
+# Contributing to wally
 
-`rcli` is the desktop CLI for RunAnywhere. Inference, catalog, download, and
+`wally` is the desktop CLI for RunAnywhere. Inference, catalog, download, and
 lifecycle live in the **C++ desktop kit** (`find_package(RunAnywhere)`). This
 repo is argv, terminal I/O, and the Apple MLX host.
 
@@ -11,8 +11,8 @@ fix belongs in the SDK, then a new kit — not a workaround here.
 ## Prerequisites
 
 - CMake 3.24+, a C++20 compiler
-- A staged kit matching `cmake/sdk-pin.cmake` (`RCLI_PINNED_SDK_VERSION`)
-- Xcode 26+ only if you are linking the shipping Apple binary (`scripts/build-mlx.sh`)
+- A staged kit matching `cmake/sdk-pin.cmake` (`WALLY_PINNED_SDK_VERSION`)
+- Xcode 26+ only if you are linking the shipping Apple binary (`scripts/build/build-mlx.sh`)
 
 Build a kit from a runanywhere-sdks checkout:
 
@@ -30,25 +30,25 @@ The prefix is `dist/cpp-desktop-macos-arm64` in that checkout.
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/path/to/cpp-desktop-macos-arm64
 cmake --build build -j "$(sysctl -n hw.logicalcpu)"
-./build/rcli version
-./build/rcli backends
+./build/wally version
+./build/wally backends
 ```
 
-On Apple Silicon that `rcli` is the Swift MLX host (llama.cpp, ONNX, Sherpa,
-and MLX in one process). `rcli-cxx` is only a CMake intermediate. Independent
-clones need `RCLI_SDK_SWIFT_PATH` pointing at a runanywhere-sdks tree.
+On Apple Silicon that `wally` is the Swift MLX host (llama.cpp, ONNX, Sherpa,
+and MLX in one process). `wally-cxx` is only a CMake intermediate. Independent
+clones need `WALLY_SDK_SWIFT_PATH` pointing at a runanywhere-sdks tree.
 
-`RCLI_SDK_DIR` / `RCLI_SDK_KIT` is an alias for that **kit prefix**. Pointing it
-at a source tree is a configure error. C++-only: `-DRCLI_APPLE_MLX_HOST=OFF`.
+`WALLY_SDK_DIR` / `WALLY_SDK_KIT` is an alias for that **kit prefix**. Pointing it
+at a source tree is a configure error. C++-only: `-DWALLY_APPLE_MLX_HOST=OFF`.
 
 ## Tests
 
 ```bash
-cmake --build build --target test_rcli_unit
-ctest --test-dir build -R rcli --output-on-failure
-bash scripts/e2e.sh ./build/rcli
+cmake --build build --target test_wally_unit
+ctest --test-dir build -R wally --output-on-failure
+bash scripts/test/e2e.sh ./build/wally
 # Device / overlay: primitives, not engines
-# bash scripts/e2e-modalities.sh ./build/rcli
+# bash scripts/test/e2e-modalities.sh ./build/wally
 ```
 
 ## Layout
@@ -57,10 +57,10 @@ bash scripts/e2e.sh ./build/rcli
 src/commands/     one file per command; parse → bootstrap() → one rac_* call
 src/catalog/      thin helpers over commons catalog APIs
 src/repl/         linenoise REPL
-include/          rcli_run_main for the Swift host
+include/          wally_run_main for the Swift host
 cmake/sdk-pin.cmake   EXACT kit version (+ sha256 once kits are published)
 third_party/      CLI11 + linenoise, vendored
-swift/            Apple entry: register MLX, then rcli_run_main
+swift/            Apple entry: register MLX, then wally_run_main
 ```
 
 ## Adding a command
@@ -73,4 +73,4 @@ swift/            Apple entry: register MLX, then rcli_run_main
 ## Pull requests
 
 Branch off `main`. `cmake --build` must stay green. On Apple that includes the
-MLX host (`build/rcli`). Do not add a second CLI binary.
+MLX host (`build/wally`). Do not add a second CLI binary.

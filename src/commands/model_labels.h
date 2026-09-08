@@ -2,7 +2,7 @@
 
 #include "model_types.pb.h"
 
-namespace rcli::commands::model_labels {
+namespace wally::commands::model_labels {
 
 namespace v1 = runanywhere::v1;
 
@@ -118,4 +118,4 @@ inline const char* format(v1::ModelFormat format) {
     }
 }
 
-}  // namespace rcli::commands::model_labels
+}  // namespace wally::commands::model_labels

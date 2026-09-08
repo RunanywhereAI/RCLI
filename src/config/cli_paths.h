@@ -1,6 +1,6 @@
 /**
  * @file cli_paths.h
- * @brief rcli directory resolution.
+ * @brief wally directory resolution.
  *
  * One knob controls where models live: the RunAnywhere HOME directory.
  *   resolution: --home flag → $RUNANYWHERE_HOME → ${XDG_DATA_HOME:-~/.local/share}/runanywhere
@@ -12,12 +12,12 @@
  * REPL history under ${XDG_STATE_HOME:-~/.local/state}/runanywhere.
  */
 
-#ifndef RCLI_CONFIG_CLI_PATHS_H
-#define RCLI_CONFIG_CLI_PATHS_H
+#ifndef WALLY_CONFIG_CLI_PATHS_H
+#define WALLY_CONFIG_CLI_PATHS_H
 
 #include <string>
 
-namespace rcli::paths {
+namespace wally::paths {
 
 /**
  * Resolve the RunAnywhere home (storage base dir) — see file header for the
@@ -31,6 +31,6 @@ std::string state_dir();
 /** Strip one trailing '/' (keeps root "/"). */
 std::string normalize_dir(std::string dir);
 
-}  // namespace rcli::paths
+}  // namespace wally::paths
 
-#endif  // RCLI_CONFIG_CLI_PATHS_H
+#endif  // WALLY_CONFIG_CLI_PATHS_H

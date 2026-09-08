@@ -1,11 +1,11 @@
-#ifndef RCLI_HARNESS_LOCAL_MODELS_H
-#define RCLI_HARNESS_LOCAL_MODELS_H
+#ifndef WALLY_HARNESS_LOCAL_MODELS_H
+#define WALLY_HARNESS_LOCAL_MODELS_H
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace rcli::harness {
+namespace wally::harness {
 
 /// A model already on disk under the RunAnywhere home.
 struct LocalModel {
@@ -27,6 +27,6 @@ struct LocalModel {
 /// model placed by hand as readily as one that was downloaded.
 std::vector<LocalModel> LocalModels(const std::string& home);
 
-}  // namespace rcli::harness
+}  // namespace wally::harness
 
-#endif  // RCLI_HARNESS_LOCAL_MODELS_H
+#endif  // WALLY_HARNESS_LOCAL_MODELS_H

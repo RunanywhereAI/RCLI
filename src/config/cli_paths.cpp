@@ -14,7 +14,7 @@
 
 #include "rac/desktop/rac_desktop.h"
 
-namespace rcli::paths {
+namespace wally::paths {
 
 namespace {
 
@@ -48,7 +48,7 @@ std::string normalize_dir(std::string dir) {
 #if defined(_WIN32)
     // Windows environment values (LOCALAPPDATA, USERPROFILE) come back
     // backslash-separated, while every path built from them here appends
-    // '/'-joined segments -- leaving `rcli info` printing a mixed
+    // '/'-joined segments -- leaving `wally info` printing a mixed
     // C:\Users\...\AppData\Local/RunAnywhere. Fold to '/' so a single
     // style survives into the output; Win32 accepts either separator.
     for (char& c : dir) {
@@ -95,4 +95,4 @@ std::string state_dir() {
     return {};
 }
 
-}  // namespace rcli::paths
+}  // namespace wally::paths
