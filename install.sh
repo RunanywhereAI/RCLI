@@ -106,9 +106,10 @@ if [ -t 1 ]; then dl="-#"; else dl="-sS"; fi
 curl -fSL "$dl" "$URL" -o "${tmp}/${ASSET}" || fail "Download failed: ${URL}"
 curl -fsSL "${URL}.sha256" -o "${tmp}/${ASSET}.sha256" || fail "Could not download the checksum for ${ASSET}"
 # The sidecar is `<sha>  <filename>`; verify from inside tmp so the name resolves.
+expected_sha="$(awk 'NF == 2 { print $1 }' "${tmp}/${ASSET}.sha256" | head -1)"
 ( cd "$tmp" && shasum -a 256 -c "${ASSET}.sha256" >/dev/null 2>&1 ) \
     || fail "Checksum verification failed for ${ASSET}. Do not use the download."
-ok "checksum verified"
+ok "sha256 ${expected_sha:0:16}… verified"
 
 step "Installing to ${LIB_DIR}"
 tar -xzf "${tmp}/${ASSET}" -C "$tmp"
