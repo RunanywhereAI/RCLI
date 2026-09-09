@@ -87,6 +87,13 @@ void register_account(CLI::App& app, GlobalOptions& options);
 void register_usage(CLI::App& app, GlobalOptions& options);
 void register_editors(CLI::App& app, GlobalOptions& options);
 void register_harness(CLI::App& app, GlobalOptions& options);
+void register_default_models(CLI::App& app, GlobalOptions& options);
+
+/// The model a harness launch should use: `explicit_model` when the reader gave
+/// one, otherwise the saved default (see `config/preferences.h`). Prints a
+/// status line when a default fills in for an omitted `-m`, so no launch picks a
+/// model silently. Shared by the harness and editor commands.
+std::string ResolveDefaultModel(const std::string& explicit_model);
 void register_telemetry(CLI::App& app, GlobalOptions& options);
 
 /**

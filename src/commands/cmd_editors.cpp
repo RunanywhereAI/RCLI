@@ -411,8 +411,9 @@ void register_editors(CLI::App& app, GlobalOptions& options) {
                 fail(Restore(editor));
                 return;
             }
-            fail(*serve ? Serve(*model, options.verbose)
-                        : Run(editor, *model, *rest, options.verbose));
+            const std::string effective = ResolveDefaultModel(*model);
+            fail(*serve ? Serve(effective, options.verbose)
+                        : Run(editor, effective, *rest, options.verbose));
         });
     }
 }

@@ -39,15 +39,18 @@ void register_harness(CLI::App& app, GlobalOptions& options) {
     opencode->add_option("args", *rest, "passed through to opencode")->allow_extra_args();
     opencode->prefix_command();
     opencode->callback([model, rest, cloud] {
+        const std::string effective = ResolveDefaultModel(*model);
         if (*cloud) {
-            if (model->empty()) {
-                out::error_line("--cloud requires --model <console-model-id>");
+            if (effective.empty()) {
+                out::error_line(
+                    "--cloud requires --model <console-model-id>, and no default is set "
+                    "(wally default-models <id>)");
                 fail(2);
             }
-            fail(harness::LaunchOpenCodeCloud(*model, *rest));
+            fail(harness::LaunchOpenCodeCloud(effective, *rest));
             return;
         }
-        fail(harness::Launch("opencode", *model, *rest));
+        fail(harness::Launch("opencode", effective, *rest));
     });
 
     // Codex speaks the Responses API, which the hosted gateway serves and a
@@ -61,11 +64,13 @@ void register_harness(CLI::App& app, GlobalOptions& options) {
     codex->add_option("args", *codex_rest, "passed through to codex")->allow_extra_args();
     codex->prefix_command();
     codex->callback([codex_model, codex_rest] {
-        if (codex_model->empty()) {
-            out::error_line("wally codex needs a hosted model: wally codex -m <console-model-id>");
+        const std::string effective = ResolveDefaultModel(*codex_model);
+        if (effective.empty()) {
+            out::error_line("wally codex needs a hosted model: wally codex -m <console-model-id> "
+                            "(or set one with wally default-models <id>)");
             fail(2);
         }
-        fail(harness::LaunchCodexCloud(*codex_model, *codex_rest));
+        fail(harness::LaunchCodexCloud(effective, *codex_rest));
     });
 }
 
