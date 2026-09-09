@@ -164,8 +164,8 @@ int run(int argc, char** argv) {
     // cloud path exists.
     app.footer(
         "A model your account has on the hosted console (not this machine) runs through "
-        "`wally claude-code -m <id>` or `wally opencode --cloud -m <id>`, not `run`/`llm "
-        "generate`.");
+        "`wally claude-code -m <id>`, `wally opencode --cloud -m <id>` or "
+        "`wally codex -m <id>`, not `run`/`llm generate`.");
 
     int exit_code = 0;
     try {

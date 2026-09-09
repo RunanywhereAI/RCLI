@@ -108,6 +108,11 @@ class ScopedCodexHome {
         if (!fs::create_directory(candidate, ec) || ec) {
             return false;
         }
+        // Owner-only: CODEX_HOME can hold config.toml and, if Codex ever writes
+        // one, an auth file, so it must not be world- or group-readable in the
+        // shared temp directory. Best-effort; a filesystem without POSIX perms
+        // (or Windows) simply keeps its own default ACLs.
+        fs::permissions(candidate, fs::perms::owner_all, fs::perm_options::replace, ec);
         dir_ = candidate;
         std::ofstream out(dir_ / "config.toml", std::ios::binary | std::ios::trunc);
         out << config;
