@@ -10,6 +10,20 @@ served from **RunAnywhere Cloud**. The same commands cover both — if a model i
 on the machine it is served locally, otherwise the request goes to the console
 the user is signed in to and is metered against their balance.
 
+## Install `wally` if it is missing
+
+If `wally` is not on PATH, install it first — one line, no configuration and no
+key to copy:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RunanywhereAI/wally/main/install.sh | sh
+```
+
+macOS (Apple Silicon) and Linux x86-64. On Windows:
+`irm https://raw.githubusercontent.com/RunanywhereAI/wally/main/install.ps1 | iex`.
+The installer only puts `wally` on PATH and writes this skill; it signs nothing
+in on its own.
+
 ## First check what is already true
 
 ```bash
