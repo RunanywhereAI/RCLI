@@ -1,6 +1,6 @@
 ---
 name: runanywhere
-description: Set up and use RunAnywhere from the terminal — install wally, sign in, pick a coding harness, run a model, check spend. Use when the user wants to get started with RunAnywhere, run a harness like opencode against a hosted or on-device model, or asks what their usage is.
+description: Set up and use RunAnywhere Wally from the terminal — install wally, sign in, pick a coding harness, run a model, check spend. Use when the user wants to get started with RunAnywhere or Wally, run a harness like opencode against a hosted or on-device model, or asks what their usage is.
 ---
 
 # RunAnywhere
