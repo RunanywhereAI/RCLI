@@ -315,6 +315,21 @@ jobs:
           name: wally-homebrew-formula
           path: release-metadata/wally.rb
           if-no-files-found: error
+      - name: Stage and checksum the installers
+        # Publish the installers themselves plus their SHA-256 beside the
+        # bottles, so a cautious user can verify the script before running it:
+        #   curl -fsSLO .../releases/download/v<ver>/install.sh
+        #   curl -fsSLO .../releases/download/v<ver>/install.sh.sha256
+        #   shasum -a 256 -c install.sh.sha256 && sh install.sh
+        # Computed from the tagged installers, so the pair always matches.
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          for f in install.sh install.ps1; do
+            [ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
+            cp "$f" "artifacts/$f"
+            ( cd artifacts && shasum -a 256 "$f" > "${f}.sha256" )
+          done
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
@@ -325,6 +340,10 @@ jobs:
             artifacts/wally-*.tar.gz.sha256
             artifacts/wally-*.zip
             artifacts/wally-*.zip.sha256
+            artifacts/install.sh
+            artifacts/install.sh.sha256
+            artifacts/install.ps1
+            artifacts/install.ps1.sha256
           generate_release_notes: true
           fail_on_unmatched_files: true
         env:
