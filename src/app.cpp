@@ -109,9 +109,9 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
         {"about", "Serve & measure"},    {"version", "Serve & measure"},
         {"auth", "Account"},      {"login", "Account"},      {"logout", "Account"},
         {"whoami", "Account"},    {"usage", "Account"},
-        {"opencode", "Editors & agents"},    {"claude-code", "Editors & agents"},
-        {"claude-desktop", "Editors & agents"}, {"clion", "Editors & agents"},
-        {"rustrover", "Editors & agents"},
+        {"opencode", "Editors & agents"},    {"codex", "Editors & agents"},
+        {"claude-code", "Editors & agents"}, {"claude-desktop", "Editors & agents"},
+        {"clion", "Editors & agents"},       {"rustrover", "Editors & agents"},
     };
     // configure_app() runs ahead of run()'s own try/catch (and tests call it
     // directly with none at all), so a typo here must never propagate as an
@@ -164,8 +164,8 @@ int run(int argc, char** argv) {
     // cloud path exists.
     app.footer(
         "A model your account has on the hosted console (not this machine) runs through "
-        "`wally claude-code -m <id>` or `wally opencode --cloud -m <id>`, not `run`/`llm "
-        "generate`.");
+        "`wally claude-code -m <id>`, `wally opencode --cloud -m <id>` or "
+        "`wally codex -m <id>`, not `run`/`llm generate`.");
 
     int exit_code = 0;
     try {

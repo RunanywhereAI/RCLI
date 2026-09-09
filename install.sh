@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Repo, binary, formula and tap are all wally. The tap alias below is fully
-# qualified on purpose (see FORMULA).
+# Installs Wally from the GitHub release tarball for this OS. No Homebrew and no
+# tap: the release bottle already stages `wally` with mlx-swift_Cmlx.bundle
+# beside it (Metal shaders) and its shared libraries under ../lib with an rpath
+# that finds them, so a plain extract-and-symlink keeps every engine working.
 REPO="RunanywhereAI/wally"
-TAP="RunanywhereAI/wally"
-# Fully qualified on purpose. runanywhereai/tap also provides a formula called
-# wally, and a bare `brew install wally` on a machine with both taps fails with
-# "Formulae found in multiple taps" rather than picking one.
-FORMULA="runanywhereai/wally/wally"
+LIB_DIR="${HOME}/.local/lib/wally"
+BIN_DIR="${HOME}/.local/bin"
 
 info()  { printf "\033[1;34m==>\033[0m \033[1m%s\033[0m\n" "$*"; }
 ok()    { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
@@ -32,9 +31,9 @@ skill_target_dirs() {
     printf '%s' "${targets}"
 }
 
-# Debug-only: print the resolved skill targets and exit before any network or
-# brew work. Exercised by scripts/test/test-install-skill-dirs.sh. Not part of
-# the user-facing flow.
+# Debug-only: print the resolved skill targets and exit before any network work.
+# Exercised by scripts/test/test-install-skill-dirs.sh. Not part of the
+# user-facing flow.
 if [ "${1:-}" = "--print-skill-dirs" ]; then
     skill_target_dirs
     exit 0
@@ -50,71 +49,84 @@ info "Latest version: v${VERSION}"
 os=$(uname -s)
 arch=$(uname -m)
 case "${os}/${arch}" in
-    # MLX is Metal and NeuRT is the Apple Neural Engine, so an Intel Mac would
-    # get neither and there is no build for it. No Linux release is published.
-    Darwin/arm64)  ;;
-    Darwin/*)      fail "Wally needs an Apple Silicon Mac. Detected: ${arch}" ;;
-    Linux/*)       fail "Wally does not currently publish a Linux binary. Build from source: https://github.com/${REPO}#build-from-source" ;;
-    *)             fail "Wally has no build for ${os}. On Windows, use install.ps1." ;;
+    Darwin/arm64)              PLATFORM="macos-arm64" ;;
+    # MLX is Metal and NeuRT is the Apple Neural Engine, so an Intel Mac gets
+    # neither and there is no build for it.
+    Darwin/*)                  fail "Wally needs an Apple Silicon Mac. Detected: ${arch}" ;;
+    Linux/x86_64 | Linux/amd64) PLATFORM="linux-x86_64" ;;
+    Linux/*)                   fail "Wally has no Linux ${arch} build yet — x86_64 only. Build from source: https://github.com/${REPO}#build-from-source" ;;
+    *)                         fail "Wally has no build for ${os}. On Windows, use install.ps1." ;;
 esac
 
-if ! command -v brew &>/dev/null; then
-    info "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # Homebrew installs to a different prefix on each platform and does not put
-    # itself on PATH, so the shellenv has to come from wherever it landed.
-    for prefix in /opt/homebrew /home/linuxbrew/.linuxbrew /usr/local; do
-        if [ -x "${prefix}/bin/brew" ]; then
-            eval "$("${prefix}/bin/brew" shellenv)"
-            break
-        fi
-    done
-    command -v brew &>/dev/null || fail "Homebrew installed but is not on PATH. Open a new shell and run this again."
-fi
+ASSET="wally-${VERSION}-${PLATFORM}.tar.gz"
+URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
 
-info "Tapping $TAP..."
-brew tap "$TAP" "https://github.com/$REPO.git" 2>/dev/null || true
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 
-# Force-update the tap so Homebrew sees the latest formula
-brew update --force 2>/dev/null || true
+info "Downloading ${ASSET}..."
+curl -fSL "$URL" -o "${tmp}/${ASSET}" || fail "Download failed: ${URL}"
+curl -fSL "${URL}.sha256" -o "${tmp}/${ASSET}.sha256" || fail "Could not download the checksum for ${ASSET}"
 
-info "Installing Wally v${VERSION}..."
-if brew upgrade "$FORMULA" 2>/dev/null || brew install "$FORMULA" 2>/dev/null; then
-    ok "Installed via Homebrew"
-else
-    # There used to be a fallback here that unpacked the tarball into the Cellar
-    # by hand. Homebrew is the only supported path now: the formula puts wally and
-    # mlx-swift_Cmlx.bundle in libexec and symlinks bin/wally at the binary, and
-    # if the bundle does not end up beside the executable MLX quietly reports
-    # itself unavailable while the other five engines carry on. That is not a
-    # failure worth risking in an installer that cannot test for it.
-    warn "brew install failed. Re-running it with the output shown:"
-    brew install "$FORMULA" || true
-    echo ""
-    echo "  Fix what Homebrew reported above, then run:"
-    echo "    brew tap $TAP https://github.com/$REPO.git"
-    echo "    brew install $FORMULA"
-    echo ""
-    echo ""
-    fail "Could not install $FORMULA. If it still fails, open an issue at https://github.com/$REPO/issues with the output above."
-fi
+info "Verifying checksum..."
+# The sidecar is `<sha>  <filename>`; verify from inside tmp so the name resolves.
+( cd "$tmp" && shasum -a 256 -c "${ASSET}.sha256" >/dev/null 2>&1 ) \
+    || fail "Checksum verification failed for ${ASSET}. Do not use the download."
 
-if ! command -v wally &>/dev/null; then
-    fail "Installation failed. wally not found in PATH."
+info "Extracting..."
+tar -xzf "${tmp}/${ASSET}" -C "$tmp"
+staged="${tmp}/wally-${PLATFORM}"
+[[ -x "${staged}/bin/wally" ]] || fail "Archive did not contain bin/wally as expected."
+
+# Replace the install tree wholesale. rm before copy is deliberate: overwriting a
+# code-signed Mach-O in place while a copy may still be mapped kills it with
+# SIGKILL (137). A fresh dir sidesteps that.
+info "Installing to ${LIB_DIR}..."
+rm -rf "$LIB_DIR"
+mkdir -p "$(dirname "$LIB_DIR")" "$BIN_DIR"
+cp -R "$staged" "$LIB_DIR"
+ln -sfn "${LIB_DIR}/bin/wally" "${BIN_DIR}/wally"
+
+# Make wally callable for the rest of this script even if the shell that piped us
+# in never had ~/.local/bin on PATH.
+export PATH="${BIN_DIR}:${PATH}"
+
+if ! command -v wally >/dev/null 2>&1; then
+    fail "Installation failed. wally not found after install."
 fi
 
 installed_version="$(wally --version 2>/dev/null \
     | sed -nE 's/^wally ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
     | head -1)"
 if [[ "${installed_version}" != "${VERSION}" ]]; then
-    fail "Homebrew installed Wally v${installed_version:-unknown}, but GitHub's latest release is v${VERSION}. The tap formula must be updated before this installer can claim success."
+    fail "Installed Wally v${installed_version:-unknown}, but the latest release is v${VERSION}."
 fi
 
 ok "Wally v${VERSION} installed successfully"
 
+# Put ~/.local/bin on PATH for future shells if it is not already there.
+case ":${PATH}:" in
+    *":${BIN_DIR}:"*)
+        : ;;
+    *)
+        line='export PATH="$HOME/.local/bin:$PATH"'
+        case "$(basename "${SHELL:-}")" in
+            zsh)  rc="${HOME}/.zshrc" ;;
+            bash) rc="${HOME}/.bashrc" ;;
+            *)    rc="${HOME}/.profile" ;;
+        esac
+        if [ -w "$rc" ] || [ ! -e "$rc" ]; then
+            printf '\n# Added by the Wally installer\n%s\n' "$line" >> "$rc"
+            warn "${BIN_DIR} was not on your PATH. Added it to ${rc} — open a new shell, or run: ${line}"
+        else
+            warn "${BIN_DIR} is not on your PATH. Add this line to your shell profile: ${line}"
+        fi
+        ;;
+esac
+
 # The skill is what makes the next step self-explanatory in Claude Code: it
 # teaches the assistant the commands, the harnesses, and what to do when one is
-# missing. Installed unconditionally - it is a doc file, and it is the thing the
+# missing. Installed unconditionally — it is a doc file, and it is the thing the
 # person was promised when they copied one line off the website.
 #
 # Pulled from the release tag, not from main. Claude Code follows this file's
