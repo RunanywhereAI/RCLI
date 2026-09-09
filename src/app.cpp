@@ -89,6 +89,7 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     commands::register_usage(app, options);
     commands::register_editors(app, options);
     commands::register_harness(app, options);
+    commands::register_default_models(app, options);
     commands::register_telemetry(app, options);
 
     // `--help` groups: CLI11 prints one heading per distinct group string, in
@@ -96,22 +97,33 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     // this order is the print order. Centralized here rather than one
     // ->group() call per register_* file: 36 top-level commands with no
     // grouping at all used to land in a single default SUBCOMMANDS: bucket.
+    // Grouped so the split a reader cares about is visible at a glance: what
+    // runs on this machine, versus what talks to the hosted console. The
+    // coding agents sit between the two because they do both — a local model or
+    // a hosted one behind the same command — so they carry the "(local or
+    // hosted)" tag rather than landing in either camp.
+    constexpr const char* kGenerate = "Generate (on-device)";
+    constexpr const char* kModels = "On-device models";
+    constexpr const char* kAgents = "Coding agents (local or hosted)";
+    constexpr const char* kCloud = "Cloud account";
+    constexpr const char* kServe = "Serve & benchmark (on-device)";
+    constexpr const char* kAbout = "About";
     const std::vector<std::pair<const char*, const char*>> help_groups = {
-        {"llm", "Generate"},      {"vlm", "Generate"},      {"stt", "Generate"},
-        {"tts", "Generate"},      {"vad", "Generate"},      {"embed", "Generate"},
-        {"rerank", "Generate"},   {"image", "Generate"},    {"diarize", "Generate"},
-        {"segment", "Generate"},  {"voice", "Generate"},    {"rag", "Generate"},
-        {"run", "Shortcuts"},     {"chat", "Shortcuts"},     {"ls", "Shortcuts"},
-        {"show", "Shortcuts"},    {"pull", "Shortcuts"},     {"rm", "Shortcuts"},
-        {"models", "Models"},     {"lora", "Models"},
-        {"serve", "Serve & measure"}, {"bench", "Serve & measure"},
-        {"backends", "Serve & measure"}, {"info", "Serve & measure"},
-        {"about", "Serve & measure"},    {"version", "Serve & measure"},
-        {"auth", "Account"},      {"login", "Account"},      {"logout", "Account"},
-        {"whoami", "Account"},    {"usage", "Account"},
-        {"opencode", "Editors & agents"},    {"codex", "Editors & agents"},
-        {"claude-code", "Editors & agents"}, {"claude-desktop", "Editors & agents"},
-        {"clion", "Editors & agents"},       {"rustrover", "Editors & agents"},
+        {"llm", kGenerate},      {"vlm", kGenerate},      {"stt", kGenerate},
+        {"tts", kGenerate},      {"vad", kGenerate},      {"embed", kGenerate},
+        {"rerank", kGenerate},   {"image", kGenerate},    {"diarize", kGenerate},
+        {"segment", kGenerate},  {"voice", kGenerate},    {"rag", kGenerate},
+        {"run", kModels},        {"chat", kModels},       {"ls", kModels},
+        {"show", kModels},       {"pull", kModels},       {"rm", kModels},
+        {"models", kModels},     {"lora", kModels},
+        {"opencode", kAgents},        {"codex", kAgents},
+        {"claude-code", kAgents},     {"claude-desktop", kAgents},
+        {"clion", kAgents},           {"rustrover", kAgents},
+        {"default-models", kAgents},
+        {"auth", kCloud},        {"login", kCloud},       {"logout", kCloud},
+        {"whoami", kCloud},      {"usage", kCloud},
+        {"serve", kServe},       {"bench", kServe},       {"backends", kServe},
+        {"info", kAbout},        {"about", kAbout},       {"version", kAbout},
     };
     // configure_app() runs ahead of run()'s own try/catch (and tests call it
     // directly with none at all), so a typo here must never propagate as an

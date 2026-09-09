@@ -65,6 +65,7 @@ set(WALLY_SOURCES
     src/commands/cmd_bench.cpp
     src/commands/cmd_editors.cpp
     src/commands/cmd_harness.cpp
+    src/commands/cmd_default_models.cpp
     src/commands/cmd_account.cpp
     src/commands/cmd_usage.cpp
     src/account/console.cpp
@@ -81,6 +82,7 @@ set(WALLY_SOURCES
     src/commands/engine_options.cpp
     src/commands/model_setup.cpp
     src/config/cli_paths.cpp
+    src/config/preferences.cpp
     src/device_info.cpp
     src/net/control_plane.cpp
     src/net/loopback_auth.cpp

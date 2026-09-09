@@ -37,6 +37,7 @@
 #include "commands/engine_options.h"
 #include "commands/model_labels.h"
 #include "config/cli_paths.h"
+#include "config/preferences.h"
 #include "io/image_io.h"
 #include "io/output.h"
 #include "io/proto.h"
@@ -2401,6 +2402,143 @@ TestResult test_model_labels_format() {
     return result;
 }
 
+// A private WALLY_PROFILE_DIR so the preferences tests never read or write the
+// real profile. Removed on scope exit.
+class TempProfileDir {
+public:
+  TempProfileDir() {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    path_ = std::filesystem::temp_directory_path() /
+            ("wally-prefs-" + std::to_string(stamp));
+    std::error_code ec;
+    std::filesystem::remove_all(path_, ec);
+    std::filesystem::create_directories(path_, ec);
+    dir_str_ = path_.string();
+  }
+  ~TempProfileDir() {
+    std::error_code ec;
+    std::filesystem::remove_all(path_, ec);
+  }
+  const char *c_str() const { return dir_str_.c_str(); }
+
+private:
+  std::filesystem::path path_;
+  std::string dir_str_;
+};
+
+TestResult test_default_model_resolution() {
+  TestResult result;
+  result.test_name = "default_model_resolution";
+
+  TempProfileDir dir;
+  EnvVar profile("WALLY_PROFILE_DIR", dir.c_str());
+  EnvVar legacy("RCLI_PROFILE_DIR", nullptr);
+
+  {
+    EnvVar env_default("WALLY_DEFAULT_MODEL", nullptr);
+    // Fresh: no default anywhere. An explicit model passes through; an empty
+    // one stays empty (the caller keeps its no-model behaviour).
+    if (wally::prefs::ResolveModel("qwen3-0.6b") != "qwen3-0.6b") {
+      result.details = "explicit model should pass through unchanged";
+      return result;
+    }
+    if (!wally::prefs::ResolveModel("").empty()) {
+      result.details = "empty input with no default should stay empty";
+      return result;
+    }
+
+    std::string error;
+    if (!wally::prefs::SetDefaultModel("glm-5.3-flash", &error)) {
+      result.details = "SetDefaultModel failed: " + error;
+      return result;
+    }
+    // File default fills in for an omitted model, but never overrides explicit.
+    if (wally::prefs::ResolveModel("") != "glm-5.3-flash") {
+      result.details = "file default should fill in for an empty model";
+      return result;
+    }
+    if (wally::prefs::ResolveModel("qwen3-0.6b") != "qwen3-0.6b") {
+      result.details = "explicit model should beat the file default";
+      return result;
+    }
+  }
+  {
+    // The environment override outranks the file.
+    EnvVar env_default("WALLY_DEFAULT_MODEL", "env-model");
+    const wally::prefs::DefaultModel effective = wally::prefs::EffectiveDefaultModel();
+    if (effective.id != "env-model" ||
+        effective.source != wally::prefs::DefaultModelSource::Environment) {
+      result.details = "WALLY_DEFAULT_MODEL should outrank the file";
+      return result;
+    }
+    if (wally::prefs::ResolveModel("") != "env-model") {
+      result.details = "env default should resolve for an empty model";
+      return result;
+    }
+  }
+  {
+    // With the env override gone, the file default is back.
+    EnvVar env_default("WALLY_DEFAULT_MODEL", nullptr);
+    if (wally::prefs::EffectiveDefaultModel().source !=
+        wally::prefs::DefaultModelSource::File) {
+      result.details = "file default should return once the env override is gone";
+      return result;
+    }
+  }
+
+  result.passed = true;
+  return result;
+}
+
+TestResult test_default_model_store() {
+  TestResult result;
+  result.test_name = "default_model_store";
+
+  TempProfileDir dir;
+  EnvVar profile("WALLY_PROFILE_DIR", dir.c_str());
+  EnvVar legacy("RCLI_PROFILE_DIR", nullptr);
+  EnvVar env_default("WALLY_DEFAULT_MODEL", nullptr);
+
+  std::string error;
+  // Set then clear round-trips, and clearing an already-empty default is fine.
+  if (!wally::prefs::SetDefaultModel("glm-5.3-flash", &error) ||
+      wally::prefs::FileDefaultModel().value_or("") != "glm-5.3-flash") {
+    result.details = "set did not round-trip: " + error;
+    return result;
+  }
+  if (!wally::prefs::ClearDefaultModel(&error) ||
+      wally::prefs::FileDefaultModel().has_value()) {
+    result.details = "clear did not remove the default: " + error;
+    return result;
+  }
+  if (!wally::prefs::ClearDefaultModel(&error)) {
+    result.details = "clearing an already-empty default should succeed";
+    return result;
+  }
+
+  // An unsafe or empty id is rejected, and nothing is written.
+  if (wally::prefs::SetDefaultModel("bad<id>", &error) ||
+      wally::prefs::SetDefaultModel("", &error) ||
+      wally::prefs::FileDefaultModel().has_value()) {
+    result.details = "an unsafe or empty id should be rejected";
+    return result;
+  }
+
+  // A corrupt preferences file degrades to "no default", never a throw.
+  {
+    std::ofstream corrupt(wally::prefs::PreferencesPath(), std::ios::binary | std::ios::trunc);
+    corrupt << "{ this is not json";
+  }
+  if (wally::prefs::FileDefaultModel().has_value() ||
+      wally::prefs::EffectiveDefaultModel().set()) {
+    result.details = "a corrupt file should resolve to no default";
+    return result;
+  }
+
+  result.passed = true;
+  return result;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -2443,5 +2581,7 @@ int main(int argc, char **argv) {
   suite.add("models_ls_is_primary_name", test_models_ls_is_primary_name);
   suite.add("loopback_token", test_loopback_token);
   suite.add("model_labels_format", test_model_labels_format);
+  suite.add("default_model_resolution", test_default_model_resolution);
+  suite.add("default_model_store", test_default_model_store);
   return suite.run(argc, argv);
 }
