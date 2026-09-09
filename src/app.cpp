@@ -109,9 +109,9 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
         {"about", "Serve & measure"},    {"version", "Serve & measure"},
         {"auth", "Account"},      {"login", "Account"},      {"logout", "Account"},
         {"whoami", "Account"},    {"usage", "Account"},
-        {"opencode", "Editors & agents"},    {"claude-code", "Editors & agents"},
-        {"claude-desktop", "Editors & agents"}, {"clion", "Editors & agents"},
-        {"rustrover", "Editors & agents"},
+        {"opencode", "Editors & agents"},    {"codex", "Editors & agents"},
+        {"claude-code", "Editors & agents"}, {"claude-desktop", "Editors & agents"},
+        {"clion", "Editors & agents"},       {"rustrover", "Editors & agents"},
     };
     // configure_app() runs ahead of run()'s own try/catch (and tests call it
     // directly with none at all), so a typo here must never propagate as an
