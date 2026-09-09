@@ -5,14 +5,36 @@ set -euo pipefail
 # tap: the release bottle already stages `wally` with mlx-swift_Cmlx.bundle
 # beside it (Metal shaders) and its shared libraries under ../lib with an rpath
 # that finds them, so a plain extract-and-symlink keeps every engine working.
+#
+# Usage:
+#   curl -fsSL <install.sh> | sh                 # production build
+#   curl -fsSL <install.sh> | sh -s -- nightly   # nightly (dev-endpoint) build
+#
+# `nightly` (or --nightly) installs the -dev bottle, which is baked to talk to
+# the development console and APIs. Same binary otherwise; it only changes which
+# backend it points at, so it does not disturb the production install path.
 REPO="RunanywhereAI/wally"
 LIB_DIR="${HOME}/.local/lib/wally"
 BIN_DIR="${HOME}/.local/bin"
 
-info()  { printf "\033[1;34m==>\033[0m \033[1m%s\033[0m\n" "$*"; }
-ok()    { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
-warn()  { printf "\033[1;33mWarning:\033[0m %s\n" "$*"; }
-fail()  { printf "\033[1;31mError:\033[0m %s\n" "$*" >&2; exit 1; }
+# --- output helpers ---------------------------------------------------------
+if [ -t 1 ]; then B=$(printf '\033[1m'); DIM=$(printf '\033[2m'); R=$(printf '\033[0m')
+  BLU=$(printf '\033[34m'); GRN=$(printf '\033[32m'); YEL=$(printf '\033[33m'); RED=$(printf '\033[31m')
+else B=""; DIM=""; R=""; BLU=""; GRN=""; YEL=""; RED=""; fi
+
+STEP=0
+TOTAL=5
+step()  { STEP=$((STEP + 1)); printf "%s[%d/%d]%s %s%s%s\n" "$BLU" "$STEP" "$TOTAL" "$R" "$B" "$*" "$R"; }
+ok()    { printf "      %s✓%s %s\n" "$GRN" "$R" "$*"; }
+warn()  { printf "      %s!%s %s\n" "$YEL" "$R" "$*"; }
+fail()  { printf "%serror:%s %s\n" "$RED" "$R" "$*" >&2; exit 1; }
+
+banner() {
+  printf '\n'
+  printf '   %s┌───────────────────────────────┐%s\n' "$DIM" "$R"
+  printf '   %s│%s   %s● Wally%s  · RunAnywhere CLI   %s│%s\n' "$DIM" "$R" "$B" "$R" "$DIM" "$R"
+  printf '   %s└───────────────────────────────┘%s\n' "$DIM" "$R"
+}
 
 # Which agent homes get the skill. Claude Code reads ~/.claude/skills; Cursor,
 # Codex and other AGENTS.md tools read ~/.agents/skills. Install into every home
@@ -31,20 +53,32 @@ skill_target_dirs() {
     printf '%s' "${targets}"
 }
 
-# Debug-only: print the resolved skill targets and exit before any network work.
-# Exercised by scripts/test/test-install-skill-dirs.sh. Not part of the
-# user-facing flow.
-if [ "${1:-}" = "--print-skill-dirs" ]; then
-    skill_target_dirs
-    exit 0
+# --- arguments --------------------------------------------------------------
+NIGHTLY=0
+for arg in "$@"; do
+    case "$arg" in
+        nightly|--nightly) NIGHTLY=1 ;;
+        # Debug-only: print the resolved skill targets and exit before any
+        # network work. Exercised by scripts/test/test-install-skill-dirs.sh.
+        --print-skill-dirs) skill_target_dirs; exit 0 ;;
+    esac
+done
+
+if [ "$NIGHTLY" = 1 ]; then
+    SUFFIX="-dev"; CHANNEL="nightly (development endpoints)"
+else
+    SUFFIX="";     CHANNEL="production"
 fi
 
-info "Checking latest Wally release..."
+banner
+printf '   %sInstalling the %s%s%s build%s\n\n' "$DIM" "$R$B" "$CHANNEL" "$R$DIM" "$R"
+
+step "Resolving the latest release"
 VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
     | grep '"tag_name"' \
     | sed 's/.*"v\([^"]*\)".*/\1/')
 [[ -n "$VERSION" ]] || fail "Could not determine latest release version. Check your internet connection."
-info "Latest version: v${VERSION}"
+ok "v${VERSION}"
 
 os=$(uname -s)
 arch=$(uname -m)
@@ -57,57 +91,52 @@ case "${os}/${arch}" in
     Linux/*)                   fail "Wally has no Linux ${arch} build yet — x86_64 only. Build from source: https://github.com/${REPO}#build-from-source" ;;
     *)                         fail "Wally has no build for ${os}. On Windows, use install.ps1." ;;
 esac
+ok "${PLATFORM}"
 
-ASSET="wally-${VERSION}-${PLATFORM}.tar.gz"
+ASSET="wally-${VERSION}-${PLATFORM}${SUFFIX}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-info "Downloading ${ASSET}..."
-curl -fSL "$URL" -o "${tmp}/${ASSET}" || fail "Download failed: ${URL}"
-curl -fSL "${URL}.sha256" -o "${tmp}/${ASSET}.sha256" || fail "Could not download the checksum for ${ASSET}"
-
-info "Verifying checksum..."
+step "Downloading ${ASSET}"
+# A clean progress bar on a real terminal; silent (errors only) when the output
+# is captured or piped, so a log does not fill with redraw frames.
+if [ -t 1 ]; then dl="-#"; else dl="-sS"; fi
+curl -fSL "$dl" "$URL" -o "${tmp}/${ASSET}" || fail "Download failed: ${URL}"
+curl -fsSL "${URL}.sha256" -o "${tmp}/${ASSET}.sha256" || fail "Could not download the checksum for ${ASSET}"
 # The sidecar is `<sha>  <filename>`; verify from inside tmp so the name resolves.
 ( cd "$tmp" && shasum -a 256 -c "${ASSET}.sha256" >/dev/null 2>&1 ) \
     || fail "Checksum verification failed for ${ASSET}. Do not use the download."
+ok "checksum verified"
 
-info "Extracting..."
+step "Installing to ${LIB_DIR}"
 tar -xzf "${tmp}/${ASSET}" -C "$tmp"
 staged="${tmp}/wally-${PLATFORM}"
 [[ -x "${staged}/bin/wally" ]] || fail "Archive did not contain bin/wally as expected."
-
 # Replace the install tree wholesale. rm before copy is deliberate: overwriting a
 # code-signed Mach-O in place while a copy may still be mapped kills it with
 # SIGKILL (137). A fresh dir sidesteps that.
-info "Installing to ${LIB_DIR}..."
 rm -rf "$LIB_DIR"
 mkdir -p "$(dirname "$LIB_DIR")" "$BIN_DIR"
 cp -R "$staged" "$LIB_DIR"
 ln -sfn "${LIB_DIR}/bin/wally" "${BIN_DIR}/wally"
-
-# Make wally callable for the rest of this script even if the shell that piped us
-# in never had ~/.local/bin on PATH.
 export PATH="${BIN_DIR}:${PATH}"
 
 if ! command -v wally >/dev/null 2>&1; then
     fail "Installation failed. wally not found after install."
 fi
-
 installed_version="$(wally --version 2>/dev/null \
     | sed -nE 's/^wally ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
     | head -1)"
 if [[ "${installed_version}" != "${VERSION}" ]]; then
     fail "Installed Wally v${installed_version:-unknown}, but the latest release is v${VERSION}."
 fi
-
-ok "Wally v${VERSION} installed successfully"
+ok "wally v${VERSION} on PATH"
 
 # Put ~/.local/bin on PATH for future shells if it is not already there.
 case ":${PATH}:" in
-    *":${BIN_DIR}:"*)
-        : ;;
+    *":${BIN_DIR}:"*) : ;;
     *)
         line='export PATH="$HOME/.local/bin:$PATH"'
         case "$(basename "${SHELL:-}")" in
@@ -117,24 +146,20 @@ case ":${PATH}:" in
         esac
         if [ -w "$rc" ] || [ ! -e "$rc" ]; then
             printf '\n# Added by the Wally installer\n%s\n' "$line" >> "$rc"
-            warn "${BIN_DIR} was not on your PATH. Added it to ${rc} — open a new shell, or run: ${line}"
+            warn "added ${BIN_DIR} to your PATH in ${rc} (open a new shell)"
         else
-            warn "${BIN_DIR} is not on your PATH. Add this line to your shell profile: ${line}"
+            warn "${BIN_DIR} is not on your PATH — add: ${line}"
         fi
         ;;
 esac
 
 # The skill is what makes the next step self-explanatory in Claude Code: it
 # teaches the assistant the commands, the harnesses, and what to do when one is
-# missing. Installed unconditionally — it is a doc file, and it is the thing the
-# person was promised when they copied one line off the website.
-#
-# Pulled from the release tag, not from main. Claude Code follows this file's
-# instructions when the skill runs, so fetching it off a moving branch means a
-# push to main changes what an already-installed assistant does. The tag is the
-# same one the binary above came from, so the two cannot drift apart either.
+# missing. Pulled from the release tag, not from main, so an already-installed
+# assistant cannot be changed by a push to main; it is the same tag the binary
+# came from, so the two cannot drift.
+step "Installing the RunAnywhere skill for your coding agent"
 SKILL_URL="https://raw.githubusercontent.com/${REPO}/v${VERSION}/skills/runanywhere/SKILL.md"
-info "Installing the RunAnywhere skill for your coding agent..."
 skill_installed=0
 old_ifs="$IFS"
 IFS='
@@ -142,41 +167,42 @@ IFS='
 for skill_dir in $(skill_target_dirs); do
     IFS="$old_ifs"
     if mkdir -p "$skill_dir" 2>/dev/null && curl -fsSL "$SKILL_URL" -o "${skill_dir}/SKILL.md"; then
-        ok "Skill installed at ${skill_dir}/SKILL.md"
+        ok "${skill_dir}/SKILL.md"
         skill_installed=1
     else
-        warn "Could not install the skill at ${skill_dir}."
+        warn "could not install the skill at ${skill_dir}"
     fi
     IFS='
 '
 done
 IFS="$old_ifs"
-[ "$skill_installed" -eq 1 ] || warn "Could not install the RunAnywhere skill. Everything else still works."
+[ "$skill_installed" -eq 1 ] || warn "could not install the RunAnywhere skill. Everything else still works."
 
 # Signing in is the point of the whole flow, so it happens here rather than
 # being left as an instruction the person has to notice. Already signed in is a
 # no-op, and a failure is not fatal: the CLI is installed either way.
-echo ""
+step "Signing in"
 if wally whoami >/dev/null 2>&1; then
-    ok "Already signed in"
+    ok "already signed in"
 elif [[ ! -t 0 || ! -t 1 ]]; then
     # No terminal: piped into bash over SSH, or a CI step. The browser flow
     # would try to open a browser that is not there and then block until the
     # request expires, which reads as the installer hanging.
-    info "Not an interactive terminal, so sign-in is left to you."
-    echo "    wally login              sign in from a machine with a browser"
-    echo "    wally login --no-browser print the URL and approve it elsewhere"
+    warn "not an interactive terminal — run \`wally login\` yourself"
 else
-    info "Opening the console to sign in..."
-    wally login || warn "Sign-in did not finish. Run \`wally login\` when you are ready."
+    wally login || warn "sign-in did not finish. Run \`wally login\` when you are ready."
 fi
 
-echo ""
-info "Getting started:"
-echo "    wally opencode --cloud -m glm-5.3   code against a hosted model"
-echo "    wally usage                         credit left and what you spent"
-echo "    wally pull qwen3-0.6b               download a model to this machine"
-echo "    wally run qwen3-0.6b                talk to it, offline"
-echo ""
-echo "  Models download on demand into ~/.local/share/runanywhere"
-echo "  In Claude Code, ask: \"get me started with RunAnywhere\""
+# --- summary ----------------------------------------------------------------
+printf '\n   %s┌─ Installed ───────────────────────────────%s\n' "$DIM" "$R"
+printf '   %s│%s  wally     %sv%s%s\n'   "$DIM" "$R" "$B" "${VERSION}" "$R"
+printf '   %s│%s  channel   %s\n'        "$DIM" "$R" "${CHANNEL}"
+printf '   %s│%s  binary    %s\n'        "$DIM" "$R" "${BIN_DIR}/wally"
+printf '   %s│%s  models    ~/.local/share/runanywhere\n' "$DIM" "$R"
+printf '   %s└───────────────────────────────────────────%s\n\n' "$DIM" "$R"
+
+printf '   %sNext:%s\n' "$B" "$R"
+printf '     wally opencode --cloud -m glm-5.3   code against a hosted model\n'
+printf '     wally usage                         credit left and what you spent\n'
+printf '     wally pull qwen3-0.6b               download a model to this machine\n'
+printf '   In Claude Code, ask: %s"get me started with RunAnywhere"%s\n\n' "$DIM" "$R"
