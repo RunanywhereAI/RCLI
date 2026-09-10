@@ -1,14 +1,20 @@
 #include "anthropic/messages.h"
 
+#include <algorithm>
 #include <atomic>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <thread>
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
 #include "anthropic/translate.h"
+#include "config/cli_paths.h"
 #include "io/output.h"
 #include "net/loopback_auth.h"
 
@@ -16,6 +22,44 @@ namespace wally::anthropic {
 namespace {
 
 using Json = nlohmann::json;
+
+/// Appends one line about a failed upstream call to a log file, best effort.
+///
+/// A file, not stderr: the wrapped tool (Claude Code) owns the terminal, and a
+/// line printed into its TUI corrupts the display — which is why a real error
+/// used to vanish into a blind "API error, retrying" with nowhere to look. The
+/// upstream response body is recorded; the bearer token never is (it is only
+/// ever on the request, never echoed here).
+void LogUpstreamError(const std::string& model, bool streaming, int status,
+                      const std::string& body) {
+    const std::string dir = paths::state_dir();
+    if (dir.empty()) {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream log(dir + "/shim.log", std::ios::app);
+    if (!log.good()) {
+        return;
+    }
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+#if defined(_WIN32)
+    gmtime_s(&utc, &now);
+#else
+    gmtime_r(&now, &utc);
+#endif
+    char when[32] = {0};
+    std::strftime(when, sizeof(when), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    std::string snippet = body.substr(0, 2000);
+    for (char& character : snippet) {
+        if (character == '\n' || character == '\r') {
+            character = ' ';
+        }
+    }
+    log << when << " model=" << model << " stream=" << (streaming ? 1 : 0)
+        << " status=" << status << " body=" << snippet << '\n';
+}
 
 /// Split "http://host:port/v1" into the host root and the path prefix httplib
 /// wants separately.
@@ -83,22 +127,26 @@ void HandleNonStreaming(Runtime& runtime, const Json& request, httplib::Response
     const httplib::Result reply =
         client.Post(runtime.prefix + "/chat/completions", upstream.dump(), "application/json");
     if (!reply || reply->status < 200 || reply->status >= 300) {
+        const int status = reply ? reply->status : 0;
+        const std::string body = reply ? reply->body : std::string();
+        LogUpstreamError(runtime.model, false, status, body);
         response.status = reply ? reply->status : 502;
         // A 429 from the hosted API carries a Retry-After the wrapped tool
         // should honor; httplib drops upstream headers unless we copy them.
         if (reply && reply->status == 429 && reply->has_header("Retry-After")) {
             response.set_header("Retry-After", reply->get_header_value("Retry-After"));
         }
-        response.set_content(
-            translate::ErrorBody("api_error",
-                                 reply ? reply->body : std::string("the model endpoint did not answer")),
-            "application/json");
+        std::string type;
+        std::string message;
+        translate::UpstreamFailure(status, body, &type, &message);
+        response.set_content(translate::ErrorBody(type, message), "application/json");
         return;
     }
     Json parsed;
     try {
         parsed = Json::parse(reply->body);
     } catch (const Json::exception& error) {
+        LogUpstreamError(runtime.model, false, reply->status, reply->body);
         response.status = 502;
         response.set_content(translate::ErrorBody("api_error", error.what()), "application/json");
         return;
@@ -106,6 +154,7 @@ void HandleNonStreaming(Runtime& runtime, const Json& request, httplib::Response
     std::string failure_type;
     std::string failure;
     if (translate::PayloadError(parsed, &failure_type, &failure)) {
+        LogUpstreamError(runtime.model, false, reply->status, reply->body);
         response.status = failure_type == "rate_limit_error" ? 429 : 502;
         // A rate-limit error can arrive as a 200 body rather than a 429 status;
         // forward the upstream Retry-After either way so the tool backs off.
@@ -139,10 +188,21 @@ void HandleStreaming(Runtime& runtime, const Json& request, httplib::Response& r
             translate::StreamState state;
             state.model = *model;
             std::string pending;
+            // The upstream status is only known once Post returns, so the start
+            // of the body is kept regardless. On a non-2xx reply that is the
+            // error body, which would otherwise be fed to the SSE frame parser
+            // and silently dropped; capped so a real (2xx) stream of any size
+            // costs only these few KB.
+            std::string error_body;
+            constexpr size_t kErrorBodyCap = 8192;
 
             const httplib::Result reply = client.Post(
                 *path, httplib::Headers(), *upstream, "application/json",
                 [&](const char* data, size_t length) {
+                    if (error_body.size() < kErrorBodyCap) {
+                        error_body.append(data,
+                                          std::min(length, kErrorBodyCap - error_body.size()));
+                    }
                     pending.append(data, length);
                     // SSE frames are separated by a blank line, and a chunk can
                     // split one in half, so only whole frames are consumed.
@@ -182,11 +242,14 @@ void HandleStreaming(Runtime& runtime, const Json& request, httplib::Response& r
                     return true;
                 });
 
-            if (!reply) {
+            if (!reply || reply->status < 200 || reply->status >= 300) {
+                const int status = reply ? reply->status : 0;
+                LogUpstreamError(*model, true, status, error_body);
+                std::string type;
+                std::string message;
+                translate::UpstreamFailure(status, error_body, &type, &message);
                 const std::string body =
-                    "event: error\ndata: " +
-                    translate::ErrorBody("api_error", "the model endpoint stopped answering") +
-                    "\n\n";
+                    "event: error\ndata: " + translate::ErrorBody(type, message) + "\n\n";
                 sink.write(body.data(), body.size());
                 sink.done();
                 return false;

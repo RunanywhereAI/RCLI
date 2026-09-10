@@ -241,8 +241,39 @@ TestResult test_restores_config_when_spawn_throws() {
 
 }  // namespace
 
+TestResult test_config_injects_limit_and_cost() {
+    TestResult result;
+    result.test_name = "config_injects_limit_and_cost";
+    using Json = nlohmann::json;
+
+    // glm-like: 1M context, no separate output cap (0 -> sane default), and
+    // $0.60/$2.20 per Mtok (600000/2200000 micro-dollars).
+    const Json j = Json::parse(wally::harness::BuildOpenCodeCloudConfig(
+        "glm-5.3-flash", "https://x/v1", "tok", 1048576, 0, 600000, 2200000));
+    const Json m = j["provider"]["runanywhere"]["models"]["glm-5.3-flash"];
+    const double cin = m.value("cost", Json::object()).value("input", -1.0);
+    const double cout = m.value("cost", Json::object()).value("output", -1.0);
+    if (m["limit"]["context"].get<std::int64_t>() != 1048576 ||
+        m["limit"]["output"].get<std::int64_t>() != 65536 ||
+        cin < 0.5999 || cin > 0.6001 || cout < 2.1999 || cout > 2.2001) {
+        result.details = "limit/cost injection wrong: " + m.dump();
+        return result;
+    }
+    // No metadata (all zeros) -> neither block is emitted.
+    const Json bare = Json::parse(
+        wally::harness::BuildOpenCodeCloudConfig("m", "https://x/v1", "tok", 0, 0, 0, 0));
+    if (bare["provider"]["runanywhere"]["models"]["m"].contains("limit") ||
+        bare["provider"]["runanywhere"]["models"]["m"].contains("cost")) {
+        result.details = "empty metadata should omit limit and cost";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 int main(int argc, char** argv) {
     TestSuite suite("wally_opencode");
+    suite.add("config_injects_limit_and_cost", test_config_injects_limit_and_cost);
     suite.add("ephemeral_config_and_passthrough", test_ephemeral_config_and_passthrough);
     suite.add("refreshes_expired_session_without_sdk_bootstrap",
               test_refreshes_expired_session_without_sdk_bootstrap);

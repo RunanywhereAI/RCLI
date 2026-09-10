@@ -82,6 +82,16 @@ std::string ErrorBody(const std::string& type, const std::string& message);
 /// Returns false when `payload` carries no error, which is the ordinary case.
 bool PayloadError(const Json& payload, std::string* type, std::string* message);
 
+/// Maps a failed upstream reply to the (type, message) an Anthropic-shaped error
+/// should carry. `status` 0 means the endpoint never answered.
+///
+/// The HTTP status picks the error type, so a 403 reads as `permission_error`
+/// and a 429 as `rate_limit_error` rather than the generic `api_error` a tool
+/// will retry forever; the message is pulled from an OpenAI-style error body
+/// when there is one, otherwise the raw body, otherwise a plain status line.
+void UpstreamFailure(int status, const std::string& body, std::string* type,
+                     std::string* message);
+
 }  // namespace wally::anthropic::translate
 
 #endif  // WALLY_ANTHROPIC_TRANSLATE_H

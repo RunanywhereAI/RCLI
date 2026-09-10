@@ -725,6 +725,163 @@
         ],
         "title": "UsageTotals",
         "type": "object"
+      },
+      "ModelList": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PublicModel"
+            },
+            "type": "array"
+          },
+          "object": {
+            "const": "list"
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ],
+        "type": "object"
+      },
+      "ModelOwner": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "PublicModel": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "description": "OpenAI-shaped creation timestamp (unix seconds) the gateway reports; informational.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "$ref": "#/components/schemas/PublicModelId"
+          },
+          "max_input_tokens": {
+            "description": "The advertised ceiling on input tokens for this model -- what an OpenAI-shaped coding agent reads to decide when to compact (contracts/public/status_semantics.json context_window). null means the deployment has not established one.",
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_output_tokens": {
+            "description": "The advertised ceiling on output tokens, when the deployment declares one separately from the context window (gateway/litellm/config/proxy_config.yaml model_info; gemma-4 does, qwen3.8-27b shares one budget and omits it).",
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mode": {
+            "description": "The gateway's model mode; every Wally model is a chat model.",
+            "enum": [
+              "chat"
+            ],
+            "type": "string"
+          },
+          "object": {
+            "const": "model"
+          },
+          "owned_by": {
+            "$ref": "#/components/schemas/ModelOwner"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "owned_by"
+        ],
+        "type": "object"
+      },
+      "PublicModelId": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+        "type": "string"
+      },
+      "CatalogModelResponse": {
+        "additionalProperties": false,
+        "description": "One entitled model, priced. Straight from `pricing.catalog()` - the same\nnumbers the credit gate charges against, so a published price cannot drift\nfrom a billed one (G7).",
+        "properties": {
+          "cached_input_per_mtok": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Cached Input Per Mtok",
+            "type": "integer"
+          },
+          "display_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_per_mtok": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Input Per Mtok",
+            "type": "integer"
+          },
+          "output_per_mtok": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Output Per Mtok",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "input_per_mtok",
+          "output_per_mtok",
+          "cached_input_per_mtok"
+        ],
+        "title": "CatalogModelResponse",
+        "type": "object"
+      },
+      "ModelCatalogResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_from": {
+            "maxLength": 35,
+            "minLength": 20,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}",
+            "title": "Effective From",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogModelResponse"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "pricing_version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Pricing Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pricing_version",
+          "effective_from",
+          "models"
+        ],
+        "title": "ModelCatalogResponse",
+        "type": "object"
       }
     }
   },
@@ -961,6 +1118,66 @@
         "summary": "Me",
         "tags": [
           "cli auth"
+        ]
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "operationId": "listModels",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            },
+            "description": "Available model aliases"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List models available to the current key",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/v1/models/catalog": {
+      "get": {
+        "description": "Which models we serve and what they cost.\n\nThe console used to name a single model from a config constant, which was\ntrue when the endpoint served one and became wrong the moment LiteLLM sat in\nfront of three. Prices come from the same catalog the gate charges against,\nso a published price cannot drift from a billed one.",
+        "operationId": "getModelCatalog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "summary": "Model Catalog",
+        "tags": [
+          "console"
         ]
       }
     }

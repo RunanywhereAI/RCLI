@@ -29,6 +29,7 @@
 #include "rac/foundation/rac_proto_buffer.h"
 #include "rac/infrastructure/model_management/rac_model_registry.h"
 
+#include "anthropic/translate.h"
 #include "app.h"
 #include "net/loopback_auth.h"
 #include "catalog/catalog.h"
@@ -2539,6 +2540,112 @@ TestResult test_default_model_store() {
   return result;
 }
 
+TestResult test_upstream_failure_mapping() {
+  TestResult result;
+  result.test_name = "upstream_failure_mapping";
+  namespace tr = wally::anthropic::translate;
+
+  struct Case {
+    int status;
+    const char *body;
+    const char *want_type;
+    const char *want_message;
+  };
+  // The status decides the type so the wrapped tool stops retrying a refusal it
+  // cannot satisfy; the message comes from an OpenAI-style error body, else the
+  // raw body, else a status line, else a no-answer note.
+  const Case cases[] = {
+      {0, "", "api_error", "the model endpoint did not answer"},
+      {429, R"({"error":{"message":"Rate limit exceeded"}})", "rate_limit_error",
+       "Rate limit exceeded"},
+      {403, R"({"error":{"message":"Out of credit."}})", "permission_error", "Out of credit."},
+      {401, R"({"error":{"message":"bad key"}})", "authentication_error", "bad key"},
+      {500, "upstream boom", "api_error", "upstream boom"},
+      {502, "   ", "api_error", "the model endpoint returned status 502"},
+  };
+
+  for (const Case &c : cases) {
+    std::string type;
+    std::string message;
+    tr::UpstreamFailure(c.status, c.body, &type, &message);
+    if (type != c.want_type || message != c.want_message) {
+      result.details = "status " + std::to_string(c.status) + " gave (" + type + ", " + message +
+                       "), wanted (" + c.want_type + ", " + c.want_message + ")";
+      return result;
+    }
+  }
+  result.passed = true;
+  return result;
+}
+
+TestResult test_passthrough_argv_split() {
+  TestResult result;
+  result.test_name = "passthrough_argv_split";
+
+  struct Case {
+    std::vector<std::string> in;
+    std::vector<std::string> want;
+  };
+  const std::vector<Case> cases = {
+      // A leading tool flag is separated so CLI11 forwards it.
+      {{"wally", "claude-code", "--dangerously-skip-permissions"},
+       {"wally", "claude-code", "--", "--dangerously-skip-permissions"}},
+      // wally's own -m is consumed first; the tool flag after is separated.
+      {{"wally", "claude-code", "-m", "glm-5.3-flash", "-p", "hi"},
+       {"wally", "claude-code", "-m", "glm-5.3-flash", "--", "-p", "hi"}},
+      // --model=... inline form is a wally flag too.
+      {{"wally", "opencode", "--cloud", "--model=glm-5.3-flash", "run"},
+       {"wally", "opencode", "--cloud", "--model=glm-5.3-flash", "--", "run"}},
+      // An explicit -- is left exactly as the reader wrote it.
+      {{"wally", "claude-code", "--", "-p", "hi"}, {"wally", "claude-code", "--", "-p", "hi"}},
+      // Only wally flags: nothing to forward, no -- added.
+      {{"wally", "claude-code", "-m", "glm-5.3-flash"},
+       {"wally", "claude-code", "-m", "glm-5.3-flash"}},
+      // Not a passthrough command: untouched.
+      {{"wally", "run", "qwen3-0.6b", "hi"}, {"wally", "run", "qwen3-0.6b", "hi"}},
+  };
+
+  for (const Case &c : cases) {
+    const std::vector<std::string> got = wally::SplitPassthroughArgv(c.in);
+    if (got != c.want) {
+      std::string g;
+      for (const std::string &t : got) g += t + " ";
+      result.details = "for [" + c.in[1] + " ...] got: " + g;
+      return result;
+    }
+  }
+  result.passed = true;
+  return result;
+}
+
+TestResult test_stream_usage_reports_input_tokens() {
+  TestResult result;
+  result.test_name = "stream_usage_reports_input_tokens";
+  namespace tr = wally::anthropic::translate;
+
+  tr::StreamState state;
+  // A streaming chunk carrying content plus the final usage (gateways attach
+  // prompt/completion counts to a late data chunk).
+  const nlohmann::json chunk = nlohmann::json::parse(
+      R"({"id":"c1","choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],)"
+      R"("usage":{"prompt_tokens":1234,"completion_tokens":56}})");
+  tr::StreamChunkToAnthropic(chunk, &state);
+  const std::string closing = tr::StreamCloseToAnthropic(&state);
+
+  // The closing message_delta must carry the REAL input_tokens, or a wrapped
+  // tool's context gauge stays at zero and auto-compaction never fires.
+  if (closing.find("\"input_tokens\":1234") == std::string::npos) {
+    result.details = "message_delta missing real input_tokens; got: " + closing.substr(0, 300);
+    return result;
+  }
+  if (closing.find("\"output_tokens\":56") == std::string::npos) {
+    result.details = "message_delta missing output_tokens";
+    return result;
+  }
+  result.passed = true;
+  return result;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -2583,5 +2690,8 @@ int main(int argc, char **argv) {
   suite.add("model_labels_format", test_model_labels_format);
   suite.add("default_model_resolution", test_default_model_resolution);
   suite.add("default_model_store", test_default_model_store);
+  suite.add("upstream_failure_mapping", test_upstream_failure_mapping);
+  suite.add("passthrough_argv_split", test_passthrough_argv_split);
+  suite.add("stream_usage_reports_input_tokens", test_stream_usage_reports_input_tokens);
   return suite.run(argc, argv);
 }

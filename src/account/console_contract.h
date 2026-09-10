@@ -17,7 +17,7 @@
 namespace wally::account::contract {
 
 // SHA-256 of contracts/wally-cli-v1.openapi.json this header was built from.
-inline constexpr char kContractSha256[] = "5069ea05fa10339c0ec316f269e1aa2ed486114ec1e248abe82c2ed702fdc20a";
+inline constexpr char kContractSha256[] = "db39bcceea58bd09380f4175089adc378da56b436247f68784d360ae5a27a0f0";
 
 enum class ApiErrorCode {
     kInvalidRequest,
@@ -290,6 +290,51 @@ inline void to_json(nlohmann::json& j, const ApiError& value) {
     j = nlohmann::json::object();
     j["code"] = value.code;
     j["message"] = value.message;
+}
+
+struct CatalogModelResponse {
+    std::int64_t cached_input_per_mtok;
+    std::string display_name;
+    std::string id;
+    std::int64_t input_per_mtok;
+    std::int64_t output_per_mtok;
+};
+
+inline void from_json(const nlohmann::json& j, CatalogModelResponse& value) {
+    if (j.contains("cached_input_per_mtok") && !j.at("cached_input_per_mtok").is_null()) {
+        value.cached_input_per_mtok = j.at("cached_input_per_mtok").get<std::int64_t>();
+    } else {
+        value.cached_input_per_mtok = std::int64_t{};
+    }
+    if (j.contains("display_name") && !j.at("display_name").is_null()) {
+        value.display_name = j.at("display_name").get<std::string>();
+    } else {
+        value.display_name = std::string{};
+    }
+    if (j.contains("id") && !j.at("id").is_null()) {
+        value.id = j.at("id").get<std::string>();
+    } else {
+        value.id = std::string{};
+    }
+    if (j.contains("input_per_mtok") && !j.at("input_per_mtok").is_null()) {
+        value.input_per_mtok = j.at("input_per_mtok").get<std::int64_t>();
+    } else {
+        value.input_per_mtok = std::int64_t{};
+    }
+    if (j.contains("output_per_mtok") && !j.at("output_per_mtok").is_null()) {
+        value.output_per_mtok = j.at("output_per_mtok").get<std::int64_t>();
+    } else {
+        value.output_per_mtok = std::int64_t{};
+    }
+}
+
+inline void to_json(nlohmann::json& j, const CatalogModelResponse& value) {
+    j = nlohmann::json::object();
+    j["cached_input_per_mtok"] = value.cached_input_per_mtok;
+    j["display_name"] = value.display_name;
+    j["id"] = value.id;
+    j["input_per_mtok"] = value.input_per_mtok;
+    j["output_per_mtok"] = value.output_per_mtok;
 }
 
 struct CliPollRequest {
@@ -832,6 +877,128 @@ inline void to_json(nlohmann::json& j, const IdentityResponse& value) {
     j["monthly_token_limit"] = value.monthly_token_limit;
     j["plan"] = value.plan;
     j["tokens_this_month"] = value.tokens_this_month;
+}
+
+struct ModelCatalogResponse {
+    std::string effective_from;
+    std::vector<CatalogModelResponse> models;
+    std::string pricing_version;
+};
+
+inline void from_json(const nlohmann::json& j, ModelCatalogResponse& value) {
+    if (j.contains("effective_from") && !j.at("effective_from").is_null()) {
+        value.effective_from = j.at("effective_from").get<std::string>();
+    } else {
+        value.effective_from = std::string{};
+    }
+    if (j.contains("models") && !j.at("models").is_null()) {
+        value.models = j.at("models").get<std::vector<CatalogModelResponse>>();
+    } else {
+        value.models = std::vector<CatalogModelResponse>{};
+    }
+    if (j.contains("pricing_version") && !j.at("pricing_version").is_null()) {
+        value.pricing_version = j.at("pricing_version").get<std::string>();
+    } else {
+        value.pricing_version = std::string{};
+    }
+}
+
+inline void to_json(nlohmann::json& j, const ModelCatalogResponse& value) {
+    j = nlohmann::json::object();
+    j["effective_from"] = value.effective_from;
+    j["models"] = value.models;
+    j["pricing_version"] = value.pricing_version;
+}
+
+struct PublicModel {
+    std::optional<std::int64_t> created;
+    std::string id;
+    std::optional<std::int64_t> max_input_tokens;
+    std::optional<std::int64_t> max_output_tokens;
+    std::optional<std::string> mode;
+    std::string object;
+    std::string owned_by;
+};
+
+inline void from_json(const nlohmann::json& j, PublicModel& value) {
+    if (j.contains("created") && !j.at("created").is_null()) {
+        value.created = j.at("created").get<std::int64_t>();
+    } else {
+        value.created = std::nullopt;
+    }
+    if (j.contains("id") && !j.at("id").is_null()) {
+        value.id = j.at("id").get<std::string>();
+    } else {
+        value.id = std::string{};
+    }
+    if (j.contains("max_input_tokens") && !j.at("max_input_tokens").is_null()) {
+        value.max_input_tokens = j.at("max_input_tokens").get<std::int64_t>();
+    } else {
+        value.max_input_tokens = std::nullopt;
+    }
+    if (j.contains("max_output_tokens") && !j.at("max_output_tokens").is_null()) {
+        value.max_output_tokens = j.at("max_output_tokens").get<std::int64_t>();
+    } else {
+        value.max_output_tokens = std::nullopt;
+    }
+    if (j.contains("mode") && !j.at("mode").is_null()) {
+        value.mode = j.at("mode").get<std::string>();
+    } else {
+        value.mode = std::nullopt;
+    }
+    if (j.contains("object") && !j.at("object").is_null()) {
+        value.object = j.at("object").get<std::string>();
+    } else {
+        value.object = std::string{};
+    }
+    if (j.contains("owned_by") && !j.at("owned_by").is_null()) {
+        value.owned_by = j.at("owned_by").get<std::string>();
+    } else {
+        value.owned_by = std::string{};
+    }
+}
+
+inline void to_json(nlohmann::json& j, const PublicModel& value) {
+    j = nlohmann::json::object();
+    if (value.created.has_value()) {
+        j["created"] = *value.created;
+    }
+    j["id"] = value.id;
+    if (value.max_input_tokens.has_value()) {
+        j["max_input_tokens"] = *value.max_input_tokens;
+    }
+    if (value.max_output_tokens.has_value()) {
+        j["max_output_tokens"] = *value.max_output_tokens;
+    }
+    if (value.mode.has_value()) {
+        j["mode"] = *value.mode;
+    }
+    j["object"] = value.object;
+    j["owned_by"] = value.owned_by;
+}
+
+struct ModelList {
+    std::vector<PublicModel> data;
+    std::string object;
+};
+
+inline void from_json(const nlohmann::json& j, ModelList& value) {
+    if (j.contains("data") && !j.at("data").is_null()) {
+        value.data = j.at("data").get<std::vector<PublicModel>>();
+    } else {
+        value.data = std::vector<PublicModel>{};
+    }
+    if (j.contains("object") && !j.at("object").is_null()) {
+        value.object = j.at("object").get<std::string>();
+    } else {
+        value.object = std::string{};
+    }
+}
+
+inline void to_json(nlohmann::json& j, const ModelList& value) {
+    j = nlohmann::json::object();
+    j["data"] = value.data;
+    j["object"] = value.object;
 }
 
 struct PollResponse {
