@@ -6,6 +6,9 @@
 #ifndef WALLY_APP_H
 #define WALLY_APP_H
 
+#include <string>
+#include <vector>
+
 #include <CLI11.hpp>
 
 #include "bootstrap.h"
@@ -14,6 +17,11 @@ namespace wally {
 
 void configure_app(CLI::App& app, GlobalOptions& options);
 int run(int argc, char** argv);
+
+/// Rewrites a command line so a passthrough subcommand's tool arguments survive
+/// CLI11's parse: a `--` is inserted before the first token that belongs to the
+/// wrapped tool. Exposed for tests; `argv` includes the program name at 0.
+std::vector<std::string> SplitPassthroughArgv(const std::vector<std::string>& argv);
 
 }  // namespace wally
 

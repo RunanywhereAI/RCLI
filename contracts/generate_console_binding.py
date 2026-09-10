@@ -44,13 +44,37 @@ def _enum_constant(value: str) -> str:
 def _resolve_type(schema: dict, schemas: dict) -> tuple[str, bool]:
     """Return (c++ type, is_optional). Nullable/anyOf-null collapses to optional."""
     if "$ref" in schema:
-        return schema["$ref"].split("/")[-1], False
+        name = schema["$ref"].split("/")[-1]
+        target = schemas.get(name, {})
+        # A constrained/plain string newtype (type "string", not an enum, not an
+        # object) has no emitted type of its own -- only objects and enums get
+        # one -- so inline it as std::string rather than name an undefined type.
+        if target.get("type") == "string" and "enum" not in target:
+            return "std::string", False
+        return name, False
+    if "const" in schema:
+        # A fixed literal (e.g. `object: {const: "model"}`). Typed by its value;
+        # the reader still parses it, it just can only be that one value.
+        const = schema["const"]
+        if isinstance(const, bool):
+            return "bool", False
+        if isinstance(const, int):
+            return INT, False
+        return "std::string", False
     if "anyOf" in schema:
         branches = [b for b in schema["anyOf"] if b.get("type") != "null"]
         had_null = any(b.get("type") == "null" for b in schema["anyOf"])
         inner, _ = _resolve_type(branches[0], schemas)
         return inner, had_null
     kind = schema.get("type")
+    # JSON Schema nullable form `type: ["integer", "null"]`: strip the null,
+    # resolve the remaining type, and mark it optional. Same meaning as an
+    # anyOf-with-null, just spelled the compact way OpenAPI 3.1 emits.
+    if isinstance(kind, list):
+        non_null = [t for t in kind if t != "null"]
+        had_null = "null" in kind
+        inner, _ = _resolve_type({**schema, "type": non_null[0]}, schemas)
+        return inner, had_null
     if kind == "string":
         return "std::string", False
     if kind == "integer":

@@ -141,6 +141,24 @@ struct Grant {
 enum class PollResult { Pending, Approved, Denied, Expired, Failed };
 enum class IdentityResult { Ok, Unauthorized, Failed };
 
+/// One served model as `/v1/models` advertises it. `context_window` is the
+/// input-token ceiling a coding agent reads to decide when to compact; 0 means
+/// the deployment declared none. `max_output_tokens` is 0 for self-hosted
+/// shared-budget models and non-zero only where a separate cap exists.
+struct ModelInfo {
+    std::string id;
+    std::int64_t context_window = 0;
+    std::int64_t max_output_tokens = 0;
+};
+
+/// One model's price, straight from the catalog the credit gate charges against.
+/// Micro-dollars per million tokens (1 USD = 1,000,000 micros).
+struct CatalogPrice {
+    std::string id;
+    std::int64_t input_per_mtok = 0;
+    std::int64_t output_per_mtok = 0;
+};
+
 /// Console client independent of SDK/bootstrap state.
 ///
 /// The default transport uses WinHTTP on Windows and libcurl elsewhere. Tests
@@ -161,6 +179,14 @@ class ConsoleClient {
                 const std::string& refresh_token, std::string* error) const;
     IdentityResult FetchUsage(const std::string& console_url, const std::string& access_token,
                               const UsageQuery& query, Usage* usage, std::string* error) const;
+    /// The served model catalog from `/v1/models`, used to feed a harness the
+    /// real context window (so its auto-compaction fires at the right point).
+    IdentityResult FetchModels(const std::string& console_url, const std::string& access_token,
+                               std::vector<ModelInfo>* models, std::string* error) const;
+    /// Per-model pricing from `/v1/models/catalog`, so a harness can show real
+    /// spend instead of $0.00.
+    IdentityResult FetchCatalog(const std::string& console_url, const std::string& access_token,
+                                std::vector<CatalogPrice>* prices, std::string* error) const;
 
    private:
     Transport transport_;

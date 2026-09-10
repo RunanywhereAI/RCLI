@@ -216,7 +216,15 @@ Json RequestToOpenAI(const Json& anthropic, const std::string& model) {
     Json openai;
     openai["model"] = model;
     const auto stream = anthropic.find("stream");
-    openai["stream"] = stream != anthropic.end() && stream->is_boolean() && stream->get<bool>();
+    const bool streaming = stream != anthropic.end() && stream->is_boolean() && stream->get<bool>();
+    openai["stream"] = streaming;
+    // Ask for the token counts on the stream. Without this the upstream sends no
+    // usage chunk, so prompt/completion tokens never arrive and the wrapped
+    // tool's context gauge sits at zero — the whole reason auto-compaction never
+    // fires. The counts ride a final `choices: []` chunk after the content.
+    if (streaming) {
+        openai["stream_options"] = Json{{"include_usage", true}};
+    }
 
     Json messages = Json::array();
     // Anthropic carries the system prompt beside the conversation; OpenAI wants
@@ -530,10 +538,17 @@ std::string StreamCloseToAnthropic(StreamState* state) {
     const std::string stop = StopWithTools(
         state->stop_reason.empty() ? std::string("end_turn") : state->stop_reason,
         emitted_tool_block);
+    // `input_tokens` too, not just output. message_start had to emit 0 (the
+    // upstream reports prompt_tokens only at the end of the stream), so this
+    // final usage is the one place the real prompt count reaches the client.
+    // Without it a wrapped tool's context gauge reads 0 forever and its
+    // auto-compaction never fires — no context-window setting can rescue a
+    // numerator that is always zero.
     out += Event("message_delta",
                  Json{{"type", "message_delta"},
                       {"delta", Json{{"stop_reason", stop}, {"stop_sequence", nullptr}}},
-                      {"usage", Json{{"output_tokens", state->output_tokens}}}});
+                      {"usage", Json{{"input_tokens", state->input_tokens},
+                                     {"output_tokens", state->output_tokens}}}});
     out += Event("message_stop", Json{{"type", "message_stop"}});
     return out;
 }
@@ -560,6 +575,64 @@ bool PayloadError(const Json& payload, std::string* type, std::string* message) 
                     : "api_error";
     }
     return true;
+}
+
+namespace {
+
+/// The Anthropic error `type` that matches an HTTP status. Anything without a
+/// closer match is an `api_error` (a retryable dead-endpoint signal), which is
+/// why the mapping is deliberate: a 403 that read as `api_error` would have the
+/// tool retry a refusal it can never satisfy.
+std::string ErrorTypeForStatus(int status) {
+    switch (status) {
+        case 401:
+            return "authentication_error";
+        case 403:
+            return "permission_error";
+        case 400:
+        case 404:
+        case 413:
+        case 422:
+            return "invalid_request_error";
+        case 429:
+            return "rate_limit_error";
+        default:
+            return "api_error";
+    }
+}
+
+}  // namespace
+
+void UpstreamFailure(int status, const std::string& body, std::string* type,
+                     std::string* message) {
+    std::string extracted;
+    std::string ignored_type;
+    const Json parsed = Json::parse(body, nullptr, /*allow_exceptions=*/false);
+    if (!parsed.is_discarded()) {
+        PayloadError(parsed, &ignored_type, &extracted);
+    }
+    if (extracted.empty()) {
+        // No structured error message: fall back to the raw body (trimmed and
+        // capped so a huge HTML error page does not become the message), then a
+        // status line, then a plain no-answer note.
+        const auto first = body.find_first_not_of(" \t\r\n");
+        const auto last = body.find_last_not_of(" \t\r\n");
+        const std::string trimmed =
+            first == std::string::npos ? std::string() : body.substr(first, last - first + 1);
+        if (!trimmed.empty()) {
+            extracted = trimmed.substr(0, 1000);
+        } else if (status != 0) {
+            extracted = "the model endpoint returned status " + std::to_string(status);
+        } else {
+            extracted = "the model endpoint did not answer";
+        }
+    }
+    if (message != nullptr) {
+        *message = extracted;
+    }
+    if (type != nullptr) {
+        *type = status == 0 ? "api_error" : ErrorTypeForStatus(status);
+    }
 }
 
 std::string ErrorBody(const std::string& type, const std::string& message) {

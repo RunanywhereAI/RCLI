@@ -1,13 +1,19 @@
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
 #include "anthropic/messages.h"
 #include "commands/commands.h"
+#include "config/cli_paths.h"
 #include "io/output.h"
 #include "desktop/claude_profile.h"
 #include "harness/harness.h"
@@ -117,10 +123,11 @@ std::vector<std::string> OpenArgs(const std::string& bundle, const anthropic::Sh
         // start the app with the reader's login environment instead of ours.
         args.push_back("--env");
         args.push_back("ANTHROPIC_BASE_URL=" + shim.base_url);
+        // Bearer token only, no ANTHROPIC_API_KEY: the token outranks a key and
+        // setting a key is what makes Claude Code warn about claude.ai
+        // connectors being off. See the ScopedEnv path below.
         args.push_back("--env");
         args.push_back("ANTHROPIC_AUTH_TOKEN=" + shim.auth_token);
-        args.push_back("--env");
-        args.push_back("ANTHROPIC_API_KEY=" + shim.auth_token);
     }
     args.push_back("-a");
     args.push_back(bundle);
@@ -190,6 +197,141 @@ class ScopedEnv {
     std::string previous_;
     bool had_previous_ = false;
 };
+
+/// Removes `name` for the child and restores it on scope exit — the mirror of
+/// ScopedEnv. Used to keep a stray ANTHROPIC_API_KEY in the reader's shell from
+/// reaching Claude Code: our bearer token already outranks it, but its mere
+/// presence makes Claude Code prompt to approve the key and warn that claude.ai
+/// connectors are off.
+class ScopedUnsetEnv {
+  public:
+    explicit ScopedUnsetEnv(std::string name) : name_(std::move(name)) {
+        const char* previous = std::getenv(name_.c_str());
+        had_previous_ = previous != nullptr;
+        if (!had_previous_) {
+            return;
+        }
+        previous_ = previous;
+#if defined(_WIN32)
+        _putenv_s(name_.c_str(), "");
+#else
+        unsetenv(name_.c_str());
+#endif
+    }
+
+    ~ScopedUnsetEnv() {
+        if (!had_previous_) {
+            return;
+        }
+#if defined(_WIN32)
+        _putenv_s(name_.c_str(), previous_.c_str());
+#else
+        setenv(name_.c_str(), previous_.c_str(), 1);
+#endif
+    }
+
+    ScopedUnsetEnv(const ScopedUnsetEnv&) = delete;
+    ScopedUnsetEnv& operator=(const ScopedUnsetEnv&) = delete;
+
+  private:
+    std::string name_;
+    std::string previous_;
+    bool had_previous_ = false;
+};
+
+/// A wally-owned config directory for the Claude Code we launch, seeded from the
+/// reader's real `~/.claude` so their settings, agents, rules, skills and memory
+/// come along, but WITHOUT the login: a separate dir has no claude.ai session to
+/// collide with, which is exactly what silences the "connectors are disabled"
+/// warning. `.credentials.json` (the login file) and the runtime/cache trees are
+/// never copied. Full context is seeded on first run; the small settings files
+/// refresh every run so later edits to the real profile flow through.
+///
+/// On macOS the active login is a Keychain entry keyed to the config-dir path,
+/// so even the account metadata in `~/.claude.json` is safe to bring — verified
+/// that a seeded dir still prints no warning.
+std::string PrepareClaudeConfigDir() {
+    namespace fs = std::filesystem;
+    const std::string ours_str = paths::state_dir() + "/claude";
+    const fs::path ours(ours_str);
+    std::error_code ec;
+
+    const char* home = std::getenv("HOME");
+    const fs::path og_dir = home != nullptr ? fs::path(home) / ".claude" : fs::path();
+    const fs::path og_json = home != nullptr ? fs::path(home) / ".claude.json" : fs::path();
+
+    const bool first_run = !fs::exists(ours, ec);
+    fs::create_directories(ours, ec);
+
+    // Ours to own, never seeded from the real profile: the login, plus the
+    // runtime and cache trees. Everything else in ~/.claude is context to keep.
+    static const std::set<std::string> kRuntime = {
+        ".credentials.json",     "projects",       "sessions",
+        "shell-snapshots",       "statsig",        "cache",
+        "caches",                "telemetry",      "downloads",
+        "uploads",               "paste-cache",    "file-history",
+        "backups",               "history.jsonl",  ".last-cleanup",
+        "chrome",                "ide",            "session-env",
+        "mcp-needs-auth-cache.json", "stats-cache.json", ".last-update-result.json",
+    };
+
+    if (first_run && !og_dir.empty() && fs::exists(og_dir, ec)) {
+        for (fs::directory_iterator it(og_dir, ec), end; it != end; it.increment(ec)) {
+            if (ec) {
+                break;
+            }
+            if (kRuntime.count(it->path().filename().string()) != 0) {
+                continue;
+            }
+            std::error_code copy_ec;
+            fs::copy(it->path(), ours / it->path().filename(),
+                     fs::copy_options::recursive | fs::copy_options::overwrite_existing, copy_ec);
+        }
+    }
+
+    // A cheap refresh every run so edits to the real settings and memory flow
+    // through without re-copying the heavy trees.
+    if (!og_dir.empty()) {
+        for (const char* file : {"settings.json", "CLAUDE.md"}) {
+            const fs::path src = og_dir / file;
+            if (fs::exists(src, ec)) {
+                fs::copy_file(src, ours / file, fs::copy_options::overwrite_existing, ec);
+            }
+        }
+    }
+    if (!og_json.empty() && fs::exists(og_json, ec)) {
+        fs::copy_file(og_json, ours / ".claude.json", fs::copy_options::overwrite_existing, ec);
+    }
+
+    return ours_str;
+}
+
+/// The context window `/v1/models` advertises for `model`, or 0 when it can't be
+/// learned. A failed catalog fetch WARNS and returns 0 — it must never block a
+/// launch. Fed to Claude Code as CLAUDE_CODE_MAX_CONTEXT_TOKENS, this is what
+/// makes its auto-compaction fire at the model's real limit instead of a guessed
+/// default (which overruns qwen/gemma's 256k and wastes glm's 1M).
+std::int64_t CloudContextWindow(const std::string& model) {
+    account::Credentials credentials;
+    std::string error;
+    if (!account::Load(&credentials, &error) || !credentials.signed_in()) {
+        return 0;
+    }
+    const account::ConsoleClient console;
+    std::vector<account::ModelInfo> models;
+    if (console.FetchModels(credentials.console_url, credentials.access_token, &models, &error) !=
+        account::IdentityResult::Ok) {
+        out::status_line("could not read the model catalog (" + error +
+                         "); launching without a context-window hint");
+        return 0;
+    }
+    for (const account::ModelInfo& info : models) {
+        if (info.id == model) {
+            return info.context_window;
+        }
+    }
+    return 0;
+}
 
 /// Starts the translator and holds it open, printing what to point at it.
 ///
@@ -374,10 +516,29 @@ int Run(const Editor& editor, const std::string& model,
         // Scoped so the reader's own environment is back before we report
         // anything, and before a later call in the same process reads it.
         const ScopedEnv base("ANTHROPIC_BASE_URL", shim.base_url);
+        // The bearer token only (auth precedence rank 2), never ANTHROPIC_API_KEY
+        // (rank 3): the token already outranks any key, and setting a key is what
+        // makes Claude Code prompt to approve it and warn that claude.ai
+        // connectors are off. A stray key in the reader's shell is unset for the
+        // same reason. This mirrors how Ollama wires Claude Code.
         const ScopedEnv token("ANTHROPIC_AUTH_TOKEN", shim.auth_token);
-        // An API key set in the environment outranks the token above and would
-        // send the session to Anthropic instead of to us.
-        const ScopedEnv key("ANTHROPIC_API_KEY", shim.auth_token);
+        const ScopedUnsetEnv no_key("ANTHROPIC_API_KEY");
+        // Its own config dir, seeded from the reader's ~/.claude minus the login,
+        // so there is no claude.ai session to collide with (no warning) but their
+        // settings and memory still apply. See PrepareClaudeConfigDir.
+        const ScopedEnv config_dir("CLAUDE_CONFIG_DIR", PrepareClaudeConfigDir());
+        // The real context window, for an upstream model, so Claude Code's
+        // auto-compaction fires at the model's limit rather than its own guess.
+        // Only for a hosted model (a local one is not in `/v1/models`), and only
+        // when the catalog actually answered — a miss just launches as before.
+        std::optional<ScopedEnv> context_window;
+        if (!endpoint.serving) {
+            const std::int64_t context = CloudContextWindow(model);
+            if (context > 0) {
+                context_window.emplace("CLAUDE_CODE_MAX_CONTEXT_TOKENS", std::to_string(context));
+                out::status_line("context window: " + std::to_string(context) + " tokens");
+            }
+        }
         status = harness::Launch(editor.command, {}, args);
     }
 
@@ -404,7 +565,11 @@ void register_editors(CLI::App& app, GlobalOptions& options) {
             command->add_flag("--restore", *restore,
                               "undo what we configured and launch nothing");
         }
-        command->add_option("args", *rest, "passed through")->allow_extra_args();
+        // Tokens after the wally flags belong to the tool, its own flags
+        // included. They reach here as positionals because `run()` inserts a
+        // `--` ahead of them (see SplitPassthroughArgv); CLI11 would otherwise
+        // read a leading `--flag` as an unknown wally option and reject it.
+        command->add_option("args", *rest, "passed through to the tool")->allow_extra_args();
         command->prefix_command();
         command->callback([&options, &editor, model, rest, serve, restore] {
             if (*restore) {

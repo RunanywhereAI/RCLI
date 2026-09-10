@@ -3,7 +3,7 @@ enable_testing()
 
 add_executable(test_wally_unit test_wally_unit.cpp)
 target_include_directories(test_wally_unit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(test_wally_unit PRIVATE wally_core)
+target_link_libraries(test_wally_unit PRIVATE wally_core nlohmann_json::nlohmann_json)
 wally_stage_windows_runtime_dlls(test_wally_unit)
 add_test(NAME wally_unit_tests COMMAND test_wally_unit --run-all)
 

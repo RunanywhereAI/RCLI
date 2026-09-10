@@ -824,6 +824,91 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
     return IdentityResult::Ok;
 }
 
+IdentityResult ConsoleClient::FetchModels(const std::string& console_url,
+                                          const std::string& access_token,
+                                          std::vector<ModelInfo>* models,
+                                          std::string* error) const {
+    if (models == nullptr || !SessionTokenIsSafe(access_token)) {
+        if (error != nullptr) {
+            *error = "no access token is available";
+        }
+        return IdentityResult::Failed;
+    }
+    std::string origin;
+    if (!ConsoleOrigin(console_url, &origin, error)) {
+        return IdentityResult::Failed;
+    }
+    HttpResponse response;
+    if (!Send(transport_, {"GET", origin + "/v1/models", {}, access_token}, &response, error)) {
+        return IdentityResult::Failed;
+    }
+    if (response.status == 401) {
+        if (error != nullptr) {
+            *error = "console session expired";
+        }
+        return IdentityResult::Unauthorized;
+    }
+    if (response.status != 200) {
+        HttpError("models request", origin, response, error);
+        return IdentityResult::Failed;
+    }
+    contract::ModelList parsed;
+    if (!ParseContract(response, &parsed, error)) {
+        return IdentityResult::Failed;
+    }
+    models->clear();
+    models->reserve(parsed.data.size());
+    for (const contract::PublicModel& model : parsed.data) {
+        ModelInfo info;
+        info.id = model.id;
+        info.context_window = model.max_input_tokens.value_or(0);
+        info.max_output_tokens = model.max_output_tokens.value_or(0);
+        models->push_back(std::move(info));
+    }
+    return IdentityResult::Ok;
+}
+
+IdentityResult ConsoleClient::FetchCatalog(const std::string& console_url,
+                                           const std::string& access_token,
+                                           std::vector<CatalogPrice>* prices,
+                                           std::string* error) const {
+    if (prices == nullptr || !SessionTokenIsSafe(access_token)) {
+        if (error != nullptr) {
+            *error = "no access token is available";
+        }
+        return IdentityResult::Failed;
+    }
+    std::string origin;
+    if (!ConsoleOrigin(console_url, &origin, error)) {
+        return IdentityResult::Failed;
+    }
+    HttpResponse response;
+    if (!Send(transport_, {"GET", origin + "/v1/models/catalog", {}, access_token}, &response,
+              error)) {
+        return IdentityResult::Failed;
+    }
+    if (response.status == 401) {
+        if (error != nullptr) {
+            *error = "console session expired";
+        }
+        return IdentityResult::Unauthorized;
+    }
+    if (response.status != 200) {
+        HttpError("model catalog request", origin, response, error);
+        return IdentityResult::Failed;
+    }
+    contract::ModelCatalogResponse parsed;
+    if (!ParseContract(response, &parsed, error)) {
+        return IdentityResult::Failed;
+    }
+    prices->clear();
+    prices->reserve(parsed.models.size());
+    for (const contract::CatalogModelResponse& model : parsed.models) {
+        prices->push_back(CatalogPrice{model.id, model.input_per_mtok, model.output_per_mtok});
+    }
+    return IdentityResult::Ok;
+}
+
 namespace {
 
 /// A console string that is safe to print in a terminal. Anything else is

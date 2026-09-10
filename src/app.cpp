@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -151,6 +152,62 @@ void configure_app(CLI::App& app, GlobalOptions& options) {
     }
 }
 
+namespace {
+
+/// The subcommands that hand the terminal to another tool and forward the rest
+/// of the command line to it. Kept in step with register_editors and
+/// register_harness; a name here that is not a real subcommand is harmless.
+bool IsPassthroughCommand(const std::string& token) {
+    static const std::set<std::string> kNames = {"claude-code", "claude-desktop", "clion",
+                                                 "rustrover",   "opencode",       "codex"};
+    return kNames.count(token) != 0;
+}
+
+/// wally's own flags on those subcommands. `-m`/`--model` take a following
+/// value; the rest are booleans. The `=` forms carry their value inline.
+bool ConsumesFollowingValue(const std::string& token) {
+    return token == "-m" || token == "--model";
+}
+bool IsWallyFlag(const std::string& token) {
+    return token == "-m" || token == "--model" || token.rfind("--model=", 0) == 0 ||
+           token.rfind("-m=", 0) == 0 || token == "--serve" || token == "--restore" ||
+           token == "--cloud";
+}
+
+}  // namespace
+
+/// Inserts a `--` ahead of the first token that belongs to the wrapped tool, so
+/// CLI11 stops reading the tool's own flags (`--dangerously-skip-permissions`,
+/// `-p`) as unknown wally options and rejecting the whole line. Left untouched
+/// when this is not a passthrough command, a `--` is already present, or nothing
+/// but wally flags follow. `argv` includes the program name at index 0.
+std::vector<std::string> SplitPassthroughArgv(const std::vector<std::string>& argv) {
+    std::vector<std::string> out = argv;
+
+    std::size_t sub = 0;
+    for (std::size_t i = 1; i < out.size(); ++i) {
+        if (IsPassthroughCommand(out[i])) {
+            sub = i;
+            break;
+        }
+    }
+    if (sub == 0) {
+        return out;
+    }
+
+    for (std::size_t i = sub + 1; i < out.size();) {
+        if (out[i] == "--") {
+            return out;  // the reader separated it already
+        }
+        if (!IsWallyFlag(out[i])) {
+            out.insert(out.begin() + static_cast<std::ptrdiff_t>(i), "--");
+            return out;
+        }
+        i += ConsumesFollowingValue(out[i]) ? 2 : 1;
+    }
+    return out;  // only wally flags, nothing to forward
+}
+
 int run(int argc, char** argv) {
     GlobalOptions options;
 
@@ -179,9 +236,20 @@ int run(int argc, char** argv) {
         "`wally claude-code -m <id>`, `wally opencode --cloud -m <id>` or "
         "`wally codex -m <id>`, not `run`/`llm generate`.");
 
+    // A `--` before the wrapped tool's own arguments, added for the reader, so
+    // `wally claude-code --dangerously-skip-permissions` forwards the flag
+    // instead of failing on it. Kept alive for the whole parse below.
+    std::vector<std::string> forwarded =
+        SplitPassthroughArgv(std::vector<std::string>(argv, argv + argc));
+    std::vector<char*> forwarded_argv;
+    forwarded_argv.reserve(forwarded.size());
+    for (std::string& token : forwarded) {
+        forwarded_argv.push_back(token.data());
+    }
+
     int exit_code = 0;
     try {
-        app.parse(argc, argv);
+        app.parse(static_cast<int>(forwarded_argv.size()), forwarded_argv.data());
         if (app.get_subcommands().empty()) {
             // Bare `wally` prints help like `ollama` does.
             out::status_line(app.help());
