@@ -46,6 +46,14 @@ jobs:
           dash -n install.sh
           shellcheck -s sh install.sh
           WALLY_INSTALL_SH=dash bash scripts/test/test-install-skill-dirs.sh
+      - name: install.sh output is byte-identical under bash, dash and sh
+        # Runs the real install.sh under all three with a stubbed curl/uname
+        # and a fixture release -- no network -- across the happy path, an
+        # unsupported platform, a bad checksum and a failed release lookup,
+        # and diffs the output. Catches a reintroduced bashism that `sh -n`
+        # cannot (dash parses `[[` as a command name; `pipefail` only fails
+        # at run time) without depending on shellcheck knowing every case.
+        run: bash scripts/test/test-install-cross-shell.sh
       - name: Console binding matches its pinned contract
         run: python3 contracts/generate_console_binding.py --check
       - name: Versions consistent with versions.toml
