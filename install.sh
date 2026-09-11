@@ -1,5 +1,9 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+# POSIX sh, not bash: this is served as `curl ... | sh`, and sh is dash on
+# Debian and Ubuntu, which has no [[ ]], no ${var:offset:length} and (before
+# 0.5.13) no pipefail. With no pipefail a pipeline's status is its last
+# command's, so every download whose failure matters is its own step below.
+set -eu
 
 # Installs Wally from the GitHub release tarball for this OS. No Homebrew and no
 # tap: the release bottle already stages `wally` with mlx-swift_Cmlx.bundle
@@ -74,10 +78,12 @@ banner
 printf '   %sInstalling the %s%s%s build%s\n\n' "$DIM" "$R$B" "$CHANNEL" "$R$DIM" "$R"
 
 step "Resolving the latest release"
-VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+latest=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest") \
+    || fail "Could not determine latest release version. Check your internet connection."
+VERSION=$(printf '%s\n' "$latest" \
     | grep '"tag_name"' \
     | sed 's/.*"v\([^"]*\)".*/\1/')
-[[ -n "$VERSION" ]] || fail "Could not determine latest release version. Check your internet connection."
+[ -n "$VERSION" ] || fail "Could not determine latest release version. Check your internet connection."
 ok "v${VERSION}"
 
 os=$(uname -s)
@@ -109,12 +115,12 @@ curl -fsSL "${URL}.sha256" -o "${tmp}/${ASSET}.sha256" || fail "Could not downlo
 expected_sha="$(awk 'NF == 2 { print $1 }' "${tmp}/${ASSET}.sha256" | head -1)"
 ( cd "$tmp" && shasum -a 256 -c "${ASSET}.sha256" >/dev/null 2>&1 ) \
     || fail "Checksum verification failed for ${ASSET}. Do not use the download."
-ok "sha256 ${expected_sha:0:16}… verified"
+ok "sha256 $(printf '%.16s' "$expected_sha")… verified"
 
 step "Installing to ${LIB_DIR}"
 tar -xzf "${tmp}/${ASSET}" -C "$tmp"
 staged="${tmp}/wally-${PLATFORM}"
-[[ -x "${staged}/bin/wally" ]] || fail "Archive did not contain bin/wally as expected."
+[ -x "${staged}/bin/wally" ] || fail "Archive did not contain bin/wally as expected."
 # Replace the install tree wholesale. rm before copy is deliberate: overwriting a
 # code-signed Mach-O in place while a copy may still be mapped kills it with
 # SIGKILL (137). A fresh dir sidesteps that.
@@ -130,7 +136,7 @@ fi
 installed_version="$(wally --version 2>/dev/null \
     | sed -nE 's/^wally ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
     | head -1)"
-if [[ "${installed_version}" != "${VERSION}" ]]; then
+if [ "${installed_version}" != "${VERSION}" ]; then
     fail "Installed Wally v${installed_version:-unknown}, but the latest release is v${VERSION}."
 fi
 ok "wally v${VERSION} on PATH"
@@ -139,6 +145,8 @@ ok "wally v${VERSION} on PATH"
 case ":${PATH}:" in
     *":${BIN_DIR}:"*) : ;;
     *)
+        # Written to the rc file literally; the user's shell expands it later.
+        # shellcheck disable=SC2016
         line='export PATH="$HOME/.local/bin:$PATH"'
         case "$(basename "${SHELL:-}")" in
             zsh)  rc="${HOME}/.zshrc" ;;
@@ -185,7 +193,7 @@ IFS="$old_ifs"
 step "Signing in"
 if wally whoami >/dev/null 2>&1; then
     ok "already signed in"
-elif [[ ! -t 0 || ! -t 1 ]]; then
+elif [ ! -t 0 ] || [ ! -t 1 ]; then
     # No terminal: piped into bash over SSH, or a CI step. The browser flow
     # would try to open a browser that is not there and then block until the
     # request expires, which reads as the installer hanging.

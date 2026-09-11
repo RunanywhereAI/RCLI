@@ -32,8 +32,20 @@ jobs:
           set -euo pipefail
           python3 tests/test_release_assets.py
           python3 -m py_compile scripts/release/verify-release-assets.py scripts/release/stamp-formula.py
-          bash -n install.sh scripts/build/package-wally.sh scripts/release/update-tap.sh
+          bash -n scripts/build/package-wally.sh scripts/release/update-tap.sh
           ruby -c Formula/wally.rb
+      - name: install.sh runs under POSIX sh (dash)
+        # Served as `curl ... | sh`, and sh is dash here as on every Debian and
+        # Ubuntu host. `sh -n` alone cannot catch a bashism -- `[[` parses as a
+        # command name and `set -o pipefail` only fails at run time -- so the
+        # real guards are shellcheck in sh mode and actually running it in dash.
+        run: |
+          set -euo pipefail
+          command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+          sh -n install.sh
+          dash -n install.sh
+          shellcheck -s sh install.sh
+          WALLY_INSTALL_SH=dash bash scripts/test/test-install-skill-dirs.sh
       - name: Console binding matches its pinned contract
         run: python3 contracts/generate_console_binding.py --check
       - name: Versions consistent with versions.toml

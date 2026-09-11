@@ -8,8 +8,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL="${SCRIPT_DIR}/../../install.sh"
 
+# The shell that runs the installer. `sh` by default, which is bash on macOS and
+# dash on Debian/Ubuntu; CI sets WALLY_INSTALL_SH=dash so the POSIX check does not
+# depend on which of those the runner happens to be.
+INSTALL_SH="${WALLY_INSTALL_SH:-sh}"
+
 fails=0
-run() { HOME="$1" sh "$INSTALL" --print-skill-dirs; }
+run() { HOME="$1" "$INSTALL_SH" "$INSTALL" --print-skill-dirs; }
 check() {
     name="$1"; expected="$2"; actual="$3"
     if [ "$expected" = "$actual" ]; then
