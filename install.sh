@@ -203,7 +203,7 @@ printf '   %s│%s  models    ~/.local/share/runanywhere\n' "$DIM" "$R"
 printf '   %s└───────────────────────────────────────────%s\n\n' "$DIM" "$R"
 
 printf '   %sNext:%s\n' "$B" "$R"
-printf '     wally opencode --cloud -m glm-5.3   code against a hosted model\n'
-printf '     wally usage                         credit left and what you spent\n'
-printf '     wally pull qwen3-0.6b               download a model to this machine\n'
+printf '     wally opencode --cloud -m glm-5.3-flash   code against a hosted model\n'
+printf '     wally usage                               credit left and what you spent\n'
+printf '     wally pull qwen3-0.6b                     download a model to this machine\n'
 printf '   In Claude Code, ask: %s"get me started with RunAnywhere Wally"%s\n\n' "$DIM" "$R"

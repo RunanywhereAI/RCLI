@@ -38,6 +38,11 @@ jobs:
         run: python3 contracts/generate_console_binding.py --check
       - name: Versions consistent with versions.toml
         run: python3 scripts/ci/check-versions.py
+      - name: No retired model ids in user-facing text
+        run: |
+          set -euo pipefail
+          python3 tests/test_retired_model_ids.py
+          python3 scripts/ci/check-retired-model-ids.py
 
   macos:
     # SDK Package.swift is swift-tools-version 6.2 (Xcode 26). macos-15 is

@@ -51,7 +51,7 @@ A harness is an existing coding tool that `wally` wires to a model. Today that i
 **opencode**.
 
 ```bash
-wally opencode --cloud -m glm-5.3        # hosted, metered
+wally opencode --cloud -m glm-5.3-flash  # hosted, metered
 wally opencode -m qwen3-0.6b             # a model on this machine
 ```
 
