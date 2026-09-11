@@ -2648,6 +2648,61 @@ TestResult test_stream_usage_reports_input_tokens() {
 
 }  // namespace
 
+TestResult test_system_turns_fold_into_the_leading_system_message() {
+  TestResult result;
+  result.test_name = "system_turns_fold_into_the_leading_system_message";
+  namespace tr = wally::anthropic::translate;
+
+  // The shape Claude Code 2.1.268 really sends, captured through wally's shim:
+  // a top-level `system` array AND a `role: "system"` turn inside `messages`,
+  // after the first user turn (its environment block). Passed through as-is,
+  // OpenAI gets [system, user, system], and Qwen's chat template refuses the
+  // whole request: "System message must be at the beginning."
+  const nlohmann::json anthropic = nlohmann::json::parse(R"({
+    "model": "qwen3.8-27b",
+    "system": [{"type": "text", "text": "You are Claude Code."}],
+    "messages": [
+      {"role": "user", "content": [{"type": "text", "text": "Reply with pong"}]},
+      {"role": "system", "content": [{"type": "text", "text": "# Environment\nPlatform: darwin"}]}
+    ]
+  })");
+  const nlohmann::json openai = tr::RequestToOpenAI(anthropic, "qwen3.8-27b");
+  const nlohmann::json& messages = openai["messages"];
+
+  int system_count = 0;
+  for (std::size_t i = 0; i < messages.size(); ++i) {
+    if (messages[i].value("role", "") != "system") {
+      continue;
+    }
+    ++system_count;
+    if (i != 0) {
+      result.details = "a system message sits at index " + std::to_string(i) +
+                       ", which Qwen refuses; got: " + messages.dump().substr(0, 300);
+      return result;
+    }
+  }
+  if (system_count != 1) {
+    result.expected = "exactly one system message";
+    result.actual = std::to_string(system_count) + ": " + messages.dump().substr(0, 300);
+    return result;
+  }
+  const std::string system = messages[0].value("content", "");
+  const auto top = system.find("You are Claude Code.");
+  const auto env = system.find("# Environment");
+  if (top == std::string::npos || env == std::string::npos || env < top) {
+    result.details = "the leading system message must carry both texts, top-level first; got: " +
+                     system.substr(0, 300);
+    return result;
+  }
+  if (messages.size() != 2 || messages[1].value("role", "") != "user") {
+    result.details = "the user turn must follow the system message and nothing else; got: " +
+                     messages.dump().substr(0, 300);
+    return result;
+  }
+  result.passed = true;
+  return result;
+}
+
 int main(int argc, char **argv) {
   TestSuite suite("wally_unit");
   suite.add("json_escape", test_json_escape);
@@ -2693,5 +2748,7 @@ int main(int argc, char **argv) {
   suite.add("upstream_failure_mapping", test_upstream_failure_mapping);
   suite.add("passthrough_argv_split", test_passthrough_argv_split);
   suite.add("stream_usage_reports_input_tokens", test_stream_usage_reports_input_tokens);
+  suite.add("system_turns_fold_into_the_leading_system_message",
+            test_system_turns_fold_into_the_leading_system_message);
   return suite.run(argc, argv);
 }
