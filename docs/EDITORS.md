@@ -1,0 +1,71 @@
+# Editors, coding agents and hosted models
+
+How `wally` wires each tool, and where a signed-in session lives.
+
+## Editors and coding agents
+
+One command points a tool at a model and starts it. There is nothing to
+configure by hand:
+
+```bash
+wally claude-code -m qwen3-0.6b
+wally clion -m models/gemma-4-31b-it
+wally claude-desktop -m models/gemma-4-31b-it
+```
+
+The model can be one on this machine or one the console serves. Without `-m` the
+tool starts the way you already have it configured, and wally wires nothing.
+
+| Tool | How it is wired |
+| --- | --- |
+| `claude-code`, `opencode` | `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in the process |
+| `claude-desktop` | a gateway profile in Claude Desktop's third party mode, covering the chat and Cowork tabs |
+| `clion`, `rustrover` | AI Assistant's OpenAI-compatible provider, which works without a JetBrains AI subscription |
+
+Two flags go with `-m`. `--serve` holds the endpoint open and prints it instead
+of launching anything, which is how a tool nobody has taught wally about gets
+wired up. `--restore` puts Claude Desktop or a JetBrains IDE back the way it was
+and starts nothing; a normal run already undoes its own configuration when the
+app quits, so this is for the run that was interrupted before it could.
+
+The first `wally clion` on a machine takes a while, because it installs the AI
+Assistant plugin headlessly before starting the IDE. Later runs are quick. That
+endpoint sits on a fixed port rather than whatever happened to be free, because
+the IDE reads the address once at startup out of a file wally writes beforehand,
+and a port that moved would leave that file naming something dead.
+
+Claude Code and Claude Desktop speak Anthropic's Messages API, while the models
+wally serves speak OpenAI's, so a translator sits between them. It carries tool
+definitions out, tool calls back, and the results of those calls out again,
+which is what lets an agent on the far side run the tools it was given rather
+than describe them. The JetBrains IDEs need no translator, because AI Assistant
+speaks OpenAI already.
+
+## Hosted models
+
+A model you have not downloaded can still answer, if the console serves it:
+
+```bash
+wally login
+wally whoami
+wally run models/gemma-4-31b-it "why is the sky blue"
+```
+
+`wally login` opens the console in a browser and waits for you to approve the
+machine. `wally logout` deletes the session.
+
+Where the credential is kept depends on the platform, and `WALLY_PROFILE_DIR`
+moves it anywhere:
+
+| | Path |
+|---|---|
+| macOS, Linux | `$XDG_CONFIG_HOME/wally/credentials.json`, or `~/.config/wally` when unset |
+| Windows | `%LOCALAPPDATA%\RunAnywhere\Wally\credentials.dat`, encrypted with DPAPI |
+
+`WALLY_CONSOLE_URL` points the CLI at a console API other than the default, and
+`WALLY_CONSOLE_WEB_URL` at the page that approves the sign-in. Those are two
+different hosts; see [AGENTS.md](../AGENTS.md).
+
+This is separate from `wally auth login`, which signs a device in with an API
+key rather than a browser. Most people want `wally login`.
+
