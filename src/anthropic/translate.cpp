@@ -229,15 +229,36 @@ Json RequestToOpenAI(const Json& anthropic, const std::string& model) {
     Json messages = Json::array();
     // Anthropic carries the system prompt beside the conversation; OpenAI wants
     // it as the first message, so it is moved rather than dropped.
-    if (anthropic.contains("system")) {
-        const std::string system = FlattenContent(anthropic["system"]);
-        if (!system.empty()) {
-            messages.push_back({{"role", "system"}, {"content", system}});
+    //
+    // Claude Code also puts `role: "system"` turns INSIDE `messages` (its
+    // environment block arrives that way, after the first user turn). Passed
+    // through, that is a system message mid-conversation, and Qwen's chat
+    // template refuses the whole request with "System message must be at the
+    // beginning." while GLM and Gemma quietly accept it. So every system turn
+    // is folded into the one leading system message, in order, and none is
+    // left in the conversation.
+    std::string system =
+        anthropic.contains("system") ? FlattenContent(anthropic["system"]) : std::string();
+    const bool has_messages = anthropic.contains("messages") && anthropic["messages"].is_array();
+    if (has_messages) {
+        for (const Json& message : anthropic["messages"]) {
+            if (!message.is_object() || Field(message, "role") != "system") {
+                continue;
+            }
+            const std::string text =
+                FlattenContent(message.contains("content") ? message["content"] : Json());
+            if (text.empty()) {
+                continue;
+            }
+            system += system.empty() ? text : "\n\n" + text;
         }
     }
-    if (anthropic.contains("messages") && anthropic["messages"].is_array()) {
+    if (!system.empty()) {
+        messages.push_back({{"role", "system"}, {"content", system}});
+    }
+    if (has_messages) {
         for (const Json& message : anthropic["messages"]) {
-            if (!message.is_object()) {
+            if (!message.is_object() || Field(message, "role") == "system") {
                 continue;
             }
             AppendMessage(message, &messages);
