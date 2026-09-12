@@ -531,7 +531,7 @@ TestResult test_a_rate_limit_surfaces_its_retry_after() {
     std::string error;
     if (with_hint.BeginAuthorization("https://console.runanywhere.ai", "host", &authorization,
                                      &error) ||
-        error.find("retry after 30s") == std::string::npos) {
+        error.find("try again in 30s") == std::string::npos) {
         result.details = "a 429 with Retry-After did not surface the wait: " + error;
         return result;
     }
@@ -548,7 +548,7 @@ TestResult test_a_rate_limit_surfaces_its_retry_after() {
     error.clear();
     if (no_hint.BeginAuthorization("https://console.runanywhere.ai", "host", &authorization,
                                    &error) ||
-        error.find("rate limiting") == std::string::npos ||
+        error.find("busy") == std::string::npos ||
         error.find("soon") != std::string::npos) {
         result.details = "a 429 with a non-numeric Retry-After was mishandled: " + error;
         return result;

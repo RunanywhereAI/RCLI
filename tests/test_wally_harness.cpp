@@ -297,6 +297,151 @@ TestResult test_verify_cloud_session_accepts_real_session() {
     return result;
 }
 
+// A console that is merely RATE LIMITING must not read as a bad session. This
+// is InferenceInfra#444: a load test drove /v1/me to 429 and every signed-in
+// person was refused entry to their own harness, `wally login` included.
+TestResult test_verify_cloud_session_rate_limit_is_unverified_not_bad() {
+    TestResult result;
+    result.test_name = "verify_cloud_session_rate_limit_is_unverified_not_bad";
+    TemporaryDirectory temporary;
+    Environment profile("WALLY_PROFILE_DIR", temporary.path().string().c_str());
+    std::string error;
+    if (!Seed(temporary.path(), "good-access-token", "refresh-token", Now() + 3600, &error)) {
+        result.details = error;
+        return result;
+    }
+
+    wally::account::ConsoleClient console([&](const wally::account::HttpRequest&,
+                                             wally::account::HttpResponse* response, std::string*) {
+        response->status = 429;
+        return true;
+    });
+
+    wally::account::Credentials credentials;
+    if (!wally::account::Load(&credentials, &error)) {
+        result.details = error;
+        return result;
+    }
+
+    std::string email;
+    std::string verify_error;
+    bool unverified = false;
+    const bool ok =
+        wally::harness::VerifyCloudSession(console, &credentials, &email, &verify_error, &unverified);
+    if (ok) {
+        result.details = "a 429 is not a verified session";
+        return result;
+    }
+    if (!unverified) {
+        result.details =
+            "a rate-limited console must report the session as UNVERIFIED, not as bad - "
+            "otherwise the harness refuses a signed-in person over a transient 429";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+// The other half: a console that actually rejects the session must NOT be
+// reported as merely unverified, or a revoked key would walk straight into a
+// harness.
+TestResult test_verify_cloud_session_rejected_session_is_not_unverified() {
+    TestResult result;
+    result.test_name = "verify_cloud_session_rejected_session_is_not_unverified";
+    TemporaryDirectory temporary;
+    Environment profile("WALLY_PROFILE_DIR", temporary.path().string().c_str());
+    std::string error;
+    if (!Seed(temporary.path(), "revoked-access-token", "revoked-refresh-token", Now() + 3600,
+              &error)) {
+        result.details = error;
+        return result;
+    }
+
+    wally::account::ConsoleClient console([&](const wally::account::HttpRequest&,
+                                             wally::account::HttpResponse* response, std::string*) {
+        response->status = 401;
+        return true;
+    });
+
+    wally::account::Credentials credentials;
+    if (!wally::account::Load(&credentials, &error)) {
+        result.details = error;
+        return result;
+    }
+
+    std::string email;
+    std::string verify_error;
+    bool unverified = false;
+    const bool ok =
+        wally::harness::VerifyCloudSession(console, &credentials, &email, &verify_error, &unverified);
+    if (ok) {
+        result.details = "a 401 session must not verify";
+        return result;
+    }
+    if (unverified) {
+        result.details = "a rejected session must not be reported as merely unverified";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
+// The path a real user actually hits: tokens expire hourly, so an expired
+// access token refreshes FIRST, and that refresh is itself a console call that
+// can be rate limited. The 429 fix on the identity check did not cover it, and
+// the launch was still refused before the identity check was ever reached
+// (InferenceInfra#444, reported against wally 0.5.6).
+TestResult test_verify_cloud_session_rate_limited_refresh_is_unverified_not_bad() {
+    TestResult result;
+    result.test_name = "verify_cloud_session_rate_limited_refresh_is_unverified_not_bad";
+    TemporaryDirectory temporary;
+    Environment profile("WALLY_PROFILE_DIR", temporary.path().string().c_str());
+    std::string error;
+    // Expired access token, so VerifyCloudSession refreshes before anything else.
+    if (!Seed(temporary.path(), "expired-access-token", "refresh-token", Now() - 1, &error)) {
+        result.details = error;
+        return result;
+    }
+
+    bool asked_refresh = false;
+    wally::account::ConsoleClient console([&](const wally::account::HttpRequest& request,
+                                             wally::account::HttpResponse* response, std::string*) {
+        if (request.url.ends_with("/auth/cli/refresh")) {
+            asked_refresh = true;
+        }
+        response->status = 429;
+        return true;
+    });
+
+    wally::account::Credentials credentials;
+    if (!wally::account::Load(&credentials, &error)) {
+        result.details = error;
+        return result;
+    }
+
+    std::string email;
+    std::string verify_error;
+    bool unverified = false;
+    const bool ok =
+        wally::harness::VerifyCloudSession(console, &credentials, &email, &verify_error, &unverified);
+    if (ok) {
+        result.details = "a rate-limited refresh is not a verified session";
+        return result;
+    }
+    if (!asked_refresh) {
+        result.details = "an expired token must attempt a refresh first";
+        return result;
+    }
+    if (!unverified) {
+        result.details =
+            "a rate-limited REFRESH must report the session as UNVERIFIED, not as bad - this is "
+            "the path that still refused the harness after the identity check was fixed";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -312,5 +457,11 @@ int main(int argc, char** argv) {
               test_verify_cloud_session_refreshes_and_reverifies);
     suite.add("verify_cloud_session_accepts_real_session",
               test_verify_cloud_session_accepts_real_session);
+    suite.add("verify_cloud_session_rate_limit_is_unverified_not_bad",
+              test_verify_cloud_session_rate_limit_is_unverified_not_bad);
+    suite.add("verify_cloud_session_rejected_session_is_not_unverified",
+              test_verify_cloud_session_rejected_session_is_not_unverified);
+    suite.add("verify_cloud_session_rate_limited_refresh_is_unverified_not_bad",
+              test_verify_cloud_session_rate_limited_refresh_is_unverified_not_bad);
     return suite.run(argc, argv);
 }

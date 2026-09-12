@@ -46,8 +46,11 @@ bool ModelIdIsSafe(const std::string& id);
 /// On success `credentials` holds the (possibly refreshed, and already saved)
 /// session and `email` names who it verified as. `error` is set on failure.
 /// Exposed so the contract can be tested without a real console.
+/// `unverified` is set true when the session could not be CHECKED (the console
+/// is rate limiting or down) rather than found bad. A caller holding a
+/// signed-in session may proceed on it in that case.
 bool VerifyCloudSession(const account::ConsoleClient& console, account::Credentials* credentials,
-                        std::string* email, std::string* error);
+                        std::string* email, std::string* error, bool* unverified = nullptr);
 
 /// Points `endpoint` at `model`, starting a local server when the model is on
 /// this machine and confirming the signed-in console session for real —

@@ -157,7 +157,10 @@ void register_about(CLI::App& app, GlobalOptions& options) {
                             RUNANYWHERE_IDL_SCHEMA_SHA256);
         row("platform", kPlatform);
         row("channel", channel);
-        row("console", console_url);
+        // The console URL is deliberately NOT printed here. It is an internal
+        // endpoint (today `/api-dev`), it means nothing to the person reading
+        // `wally about`, and it was shown twice. It stays in `--json` so
+        // support and tooling can still read it.
 
         heading(pal, "System");
         row("os", device.os_version.empty() ? "unknown" : device.os_version);
@@ -196,7 +199,6 @@ void register_about(CLI::App& app, GlobalOptions& options) {
         if (signed_in) {
             heading(pal, "Account");
             row("email", credentials.email);
-            row("console", credentials.console_url);
         }
         out::result_line("");
     });

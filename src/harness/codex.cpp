@@ -272,9 +272,19 @@ int LaunchCodexCloud(const std::string& model, const std::vector<std::string>& a
         out::error_line("not signed in - run `wally login`");
         return 1;
     }
-    if (!VerifyCloudSession(console, &credentials, nullptr, &error)) {
-        out::error_line("the signed-in cloud session did not check out: " + error);
-        return 1;
+    bool unverified = false;
+    if (!VerifyCloudSession(console, &credentials, nullptr, &error, &unverified)) {
+        if (!unverified) {
+            out::error_line("cannot use the cloud session: " + error);
+            return 1;
+        }
+        // The console could not be asked right now. That is not a disproof of
+        // the session already on disk, and refusing here locks a signed-in
+        // person out of their harness over a transient 429 (InferenceInfra#444).
+        // Go in on the stored session; the harness's own calls surface the real
+        // error if it is still there.
+        out::status_line("could not confirm the cloud session (" + error +
+                         ") - continuing on the stored session");
     }
 
     const std::string base_url = credentials.console_url + "/v1";

@@ -11,6 +11,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD="${1:-${ROOT}/build}"
+# Absolute, because this script `cd`s to ${ROOT}/swift before it looks inside
+# ${BUILD} again. A relative build dir silently resolved against swift/ instead,
+# so libwally_plugins.a was "not found" even when it existed, and the empty
+# plugin array then tripped `set -u` on macOS bash 3.2 with the useless message
+# `plugin_ldflags[*]: unbound variable`.
+BUILD="$(cd "${BUILD}" 2>/dev/null && pwd)" || {
+    echo "error: build dir '${1:-${ROOT}/build}' does not exist - run cmake first" >&2
+    exit 1
+}
 
 KIT="${WALLY_SDK_KIT:-${CMAKE_PREFIX_PATH:-}}"
 KIT="${KIT%%:*}"
@@ -61,7 +70,7 @@ RUNANYWHERE_BUILD_MLX_DISTRIBUTION_FRAMEWORK=1 \
     -configuration Release \
     -derivedDataPath .build/xcode \
     HEADER_SEARCH_PATHS="\$(inherited) ${KIT}/include ${ROOT}/include" \
-    OTHER_LDFLAGS="${plugin_ldflags[*]} -L${BUILD} -lwally_bundle -lc++ ${flags[*]}" \
+    OTHER_LDFLAGS="${plugin_ldflags[*]:-} -L${BUILD} -lwally_bundle -lc++ ${flags[*]}" \
     >"${xcode_log}" 2>&1
 xcodebuild_status=$?
 set -e

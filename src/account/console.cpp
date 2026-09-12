@@ -4,12 +4,14 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cstdlib>
 #include <chrono>
 #include <cstdint>
 #include <limits>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 #include <utility>
 
 #if defined(_WIN32)
@@ -28,6 +30,18 @@ namespace {
 
 using Json = nlohmann::json;
 constexpr std::size_t kMaximumResponseBytes = 1024 * 1024;
+
+// The endpoint a call went to is internal detail: an ordinary person reading
+// "could not reach ... at https://inference.runanywhere.ai/api-dev" cannot act
+// on it, and `wally about` already stopped printing it. Name it only when
+// somebody deliberately pointed this binary elsewhere, which is the one case
+// where "which console answered" is the question being asked.
+inline void AppendEndpointIfOverridden(std::string* error, const std::string& url) {
+    const char* override_url = std::getenv("WALLY_CONSOLE_URL");
+    if (error != nullptr && override_url != nullptr && override_url[0] != '\0') {
+        *error += " (" + url + ")";
+    }
+}
 
 #if defined(_WIN32)
 
@@ -105,7 +119,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
     if (!Utf8ToWide(input.url, &url) || !Utf8ToWide(input.method, &method) ||
         url.size() > std::numeric_limits<DWORD>::max()) {
         if (error != nullptr) {
-            *error = "could not create the console HTTP request";
+            *error = "could not contact Wally Cloud";
         }
         return false;
     }
@@ -121,7 +135,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
         (components.nScheme != INTERNET_SCHEME_HTTP &&
          components.nScheme != INTERNET_SCHEME_HTTPS)) {
         if (error != nullptr) {
-            *error = "could not create the console HTTP request";
+            *error = "could not contact Wally Cloud";
         }
         return false;
     }
@@ -188,7 +202,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
         std::wstring token;
         if (!Utf8ToWide(input.bearer_token, &token)) {
             if (error != nullptr) {
-                *error = "could not create the console HTTP request";
+                *error = "could not contact Wally Cloud";
             }
             return false;
         }
@@ -197,7 +211,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
     if (headers.size() > std::numeric_limits<DWORD>::max() ||
         input.body.size() > std::numeric_limits<DWORD>::max()) {
         if (error != nullptr) {
-            *error = "could not create the console HTTP request";
+            *error = "could not contact Wally Cloud";
         }
         return false;
     }
@@ -210,7 +224,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
         !SetReceiveTimeout(request.get(), deadline, true) ||
         !WinHttpReceiveResponse(request.get(), nullptr)) {
         if (error != nullptr) {
-            *error = "could not reach the RunAnywhere console";
+            *error = "could not reach Wally Cloud - check your internet connection";
         }
         return false;
     }
@@ -222,7 +236,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
                              WINHTTP_NO_HEADER_INDEX) ||
         status < 100 || status > 599) {
         if (error != nullptr) {
-            *error = "could not reach the RunAnywhere console";
+            *error = "could not reach Wally Cloud - check your internet connection";
         }
         return false;
     }
@@ -262,7 +276,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
                              &received)) {
             output->body.clear();
             if (error != nullptr) {
-                *error = "could not reach the RunAnywhere console";
+                *error = "could not reach Wally Cloud - check your internet connection";
             }
             return false;
         }
@@ -273,7 +287,7 @@ bool WinHttpTransport(const HttpRequest& input, HttpResponse* output, std::strin
             received > kMaximumResponseBytes - output->body.size()) {
             output->body.clear();
             if (error != nullptr) {
-                *error = "console response exceeded the safety limit";
+                *error = "Wally Cloud sent an unexpectedly large response";
             }
             return false;
         }
@@ -438,8 +452,11 @@ bool DefaultTransport(const HttpRequest& input, HttpResponse* output, std::strin
             // Names the origin actually contacted: with WALLY_CONSOLE_URL unset
             // that is the production console, and a bare "could not reach the
             // console" reads as a local dev server nobody pointed us at.
-            *error = response.too_large ? "console response exceeded the safety limit"
-                                        : "could not reach the RunAnywhere console at " + input.url;
+            *error = response.too_large
+                         ? std::string("Wally Cloud sent an unexpectedly large response")
+                         : std::string(
+                               "could not reach Wally Cloud - check your internet connection");
+            AppendEndpointIfOverridden(error, input.url);
         }
         return false;
     }
@@ -453,19 +470,40 @@ void HttpError(const char* operation, const std::string& origin, const HttpRespo
     if (error == nullptr) {
         return;
     }
-    // Names which console answered: with WALLY_CONSOLE_URL unset that is
-    // production, and a bare "failed with HTTP 404" reads as a bug rather
-    // than as the wrong console having been asked.
-    *error = std::string("console ") + operation + " (" + origin + ") failed with HTTP " +
-             std::to_string(response.status);
-    // A 429 means overload, not a broken request. Tell the person how long the
-    // server asked them to wait, so "try again" is actionable rather than a
-    // guess.
-    if (response.status == 429) {
+    // Every console failure in this file is phrased here, so this is the one
+    // place that decides what a person reads when the cloud says no. It is
+    // written for them, not for us: a status line and an internal endpoint
+    // ("console refresh (https://.../api-dev) failed with HTTP 429") tells
+    // somebody trying to start a coding agent nothing they can act on.
+    const int status = response.status;
+    if (status == 429) {
+        // Not a broken request - overload. Say how long the server itself asked
+        // for, so "try again" is a fact rather than a guess.
         const int wait = response.retry_after_seconds();
-        *error += wait >= 0 ? "; the console is rate limiting, retry after " + std::to_string(wait) +
-                                  "s"
-                            : "; the console is rate limiting, wait a moment and retry";
+        *error = wait >= 0 ? "Wally Cloud is busy - try again in " + std::to_string(wait) + "s"
+                           : "Wally Cloud is busy - try again in a moment";
+    } else if (status == 401 || status == 403) {
+        *error = "your cloud session is no longer valid - run `wally login`";
+    } else if (status == 404) {
+        *error = "Wally Cloud has no such endpoint";
+    } else if (status >= 500) {
+        // The status stays on this one: the person cannot act on a 5xx either
+        // way, and it is the only thing support can work from.
+        *error = "Wally Cloud is temporarily unavailable - try again shortly (HTTP " +
+                 std::to_string(status) + ")";
+    } else {
+        // Nothing specific to say, so name the operation that failed and keep
+        // the status, which is the only part support can act on.
+        *error = std::string("Wally Cloud could not complete the ") + operation + " (HTTP " +
+                 std::to_string(status) + ")";
+    }
+    // The endpoint is worth naming in exactly two cases: the console denies the
+    // route exists (so the wrong console was probably asked), or somebody
+    // deliberately pointed this binary elsewhere. Otherwise it is internal
+    // detail, and `wally about` already stopped printing it.
+    const char* override_url = std::getenv("WALLY_CONSOLE_URL");
+    if (status == 404 || (override_url != nullptr && override_url[0] != '\0')) {
+        *error += " (" + origin + ")";
     }
 }
 
@@ -521,10 +559,8 @@ bool Send(const Transport& transport, HttpRequest request, HttpResponse* respons
           std::string* error) {
     if (!transport(request, response, error)) {
         if (error != nullptr && error->empty()) {
-            // Names the origin actually contacted: with WALLY_CONSOLE_URL unset
-            // that is the production console, and a plain "could not reach the
-            // console" reads as a local server that was never told about.
-            *error = "could not reach the RunAnywhere console at " + request.url;
+            *error = "could not reach Wally Cloud - check your internet connection";
+            AppendEndpointIfOverridden(error, request.url);
         }
         return false;
     }
@@ -650,10 +686,28 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
     contract::CliStartRequest request;
     request.client = contract::CliClient::kRcli;
     request.hostname = hostname;
+    // A 429 here means the console is BUSY, not that this request is wrong.
+    // `wally login` used to give up on the first refusal, so while a load test
+    // was driving the same console nobody could sign in at all, and the advice
+    // in the error ("wait a moment and retry") was left to the person to carry
+    // out by hand (InferenceInfra#444). Do the waiting here, for as long as the
+    // server asked, and only then fail with the same message as before.
+    constexpr int kRateLimitRetries = 3;
+    constexpr int kRateLimitMaxWaitSeconds = 5;
+    const HttpRequest start{"POST", origin + "/auth/cli/start", Json(request).dump(), {}};
     HttpResponse response;
-    if (!Send(transport_, {"POST", origin + "/auth/cli/start", Json(request).dump(), {}}, &response,
-              error)) {
-        return false;
+    for (int attempt = 0;; ++attempt) {
+        response = HttpResponse{};
+        if (!Send(transport_, start, &response, error)) {
+            return false;
+        }
+        if (response.status != 429 || attempt >= kRateLimitRetries) {
+            break;
+        }
+        const int asked = response.retry_after_seconds();
+        const int wait =
+            asked >= 0 ? std::min(std::max(asked, 1), kRateLimitMaxWaitSeconds) : 1;
+        std::this_thread::sleep_for(std::chrono::seconds(wait));
     }
     if (response.status != 200) {
         HttpError("authorization", origin, response, error);
@@ -734,7 +788,10 @@ PollResult ConsoleClient::Poll(const std::string& console_url, const Authorizati
 }
 
 bool ConsoleClient::Refresh(const std::string& console_url, const std::string& refresh_token,
-                            Grant* grant, std::string* error) const {
+                            Grant* grant, std::string* error, bool* unavailable) const {
+    if (unavailable != nullptr) {
+        *unavailable = false;
+    }
     if (grant == nullptr || !SessionTokenIsSafe(refresh_token)) {
         if (error != nullptr) {
             *error = "no refresh token is available";
@@ -754,6 +811,11 @@ bool ConsoleClient::Refresh(const std::string& console_url, const std::string& r
     }
     if (response.status != 200) {
         HttpError("refresh", origin, response, error);
+        // Same distinction as WhoAmI: a busy console has not told us this
+        // session is bad, only that it could not answer (InferenceInfra#444).
+        if (unavailable != nullptr) {
+            *unavailable = response.status == 429 || response.status >= 500;
+        }
         return false;
     }
     contract::GrantResponse parsed;
@@ -798,6 +860,13 @@ IdentityResult ConsoleClient::WhoAmI(const std::string& console_url,
     }
     if (response.status != 200) {
         HttpError("identity request", origin, response, error);
+        // A 429 or a 5xx says "not right now", not "this session is bad". Those
+        // are the two the console produces under load, and treating them as a
+        // bad session locked a signed-in person out of their own harness while
+        // a load test was running (InferenceInfra#444).
+        if (response.status == 429 || response.status >= 500) {
+            return IdentityResult::Unavailable;
+        }
         return IdentityResult::Failed;
     }
 
