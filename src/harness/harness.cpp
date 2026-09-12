@@ -267,7 +267,10 @@ long long EpochSeconds() {
 /// token for a new access token and persist it, so later commands in the same
 /// session do not pay for the refresh again.
 bool RefreshSession(const account::ConsoleClient& console, account::Credentials* credentials,
-                    std::string* error) {
+                    std::string* error, bool* unavailable) {
+    if (unavailable != nullptr) {
+        *unavailable = false;
+    }
     if (credentials->refresh_token.empty()) {
         if (error != nullptr) {
             *error = "the cloud session cannot be refreshed; run `wally login`";
@@ -275,7 +278,8 @@ bool RefreshSession(const account::ConsoleClient& console, account::Credentials*
         return false;
     }
     account::Grant grant;
-    if (!console.Refresh(credentials->console_url, credentials->refresh_token, &grant, error)) {
+    if (!console.Refresh(credentials->console_url, credentials->refresh_token, &grant, error,
+                         unavailable)) {
         return false;
     }
     credentials->access_token = grant.access_token;
@@ -308,28 +312,49 @@ bool ModelIdIsSafe(const std::string& id) {
 }
 
 bool VerifyCloudSession(const account::ConsoleClient& console, account::Credentials* credentials,
-                        std::string* email, std::string* error) {
+                        std::string* email, std::string* error, bool* unverified) {
+    if (unverified != nullptr) {
+        *unverified = false;
+    }
     if (credentials == nullptr) {
         if (error != nullptr) {
             *error = "internal cloud session error";
         }
         return false;
     }
-    if (credentials->access_token_expired(EpochSeconds()) &&
-        !RefreshSession(console, credentials, error)) {
-        return false;
+    // An EXPIRED token refreshes first, and that refresh is itself a console
+    // call that can be rate limited. This is the path a real user hits, because
+    // tokens expire hourly: the refresh 429'd and the launch was refused before
+    // the identity check below was ever reached (InferenceInfra#444).
+    if (credentials->access_token_expired(EpochSeconds())) {
+        bool refresh_unavailable = false;
+        if (!RefreshSession(console, credentials, error, &refresh_unavailable)) {
+            if (unverified != nullptr) {
+                *unverified = refresh_unavailable;
+            }
+            return false;
+        }
     }
     account::Identity identity;
     account::IdentityResult result =
         console.WhoAmI(credentials->console_url, credentials->access_token, &identity, error);
     if (result == account::IdentityResult::Unauthorized) {
-        if (!RefreshSession(console, credentials, error)) {
+        bool refresh_unavailable = false;
+        if (!RefreshSession(console, credentials, error, &refresh_unavailable)) {
+            if (unverified != nullptr) {
+                *unverified = refresh_unavailable;
+            }
             return false;
         }
         identity = account::Identity{};
         result = console.WhoAmI(credentials->console_url, credentials->access_token, &identity, error);
     }
     if (result != account::IdentityResult::Ok) {
+        // Separate "the console says this session is bad" from "the console
+        // could not be asked". Only the first should stop a launch.
+        if (unverified != nullptr) {
+            *unverified = result == account::IdentityResult::Unavailable;
+        }
         return false;
     }
     if (email != nullptr) {
@@ -436,17 +461,26 @@ bool Resolve(const std::string& model, Endpoint* endpoint, int preferred_port) {
         const account::ConsoleClient console;
         std::string email;
         std::string verify_error;
-        if (!VerifyCloudSession(console, &credentials, &email, &verify_error)) {
-            out::error_line(model +
-                            " is not on this machine, and the signed-in cloud session did not "
-                            "check out: " +
-                            verify_error);
-            out::status_line("run `wally login`, or `wally pull " + model + "` to run it here");
-            return false;
+        bool unverified = false;
+        if (!VerifyCloudSession(console, &credentials, &email, &verify_error, &unverified)) {
+            if (!unverified) {
+                out::error_line("cannot use " + model + ": " + verify_error);
+                out::status_line("run `wally login`, or `wally pull " + model +
+                                 "` to run it here");
+                return false;
+            }
+            // The console could not be ASKED - it is rate limiting or down.
+            // That is no disproof of the session already on disk, and refusing
+            // here locked every signed-in person out of their own harness while
+            // a load test ran against the same console (InferenceInfra#444).
+            // Go in on the stored session; the harness's own calls surface the
+            // real error if it is still there.
+            out::status_line("could not confirm the cloud session (" + verify_error +
+                             ") - continuing on the stored session");
         }
         base_url = credentials.console_url + "/v1";
         api_key = credentials.access_token;
-        out::status_line("using " + model + " as " + email);
+        out::status_line("using " + model + (email.empty() ? "" : " as " + email));
     }
 
     endpoint->base_url = base_url;

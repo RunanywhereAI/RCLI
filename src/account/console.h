@@ -139,7 +139,11 @@ struct Grant {
 };
 
 enum class PollResult { Pending, Approved, Denied, Expired, Failed };
-enum class IdentityResult { Ok, Unauthorized, Failed };
+/// `Unavailable` means the console could not be ASKED (it is rate limiting or
+/// down). It is not a disproof of the session held locally, and a caller that
+/// already has one may choose to go on using it. `Failed` stays "this did not
+/// work and the session cannot be trusted".
+enum class IdentityResult { Ok, Unauthorized, Failed, Unavailable };
 
 /// One served model as `/v1/models` advertises it. `context_window` is the
 /// input-token ceiling a coding agent reads to decide when to compact; 0 means
@@ -167,12 +171,17 @@ class ConsoleClient {
    public:
     explicit ConsoleClient(Transport transport = {});
 
+    /// `on_retry` is called before each wait when the console is rate limiting,
+    /// so a command can tell the person it is retrying rather than look hung.
     bool BeginAuthorization(const std::string& console_url, const std::string& hostname,
-                            Authorization* authorization, std::string* error) const;
+                            Authorization* authorization, std::string* error,
+                            const std::function<void()>& on_retry = nullptr) const;
     PollResult Poll(const std::string& console_url, const Authorization& authorization,
                     Grant* grant, std::string* error) const;
+    /// `unavailable` is set true when the refresh failed because the console is
+    /// rate limiting or down (429/5xx) rather than because the session is bad.
     bool Refresh(const std::string& console_url, const std::string& refresh_token, Grant* grant,
-                 std::string* error) const;
+                 std::string* error, bool* unavailable = nullptr) const;
     IdentityResult WhoAmI(const std::string& console_url, const std::string& access_token,
                           Identity* identity, std::string* error) const;
     bool Revoke(const std::string& console_url, const std::string& access_token,
