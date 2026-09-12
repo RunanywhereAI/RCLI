@@ -667,7 +667,8 @@ ConsoleClient::ConsoleClient(Transport transport)
     : transport_(transport ? std::move(transport) : Transport(DefaultTransport)) {}
 
 bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std::string& hostname,
-                                       Authorization* authorization, std::string* error) const {
+                                       Authorization* authorization, std::string* error,
+                                       const std::function<void()>& on_retry) const {
     if (authorization == nullptr) {
         if (error != nullptr) {
             *error = "internal authorization error";
@@ -707,6 +708,9 @@ bool ConsoleClient::BeginAuthorization(const std::string& console_url, const std
         const int asked = response.retry_after_seconds();
         const int wait =
             asked >= 0 ? std::min(std::max(asked, 1), kRateLimitMaxWaitSeconds) : 1;
+        if (on_retry) {
+            on_retry();
+        }
         std::this_thread::sleep_for(std::chrono::seconds(wait));
     }
     if (response.status != 200) {
@@ -756,6 +760,14 @@ PollResult ConsoleClient::Poll(const std::string& console_url, const Authorizati
     }
     if (response.status != 200) {
         HttpError("poll", origin, response, error);
+        // A busy or briefly unavailable console has not denied anything, and the
+        // person may still be approving in the browser. Treat it as "still
+        // waiting" so the poll loop keeps going at its normal cadence instead of
+        // failing the whole login on one refusal (InferenceInfra#444). The loop
+        // is bounded by the authorization's own expiry, so this cannot spin.
+        if (response.status == 429 || response.status >= 500) {
+            return PollResult::Pending;
+        }
         return PollResult::Failed;
     }
 

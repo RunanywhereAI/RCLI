@@ -175,7 +175,8 @@ int Login(const std::string& requested_console, bool open_browser) {
 
     account::ConsoleClient client;
     account::Authorization authorization;
-    if (!client.BeginAuthorization(console_url, Hostname(), &authorization, &failure)) {
+    if (!client.BeginAuthorization(console_url, Hostname(), &authorization, &failure,
+                                   [] { out::status_line("server busy, retrying"); })) {
         out::error_line(failure);
         return 1;
     }
@@ -209,6 +210,13 @@ int Login(const std::string& requested_console, bool open_browser) {
     while (std::chrono::steady_clock::now() < deadline) {
         switch (client.Poll(console_url, authorization, &grant, &failure)) {
             case account::PollResult::Pending:
+                // Poll() reports a rate-limited console as Pending and leaves
+                // the reason in `failure`. Say so once rather than sitting
+                // silent, so a slow login does not look like a hang.
+                if (!failure.empty()) {
+                    out::status_line("server busy, retrying");
+                    failure.clear();
+                }
                 std::this_thread::sleep_for(std::chrono::seconds(authorization.interval));
                 continue;
             case account::PollResult::Denied:

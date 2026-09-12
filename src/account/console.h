@@ -171,8 +171,11 @@ class ConsoleClient {
    public:
     explicit ConsoleClient(Transport transport = {});
 
+    /// `on_retry` is called before each wait when the console is rate limiting,
+    /// so a command can tell the person it is retrying rather than look hung.
     bool BeginAuthorization(const std::string& console_url, const std::string& hostname,
-                            Authorization* authorization, std::string* error) const;
+                            Authorization* authorization, std::string* error,
+                            const std::function<void()>& on_retry = nullptr) const;
     PollResult Poll(const std::string& console_url, const Authorization& authorization,
                     Grant* grant, std::string* error) const;
     /// `unavailable` is set true when the refresh failed because the console is

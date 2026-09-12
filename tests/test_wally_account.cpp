@@ -764,6 +764,55 @@ TestResult test_usage_counters_survive_beyond_thirty_two_bits() {
     return result;
 }
 
+// A 429 mid-poll must not kill the login. `wally login` printed its code and
+// URL, then died on the first rate-limited poll while the person was still
+// approving in the browser (InferenceInfra#444).
+TestResult test_a_rate_limited_poll_keeps_waiting() {
+    TestResult result;
+    result.test_name = "a_rate_limited_poll_keeps_waiting";
+
+    int polls = 0;
+    wally::account::ConsoleClient client([&](const wally::account::HttpRequest& request,
+                                            wally::account::HttpResponse* response, std::string*) {
+        if (request.url.ends_with("/auth/cli/poll")) {
+            polls++;
+            if (polls == 1) {           // busy console on the first poll
+                response->status = 429;
+                return true;
+            }
+            response->status = 200;     // then the person approves
+            response->body = Json{{"status", "approved"},
+                                  {"access_token", "access-one"},
+                                  {"refresh_token", "refresh-one"},
+                                  {"email", "dev@example.test"},
+                                  {"expires_in", 3600}}
+                                 .dump();
+            return true;
+        }
+        return false;
+    });
+
+    wally::account::Authorization authorization;
+    authorization.request_code = "ABCD-EFGH";
+    authorization.poll_secret = "poll-secret";
+    wally::account::Grant grant;
+    std::string error;
+
+    if (client.Poll("https://console.runanywhere.ai", authorization, &grant, &error) !=
+        wally::account::PollResult::Pending) {
+        result.details = "a 429 poll must read as still-waiting, not a failed login: " + error;
+        return result;
+    }
+    if (client.Poll("https://console.runanywhere.ai", authorization, &grant, &error) !=
+            wally::account::PollResult::Approved ||
+        grant.access_token != "access-one") {
+        result.details = "the next poll should have completed the login";
+        return result;
+    }
+    result.passed = true;
+    return result;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -784,6 +833,7 @@ int main(int argc, char** argv) {
     suite.add("console_client_contract", test_console_client_contract);
     suite.add("console_errors_do_not_echo_secrets", test_console_errors_do_not_echo_secrets);
     suite.add("a_rate_limit_surfaces_its_retry_after", test_a_rate_limit_surfaces_its_retry_after);
+    suite.add("a_rate_limited_poll_keeps_waiting", test_a_rate_limited_poll_keeps_waiting);
     suite.add("console_rejects_header_injection", test_console_rejects_header_injection);
     suite.add("the_api_host_and_the_browser_host_stay_apart",
               test_the_api_host_and_the_browser_host_stay_apart);
